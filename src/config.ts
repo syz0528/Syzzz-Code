@@ -11,7 +11,7 @@ const CONFIG_DIR = join(homedir(), '.syzzz-code');
 const CONFIG_FILE = join(CONFIG_DIR, 'config.json');
 
 const DEFAULT_CONFIG: Config = {
-  model: 'deepseek-v4-pro',
+  model: 'claude-3-5-sonnet-20241022',
   maxTokens: 8192,
   temperature: 1.0
 };

@@ -21,8 +21,9 @@ program
     const config = loadConfig();
     console.log(chalk.cyan('\n🤖 Syzzz Code - Model Selection\n'));
     console.log(chalk.gray('Available models:\n'));
-    console.log(chalk.white('1. deepseek-v4-pro') + chalk.gray('     - Most powerful, best quality'));
-    console.log(chalk.white('2. deepseek-v4-flash') + chalk.gray('   - Fast and economical\n'));
+    console.log(chalk.white('1. claude-opus-4-20250514') + chalk.gray('     - Most powerful, best quality'));
+    console.log(chalk.white('2. claude-3-5-sonnet-20241022') + chalk.gray(' - Balanced (Recommended)'));
+    console.log(chalk.white('3. claude-3-5-haiku-20241022') + chalk.gray('  - Fast and economical\n'));
     console.log(chalk.yellow(`Current model: ${config.model}\n`));
     
     const rl = createInterface({
@@ -30,11 +31,15 @@ program
       output: process.stdout
     });
     
-    rl.question(chalk.blue('Select model (1 or 2): '), (answer) => {
-      const models = ['deepseek-v4-pro', 'deepseek-v4-flash'];
+    rl.question(chalk.blue('Select model (1, 2, or 3): '), (answer) => {
+      const models = [
+        'claude-opus-4-20250514',
+        'claude-3-5-sonnet-20241022',
+        'claude-3-5-haiku-20241022'
+      ];
       const choice = parseInt(answer.trim());
       
-      if (choice === 1 || choice === 2) {
+      if (choice >= 1 && choice <= 3) {
         const selectedModel = models[choice - 1];
         saveConfig({ model: selectedModel });
         console.log(chalk.green(`\n✓ Model set to: ${selectedModel}`));
