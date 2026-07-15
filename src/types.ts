@@ -31,12 +31,3 @@ export interface ChatSession {
   model: string;
   createdAt: Date;
 }
-
-export interface Config {
-  provider: string;         // 厂商 ID (deepseek, anthropic, openai, ...)
-  model: string;            // 模型 ID
-  apiKey?: string;          // API Key
-  baseURL?: string;         // 自定义 API 地址（可选，覆盖默认）
-  maxTokens: number;
-  temperature: number;
-}

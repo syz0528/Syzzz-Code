@@ -1,180 +1,185 @@
 #!/usr/bin/env node
 import { Command } from 'commander';
 import chalk from 'chalk';
-import ora from 'ora';
-import { createInterface } from 'readline';
+import { createInterface } from 'readline/promises';
+import type { Interface as ReadlineInterface } from 'readline/promises';
 import { QueryEngine } from './engine.js';
-import { loadConfig, saveConfig } from './config.js';
+import { loadConfig, saveConfig, getCurrentProviderConfig } from './config.js';
+import { runInteractiveSession } from './interactive.js';
 
 const program = new Command();
+
+async function selectFromList(
+  inputLines: AsyncIterator<string>,
+  prompt: string,
+  optionCount: number,
+  defaultIndex: number
+): Promise<number> {
+  process.stdout.write(`${prompt} [${defaultIndex + 1}]: `);
+  const nextLine = await inputLines.next();
+  if (nextLine.done) {
+    throw new Error('Input closed before selection was completed');
+  }
+
+  const answer = nextLine.value;
+  if (!answer.trim()) {
+    return defaultIndex;
+  }
+
+  const selectedIndex = Number.parseInt(answer.trim(), 10) - 1;
+  if (!Number.isInteger(selectedIndex) || selectedIndex < 0 || selectedIndex >= optionCount) {
+    throw new Error(`Please enter a number between 1 and ${optionCount}`);
+  }
+
+  return selectedIndex;
+}
 
 program
   .name('syzzz')
   .description('Syzzz Code - AI Programming Assistant')
-  .version('1.0.0');
-
-// 模型选择命令
-program
-  .command('model')
-  .description('Select AI model')
-  .action(() => {
-    const config = loadConfig();
-    console.log(chalk.cyan('\n🤖 Syzzz Code - Model Selection\n'));
-    console.log(chalk.gray('Available models:\n'));
-    console.log(chalk.white('1. claude-opus-4-20250514') + chalk.gray('     - Most powerful, best quality'));
-    console.log(chalk.white('2. claude-3-5-sonnet-20241022') + chalk.gray(' - Balanced (Recommended)'));
-    console.log(chalk.white('3. claude-3-5-haiku-20241022') + chalk.gray('  - Fast and economical\n'));
-    console.log(chalk.yellow(`Current model: ${config.model}\n`));
-    
-    const rl = createInterface({
-      input: process.stdin,
-      output: process.stdout
-    });
-    
-    rl.question(chalk.blue('Select model (1, 2, or 3): '), (answer) => {
-      const models = [
-        'claude-opus-4-20250514',
-        'claude-3-5-sonnet-20241022',
-        'claude-3-5-haiku-20241022'
-      ];
-      const choice = parseInt(answer.trim());
-      
-      if (choice >= 1 && choice <= 3) {
-        const selectedModel = models[choice - 1];
-        saveConfig({ model: selectedModel });
-        console.log(chalk.green(`\n✓ Model set to: ${selectedModel}`));
-      } else {
-        console.log(chalk.red('\n✗ Invalid choice'));
-      }
-      
-      rl.close();
-    });
+  .version('1.0.0')
+  .action(async () => {
+    try {
+      const engine = new QueryEngine();
+      await runInteractiveSession(engine);
+    } catch (error) {
+      const reason = error instanceof Error ? error.message : String(error);
+      console.error(chalk.red('\nFailed to initialize:'), reason + '\n');
+      process.exitCode = 1;
+    }
   });
 
-program
-  .command('chat')
-  .description('Start interactive chat session')
-  .option('-m, --message <text>', 'Send a single message')
-  .option('--model <name>', 'Choose model: deepseek-v4-pro or deepseek-v4-flash')
-  .action(async (options) => {
-    // 如果指定了模型，临时保存配置
-    if (options.model) {
-      saveConfig({ model: options.model });
-      console.log(chalk.cyan(`✓ Using model: ${options.model}\n`));
-    }
-    
-    const engine = new QueryEngine();
-
-    if (options.message) {
-      const spinner = ora('Thinking...').start();
-      try {
-        const response = await engine.chat(options.message);
-        spinner.stop();
-        console.log(chalk.green('\nAssistant:\n') + response);
-      } catch (error: any) {
-        spinner.stop();
-        console.error(chalk.red('Error:'), error.message);
-        process.exit(1);
-      }
-      return;
-    }
-
-    console.log(chalk.cyan('Syzzz Code - Interactive Mode'));
-    console.log(chalk.gray('Type your message and press Enter. Type "exit" to quit.\n'));
-
-    const rl = createInterface({
-      input: process.stdin,
-      output: process.stdout,
-      prompt: chalk.blue('You: ')
-    });
-
-    rl.prompt();
-
-    rl.on('line', async (input) => {
-      const message = input.trim();
-
-      if (message.toLowerCase() === 'exit') {
-        console.log(chalk.yellow('\nGoodbye!'));
-        rl.close();
-        process.exit(0);
-      }
-
-      if (!message) {
-        rl.prompt();
-        return;
-      }
-
-      rl.pause(); // 暂停输入
-      const spinner = ora('Thinking...').start();
-      try {
-        const response = await engine.chat(message, true);
-        spinner.stop();
-        console.log(chalk.green('\nAssistant:\n') + response + '\n');
-      } catch (error: any) {
-        spinner.stop();
-        console.error(chalk.red('\nError:'), error.message + '\n');
-      }
-
-      rl.resume(); // 恢复输入
-      rl.prompt();
-    });
-  });
-
+// 配置管理命令
 program
   .command('config')
   .description('Manage configuration')
-  .argument('<action>', 'Action: get, set, list')
-  .argument('[key]', 'Config key')
+  .argument('<action>', 'Action: list, set')
+  .argument('[key]', 'Config key (apiKey)')
   .argument('[value]', 'Config value')
   .action((action, key, value) => {
     const config = loadConfig();
 
     if (action === 'list') {
-      console.log(chalk.cyan('Current Configuration:'));
-      console.log(JSON.stringify(config, null, 2));
+      const current = getCurrentProviderConfig();
+      console.log(chalk.cyan('\n📊 Current Configuration\n'));
+      console.log(chalk.white(`Provider:    ${config.currentProvider} (${current.name})`));
+      console.log(chalk.white(`Type:        ${current.type}`));
+      console.log(chalk.white(`Model:       ${current.model}`));
+      console.log(chalk.white(`Base URL:    ${current.env.BASE_URL}`));
+      console.log(chalk.white(`API Key:     ${current.env.API_KEY ? '✓ Set' : '✗ Not set'}\n`));
       return;
     }
 
-    if (action === 'get' && key) {
-      console.log(config[key as keyof typeof config]);
+    if (action === 'set' && key === 'apiKey' && value) {
+      // 设置当前 provider 的 API Key
+      config.providers[config.currentProvider].env.API_KEY = value;
+      saveConfig(config);
+      console.log(chalk.green(`\n✓ API Key set for ${config.currentProvider}\n`));
       return;
     }
 
-    if (action === 'set' && key && value) {
-      saveConfig({ [key]: value });
-      console.log(chalk.green(`✓ Set ${key} = ${value}`));
-      return;
-    }
-
-    console.error(chalk.red('Invalid config command'));
-    process.exit(1);
+    console.error(chalk.red('\nUsage: syzzz config list | syzzz config set apiKey YOUR_KEY\n'));
   });
 
 program
-  .command('init')
-  .description('Initialize Syzzz Code')
-  .action(() => {
-    const config = loadConfig();
-    console.log(chalk.cyan.bold('\n🚀 Syzzz Code Initialization\n'));
-    console.log(chalk.green('✓ Syzzz Code initialized'));
-    console.log(chalk.gray('Configuration file:'), chalk.cyan('~/.syzzz-code/config.json'));
-    console.log(chalk.gray('Current model:'), chalk.yellow(config.model));
-    
-    if (!config.apiKey && !process.env.ANTHROPIC_API_KEY) {
-      console.log(chalk.yellow('\n⚠ No API key found'));
-      console.log(chalk.gray('Set your API key with:'));
-      console.log(chalk.cyan('  syzzz config set apiKey YOUR_API_KEY'));
-      console.log(chalk.gray('Or set in .env file:'));
-      console.log(chalk.cyan('  ANTHROPIC_API_KEY=YOUR_API_KEY'));
-    } else {
-      console.log(chalk.green('\n✓ API key configured'));
+  .command('switch')
+  .description('Interactively select a configured provider and model')
+  .action(async () => {
+    let readlineInterface: ReadlineInterface | undefined;
+
+    try {
+      const config = loadConfig();
+      const providerEntries = Object.entries(config.providers);
+      const defaultProviderIndex = Math.max(
+        0,
+        providerEntries.findIndex(([providerId]) => providerId === config.currentProvider)
+      );
+
+      console.log(chalk.cyan('\nAvailable providers:\n'));
+      providerEntries.forEach(([providerId, provider], index) => {
+        const currentMarker = providerId === config.currentProvider ? ' (current)' : '';
+        console.log(`  ${index + 1}. ${provider.name} [${providerId}]${currentMarker}`);
+      });
+
+      readlineInterface = createInterface({
+        input: process.stdin,
+        output: process.stdout
+      });
+      const inputLines = readlineInterface[Symbol.asyncIterator]();
+
+      const providerIndex = await selectFromList(
+        inputLines,
+        '\nSelect provider',
+        providerEntries.length,
+        defaultProviderIndex
+      );
+      const [selectedProviderId, selectedProvider] = providerEntries[providerIndex];
+      const defaultModelIndex = Math.max(0, selectedProvider.models.indexOf(selectedProvider.model));
+
+      console.log(chalk.cyan(`\nAvailable models for ${selectedProvider.name}:\n`));
+      selectedProvider.models.forEach((model, index) => {
+        const currentMarker = model === selectedProvider.model ? ' (current)' : '';
+        console.log(`  ${index + 1}. ${model}${currentMarker}`);
+      });
+
+      const modelIndex = await selectFromList(
+        inputLines,
+        '\nSelect model',
+        selectedProvider.models.length,
+        defaultModelIndex
+      );
+
+      selectedProvider.model = selectedProvider.models[modelIndex];
+      config.currentProvider = selectedProviderId;
+      saveConfig(config);
+
+      console.log(chalk.green(`\nSwitched to ${selectedProvider.name} (${selectedProvider.model})\n`));
+      if (!selectedProvider.env.API_KEY) {
+        console.log(chalk.yellow('This provider has no API key configured.'));
+        console.log(chalk.gray('Set it with: syzzz config set apiKey YOUR_KEY\n'));
+      }
+    } catch (error) {
+      const reason = error instanceof Error ? error.message : String(error);
+      console.error(chalk.red('\nSwitch failed:'), reason + '\n');
+      process.exitCode = 1;
+    } finally {
+      readlineInterface?.close();
     }
-    
-    console.log(chalk.cyan('\n📚 Quick Start:'));
-    console.log(chalk.white('  syzzz model') + chalk.gray('           - Select AI model'));
-    console.log(chalk.white('  syzzz chat') + chalk.gray('            - Start interactive mode'));
-    console.log(chalk.white('  syzzz chat -m "msg"') + chalk.gray('   - Single message'));
-    console.log(chalk.white('  syzzz config list') + chalk.gray('     - View configuration\n'));
   });
 
-program.parse();
+// 对话命令
+program
+  .command('chat')
+  .description('Start chat session')
+  .option('-m, --message <text>', 'Send a single message')
+  .action(async (options) => {
+    try {
+      const engine = new QueryEngine();
+
+      if (options.message) {
+        const response = await engine.chat(options.message);
+        console.log(chalk.green('\nAssistant:\n') + response + '\n');
+        return;
+      }
+
+      await runInteractiveSession(engine);
+    } catch (error) {
+      const reason = error instanceof Error ? error.message : String(error);
+      console.error(chalk.red('\nChat failed:'), reason + '\n');
+      process.exitCode = 1;
+    }
+  });
+
+// 初始化命令
+program
+  .command('init')
+  .description('Initialize configuration')
+  .action(() => {
+    const config = loadConfig();
+    console.log(chalk.green('\n✓ Configuration initialized'));
+    console.log(chalk.cyan(`\nDefault provider: ${config.currentProvider}\n`));
+    console.log(chalk.yellow('Set your API key:'));
+    console.log(chalk.white('  syzzz config set apiKey YOUR_KEY\n'));
+  });
+
+await program.parseAsync(process.argv);

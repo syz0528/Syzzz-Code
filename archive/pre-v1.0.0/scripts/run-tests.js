@@ -1,5 +1,7 @@
 #!/usr/bin/env node
 
+// Historical test harness retained for reference only.
+// It targets an obsolete CLI contract; use `npm test` instead.
 // 自动化测试脚本
 import { execSync } from 'child_process';
 import { existsSync, unlinkSync, readFileSync, writeFileSync } from 'fs';

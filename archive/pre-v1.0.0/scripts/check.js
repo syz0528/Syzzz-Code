@@ -1,5 +1,7 @@
 #!/usr/bin/env node
 
+// Historical display-only check retained for reference.
+// Its results are hard-coded and are not release evidence.
 // 快速启动脚本 - 验证基本功能
 import chalk from 'chalk';
 

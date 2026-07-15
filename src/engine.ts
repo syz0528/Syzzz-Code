@@ -1,160 +1,176 @@
-import Anthropic from '@anthropic-ai/sdk';
-import { execSync } from 'child_process';
-import type { Message, Tool, ContentBlock } from './types.js';
-import { getApiKey, loadConfig } from './config.js';
+import type { Tool } from './types.js';
+import { getCurrentProviderConfig } from './config.js';
+import { createProvider } from './providers/factory.js';
+import type {
+  AIProvider,
+  ConversationMessage,
+  ProviderTool,
+  ToolResultMessage
+} from './providers/base.js';
 import { allTools } from './tools/index.js';
 
-export class QueryEngine {
-  private client: Anthropic | null = null;
-  private useClaudeCode: boolean = false;
-  private messages: Message[] = [];
-  private tools: Tool[];
+const MAX_TOOL_ROUNDS = 10;
+const MAX_TOOL_RESULT_CHARACTERS = 100_000;
 
-  constructor() {
-    const apiKey = getApiKey();
-    const baseURL = process.env.ANTHROPIC_BASE_URL;
+export interface QueryEngineOptions {
+  provider?: AIProvider;
+  tools?: Tool[];
+  announceProvider?: boolean;
+}
+
+export class QueryEngine {
+  private provider: AIProvider;
+  private messages: ConversationMessage[] = [];
+  private tools: Tool[];
+  private isProcessing = false;
+
+  constructor(options: QueryEngineOptions = {}) {
+    this.tools = options.tools ?? allTools;
+
+    if (options.provider) {
+      this.provider = options.provider;
+      return;
+    }
+
+    const providerConfig = getCurrentProviderConfig();
     
-    // 如果没有 API Key，尝试使用 Claude Code
-    if (!apiKey) {
-      try {
-        const result = execSync('claude auth status', { encoding: 'utf-8', stdio: ['pipe', 'pipe', 'ignore'] });
-        const authStatus = JSON.parse(result);
-        if (authStatus.loggedIn) {
-          this.useClaudeCode = true;
-          console.log('✓ Using Claude Code authentication (fallback mode)');
-        } else {
-          throw new Error('No API key found and Claude Code not logged in');
-        }
-      } catch {
-        throw new Error('No API key found. Set ANTHROPIC_API_KEY or run: syzzz config set apiKey YOUR_KEY');
-      }
-    } else {
-      const options: any = { apiKey };
-      if (baseURL) {
-        options.baseURL = baseURL;
-        console.log(`✓ Using Syzzz Code with custom API: ${baseURL}`);
-      }
-      this.client = new Anthropic(options);
+    // 检查 API Key
+    if (!providerConfig.env.API_KEY) {
+      throw new Error(
+        `No API key found for provider: ${providerConfig.name}\n\n` +
+        `Set your API key:\n` +
+        `  syzzz config set apiKey YOUR_KEY\n`
+      );
     }
     
-    this.tools = allTools;
+    // 创建 Provider
+    try {
+      this.provider = createProvider(providerConfig);
+      if (options.announceProvider !== false) {
+        console.log(`✓ Using ${providerConfig.name} (${providerConfig.model})`);
+      }
+    } catch (error: any) {
+      throw new Error(`Failed to initialize provider: ${error.message}`);
+    }
+    
   }
 
-  async chat(userMessage: string, interactive: boolean = false): Promise<string> {
-    // 如果使用 Claude Code 且是交互模式，提示用户使用单次命令
-    if (this.useClaudeCode && interactive) {
-      throw new Error('Interactive mode with Claude Code auth not supported. Use: node dist/index.js chat -m "your message"');
+  async chat(userMessage: string): Promise<string> {
+    if (this.isProcessing) {
+      throw new Error('Another message is still being processed');
     }
-    
-    // 单次消息模式可以使用 Claude Code
-    if (this.useClaudeCode && !interactive) {
-      return this.chatViaClaudeCode(userMessage);
-    }
-    
-    if (!this.client) {
-      throw new Error('API client not initialized');
-    }
-    
-    this.messages.push({
+
+    this.isProcessing = true;
+    const workingMessages: ConversationMessage[] = [
+      ...this.messages,
+      {
       role: 'user',
       content: userMessage
-    });
+      }
+    ];
 
-    let response = '';
-    const config = loadConfig();
+    const responseParts: string[] = [];
+    const providerTools: ProviderTool[] = this.tools.map(tool => ({
+      name: tool.name,
+      description: tool.description,
+      inputSchema: tool.input_schema
+    }));
 
-    while (true) {
-      const result = await this.client.messages.create({
-        model: config.model,
-        max_tokens: config.maxTokens,
-        temperature: config.temperature,
-        messages: this.messages as any,
-        tools: this.tools.map(t => ({
-          name: t.name,
-          description: t.description,
-          input_schema: t.input_schema
-        })),
-        system: this.getSystemPrompt()
-      });
+    try {
+      for (let toolRound = 0; toolRound <= MAX_TOOL_ROUNDS; toolRound++) {
+        const response = await this.provider.chat({
+          messages: workingMessages,
+          tools: providerTools,
+          systemPrompt: this.getSystemPrompt()
+        });
 
-      const assistantMessage: Message = {
-        role: 'assistant',
-        content: result.content as any
-      };
-      this.messages.push(assistantMessage);
+        workingMessages.push(response.message);
+        if (response.message.content.trim()) {
+          responseParts.push(response.message.content.trim());
+        }
 
-      let hasToolUse = false;
-      const toolResults: ContentBlock[] = [];
+        const toolCalls = response.message.toolCalls ?? [];
+        if (toolCalls.length === 0) {
+          this.messages = workingMessages;
+          return responseParts.join('\n\n');
+        }
 
-      for (const block of result.content) {
-        if (block.type === 'text') {
-          response += block.text;
-        } else if (block.type === 'tool_use') {
-          hasToolUse = true;
-          const tool = this.tools.find(t => t.name === block.name);
-          if (tool) {
-            console.log(`\n[Tool: ${block.name}]`);
-            const result = await tool.execute(block.input);
-            toolResults.push({
-              type: 'tool_result',
-              tool_use_id: block.id,
-              content: result
-            });
-          }
+        if (toolRound === MAX_TOOL_ROUNDS) {
+          throw new Error(`Tool call limit exceeded (${MAX_TOOL_ROUNDS} rounds)`);
+        }
+
+        for (const toolCall of toolCalls) {
+          workingMessages.push(await this.executeToolCall(toolCall.id, toolCall.name, toolCall.input));
         }
       }
 
-      if (hasToolUse && toolResults.length > 0) {
-        this.messages.push({
-          role: 'user',
-          content: toolResults
-        });
-        continue;
-      }
-
-      if (result.stop_reason === 'end_turn' || result.stop_reason === 'stop_sequence') {
-        break;
-      }
+      throw new Error('Chat ended without a final response');
+    } catch (error) {
+      const reason = error instanceof Error ? error.message : String(error);
+      throw new Error(`Chat error: ${reason}`);
+    } finally {
+      this.isProcessing = false;
     }
-
-    return response;
   }
 
-  private chatViaClaudeCode(userMessage: string): Promise<string> {
-    return new Promise((resolve, reject) => {
-      try {
-        // 调用 Claude Code 作为后端引擎
-        const result = execSync(`echo "${userMessage.replace(/"/g, '\\"')}" | claude chat --bare --permission-mode=auto`, {
-          encoding: 'utf-8',
-          cwd: process.cwd(),
-          maxBuffer: 10 * 1024 * 1024
-        });
-        resolve(result.trim());
-      } catch (error: any) {
-        reject(error);
-      }
-    });
+  private async executeToolCall(toolCallId: string, toolName: string, input: unknown): Promise<ToolResultMessage> {
+    const tool = this.tools.find(candidate => candidate.name === toolName);
+    if (!tool) {
+      return {
+        role: 'tool',
+        toolCallId,
+        toolName,
+        content: `Unknown tool: ${toolName}`,
+        isError: true
+      };
+    }
+
+    console.log(`\n[Tool: ${toolName}]`);
+
+    try {
+      const rawResult = await tool.execute(input);
+      return {
+        role: 'tool',
+        toolCallId,
+        toolName,
+        content: this.truncateToolResult(rawResult)
+      };
+    } catch (error) {
+      const reason = error instanceof Error ? error.message : String(error);
+      return {
+        role: 'tool',
+        toolCallId,
+        toolName,
+        content: reason,
+        isError: true
+      };
+    }
+  }
+
+  private truncateToolResult(result: string): string {
+    if (result.length <= MAX_TOOL_RESULT_CHARACTERS) {
+      return result;
+    }
+
+    return `${result.slice(0, MAX_TOOL_RESULT_CHARACTERS)}\n\n[Output truncated]`;
   }
 
   private getSystemPrompt(): string {
     return `You are Syzzz Code, an AI programming assistant.
 
-You help developers write, debug, and understand code. You have access to tools for:
-- Shell: Execute commands
-- Read: Read files
-- Write: Create/overwrite files
-- Edit: Modify existing files
+Help developers write, debug, and understand code. Use the available tools when needed.
 
-Be concise and direct. When making code changes:
-1. Read files before editing
-2. Use Edit for modifications, Write for new files
-3. Execute tests/builds to verify changes
+Rules:
+1. Read existing files before editing them.
+2. Prefer precise edits over replacing entire files.
+3. Run relevant checks after making changes.
+4. Never claim a tool succeeded unless its result confirms success.
 
-Current directory: ${process.cwd()}`;
+Current working directory: ${process.cwd()}`;
   }
 
-  getMessages(): Message[] {
-    return this.messages;
+  getMessages(): ConversationMessage[] {
+    return [...this.messages];
   }
 
   clearMessages(): void {

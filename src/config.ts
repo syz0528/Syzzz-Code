@@ -1,21 +1,136 @@
-import { readFileSync, writeFileSync, existsSync, mkdirSync } from 'fs';
+import {
+  existsSync,
+  mkdirSync,
+  readFileSync,
+  renameSync,
+  unlinkSync,
+  writeFileSync
+} from 'fs';
 import { homedir } from 'os';
 import { join } from 'path';
 import { config as dotenvConfig } from 'dotenv';
-import type { Config } from './types.js';
-import { getProvider, getModel } from './providers/registry.js';
 
 // 加载 .env 文件
-dotenvConfig();
+dotenvConfig({ quiet: true });
 
 const CONFIG_DIR = join(homedir(), '.syzzz-code');
 const CONFIG_FILE = join(CONFIG_DIR, 'config.json');
 
+export interface ProviderConfigItem {
+  name: string;
+  type: 'anthropic' | 'openai-compatible';
+  model: string;
+  models: string[];
+  env: {
+    BASE_URL: string;
+    API_KEY: string;
+  };
+}
+
+export interface Config {
+  currentProvider: string;
+  providers: {
+    [key: string]: ProviderConfigItem;
+  };
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+function requireNonEmptyString(value: unknown, fieldPath: string): string {
+  if (typeof value !== 'string' || !value.trim()) {
+    throw new Error(`${fieldPath} must be a non-empty string`);
+  }
+  return value;
+}
+
+function validateBaseURL(value: unknown, fieldPath: string): string {
+  const baseURL = requireNonEmptyString(value, fieldPath);
+  let parsedURL: URL;
+  try {
+    parsedURL = new URL(baseURL);
+  } catch {
+    throw new Error(`${fieldPath} must be a valid URL`);
+  }
+
+  if (parsedURL.protocol !== 'https:' && parsedURL.protocol !== 'http:') {
+    throw new Error(`${fieldPath} must use http or https`);
+  }
+
+  return baseURL.replace(/\/$/, '');
+}
+
+export function validateConfig(value: unknown): Config {
+  if (!isRecord(value)) {
+    throw new Error('configuration root must be an object');
+  }
+
+  const currentProvider = requireNonEmptyString(value.currentProvider, 'currentProvider');
+  if (!isRecord(value.providers)) {
+    throw new Error('providers must be an object');
+  }
+
+  const providers: Record<string, ProviderConfigItem> = {};
+  for (const [providerId, providerValue] of Object.entries(value.providers)) {
+    const providerPath = `providers.${providerId}`;
+    if (!isRecord(providerValue)) {
+      throw new Error(`${providerPath} must be an object`);
+    }
+
+    const type = requireNonEmptyString(providerValue.type, `${providerPath}.type`);
+    if (type !== 'anthropic' && type !== 'openai-compatible') {
+      throw new Error(`${providerPath}.type must be "anthropic" or "openai-compatible"`);
+    }
+
+    if (!Array.isArray(providerValue.models) || providerValue.models.length === 0) {
+      throw new Error(`${providerPath}.models must contain at least one model`);
+    }
+    const models = providerValue.models.map((model, index) =>
+      requireNonEmptyString(model, `${providerPath}.models[${index}]`)
+    );
+    const model = requireNonEmptyString(providerValue.model, `${providerPath}.model`);
+    if (!models.includes(model)) {
+      throw new Error(`${providerPath}.model must be included in ${providerPath}.models`);
+    }
+
+    if (!isRecord(providerValue.env)) {
+      throw new Error(`${providerPath}.env must be an object`);
+    }
+
+    providers[providerId] = {
+      name: requireNonEmptyString(providerValue.name, `${providerPath}.name`),
+      type,
+      model,
+      models,
+      env: {
+        BASE_URL: validateBaseURL(providerValue.env.BASE_URL, `${providerPath}.env.BASE_URL`),
+        API_KEY: typeof providerValue.env.API_KEY === 'string' ? providerValue.env.API_KEY : ''
+      }
+    };
+  }
+
+  if (!providers[currentProvider]) {
+    throw new Error(`currentProvider "${currentProvider}" does not exist in providers`);
+  }
+
+  return { currentProvider, providers };
+}
+
 const DEFAULT_CONFIG: Config = {
-  provider: 'deepseek',
-  model: 'deepseek-chat',
-  maxTokens: 8192,
-  temperature: 1.0
+  currentProvider: 'deepseek',
+  providers: {
+    deepseek: {
+      name: 'Deepseek',
+      type: 'openai-compatible',
+      model: 'deepseek-chat',
+      models: ['deepseek-chat', 'deepseek-reasoner'],
+      env: {
+        BASE_URL: 'https://api.deepseek.com',
+        API_KEY: ''
+      }
+    }
+  }
 };
 
 export function ensureConfigDir(): void {
@@ -29,90 +144,44 @@ export function loadConfig(): Config {
   
   if (!existsSync(CONFIG_FILE)) {
     saveConfig(DEFAULT_CONFIG);
-    return DEFAULT_CONFIG;
+    return structuredClone(DEFAULT_CONFIG);
   }
 
   try {
     const content = readFileSync(CONFIG_FILE, 'utf-8');
-    const loaded = JSON.parse(content);
-    
-    // 确保数字类型正确
-    return {
-      ...DEFAULT_CONFIG,
-      ...loaded,
-      maxTokens: typeof loaded.maxTokens === 'string' ? parseInt(loaded.maxTokens) : loaded.maxTokens,
-      temperature: typeof loaded.temperature === 'string' ? parseFloat(loaded.temperature) : loaded.temperature
-    };
-  } catch {
-    return DEFAULT_CONFIG;
+    return validateConfig(JSON.parse(content));
+  } catch (error) {
+    const reason = error instanceof Error ? error.message : String(error);
+    throw new Error(`Invalid configuration at ${CONFIG_FILE}: ${reason}`);
   }
 }
 
-export function saveConfig(config: Partial<Config>): void {
+export function saveConfig(config: Config): void {
   ensureConfigDir();
-  const current = existsSync(CONFIG_FILE) ? loadConfig() : DEFAULT_CONFIG;
-  const updated = { ...current, ...config };
-  
-  // 验证配置
-  if (updated.provider && updated.model) {
-    const providerConfig = getProvider(updated.provider);
-    if (!providerConfig) {
-      throw new Error(`Unknown provider: ${updated.provider}`);
+  const validatedConfig = validateConfig(config);
+  const temporaryFile = `${CONFIG_FILE}.${process.pid}.${Date.now()}.tmp`;
+
+  try {
+    writeFileSync(temporaryFile, `${JSON.stringify(validatedConfig, null, 2)}\n`, {
+      encoding: 'utf-8',
+      mode: 0o600
+    });
+    renameSync(temporaryFile, CONFIG_FILE);
+  } finally {
+    if (existsSync(temporaryFile)) {
+      unlinkSync(temporaryFile);
     }
-    
-    const modelConfig = getModel(updated.provider, updated.model);
-    if (!modelConfig) {
-      throw new Error(`Model ${updated.model} not found for provider ${updated.provider}`);
-    }
   }
-  
-  writeFileSync(CONFIG_FILE, JSON.stringify(updated, null, 2));
 }
 
-export function getApiKey(): string {
+// 获取当前使用的 Provider 配置
+export function getCurrentProviderConfig(): ProviderConfigItem {
   const config = loadConfig();
+  const current = config.providers[config.currentProvider];
   
-  // 优先级：1. 配置文件 2. 环境变量（支持多种命名）
-  if (config.apiKey) return config.apiKey;
-  
-  // 根据 provider 尝试不同的环境变量名
-  const provider = config.provider;
-  
-  // Anthropic
-  if (provider === 'anthropic') {
-    if (process.env.ANTHROPIC_API_KEY) return process.env.ANTHROPIC_API_KEY;
+  if (!current) {
+    throw new Error(`Provider ${config.currentProvider} not found in config`);
   }
   
-  // OpenAI 系列
-  if (provider === 'openai') {
-    if (process.env.OPENAI_API_KEY) return process.env.OPENAI_API_KEY;
-  }
-  
-  // Deepseek
-  if (provider === 'deepseek') {
-    if (process.env.DEEPSEEK_API_KEY) return process.env.DEEPSEEK_API_KEY;
-  }
-  
-  // Moonshot
-  if (provider === 'moonshot') {
-    if (process.env.MOONSHOT_API_KEY) return process.env.MOONSHOT_API_KEY;
-  }
-  
-  // 通用环境变量
-  if (process.env.AI_API_KEY) return process.env.AI_API_KEY;
-  if (process.env.ANTHROPIC_API_KEY) return process.env.ANTHROPIC_API_KEY;
-  
-  return '';
-}
-
-// 获取当前 provider 配置
-export function getCurrentProviderConfig() {
-  const config = loadConfig();
-  return getProvider(config.provider);
-}
-
-// 获取当前 model 配置
-export function getCurrentModelConfig() {
-  const config = loadConfig();
-  return getModel(config.provider, config.model);
+  return current;
 }
