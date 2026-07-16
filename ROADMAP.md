@@ -1,8 +1,8 @@
 # Syzzz Code 路线图
 
-**制定日期：** 2026-07-15  
-**适用基线：** `1.0.0` / 远程提交 `6aa1cc5`  
-**当前入口：** 多 Provider CLI Agent MVP 已贯通，下一阶段进入 Tool Runtime 安全与可靠性升级
+**制定日期：** 2026-06-16  
+**适用基线：** `1.0.0` / 远程提交 `7ea3aa1`  
+**当前入口：** Phase 1 已在本地完成并通过 37 项测试，下一阶段为事件化 Agent Runtime 与 Provider 可靠性
 
 > 本文档只描述尚未完成的工作、实施顺序和验收标准。当前已经实现的能力以 [`README.md`](README.md) 和 [`CURRENT_STATUS.md`](CURRENT_STATUS.md) 为准。
 
@@ -161,8 +161,8 @@ Phase 6  持续评测、发布与工程治理
 - [x] 重写 `README.md`；
 - [x] 重写 `CURRENT_STATUS.md`；
 - [x] 创建 `ROADMAP.md`；
-- [ ] 用户审阅当前三份活跃文档；
-- [ ] 提交并推送文档；
+- [x] 用户审阅当前三份活跃文档；
+- [x] 提交并推送文档；
 - [ ] 创建 annotated `v1.0.0` Git Tag；
 - [ ] 确认远程 `main` 和 `v1.0.0` 指向同一文档基线提交。
 
@@ -176,11 +176,26 @@ Phase 6  持续评测、发布与工程治理
 
 ## 6. Phase 1：Tool Runtime 安全与正确性
 
+**状态：** 本地实现与自动化验收已完成，尚未提交、推送或发布。
+
 ### 目标
 
 将当前“模型直接调用四个高权限函数”的工具层，升级为具有类型、权限、取消和审计基础的 Tool Runtime。
 
 这是下一阶段最高优先级，也是后续流式 UI、MCP、子 Agent 和自主执行的共同基础。
+
+### 已交付
+
+- [x] 统一 `ToolDefinition`、`ToolContext`、`ToolResult` 和风险元数据；
+- [x] 使用 Zod 校验输入并生成 Provider JSON Schema；
+- [x] 建立工作区路径边界、敏感路径策略和 symlink/junction 防逃逸；
+- [x] Write/Edit 写入前展示 diff，并以内容 hash 检测审批后的变化；
+- [x] Write/Edit/Shell 在缺少审批或用户拒绝时 fail closed；
+- [x] 使用异步 Shell，支持 timeout、取消、进程树终止和输出限制；
+- [x] 贯通 CLI、Engine、Provider 与工具的 `AbortSignal`；
+- [x] 扩展到 37 项离线回归测试并同步活跃文档。
+
+已知限制：Shell 审批不是操作系统沙箱；文件最终落盘尚非原子替换；Provider typed errors、请求 timeout、事件审计属于后续阶段。
 
 ### 6.1 统一工具契约
 
@@ -714,21 +729,28 @@ Hooks 不能绕过 Tool Policy，也不能默认访问密钥。
 - [x] 完成 `README.md` 本地重写；
 - [x] 完成 `CURRENT_STATUS.md` 本地重写；
 - [x] 完成 `ROADMAP.md` 本地编写；
-- [ ] 用户审阅三份文档；
-- [ ] 根据反馈修订；
-- [ ] 提交并推送文档；
+- [x] 用户审阅三份文档；
+- [x] 根据反馈修订；
+- [x] 提交并推送文档；
 - [ ] 创建和推送 `v1.0.0` Tag。
 
 ### 下一开发迭代
 
-- [ ] 设计 Tool Runtime 类型和模块边界；
-- [ ] 选择并验证运行时 schema 方案；
-- [ ] 先修复工具错误语义；
-- [ ] 实现路径边界；
-- [ ] 实现异步 Shell、timeout 和 cancellation；
-- [ ] 实现最小权限审批；
-- [ ] 补充真实工具测试；
-- [ ] 更新安全与架构文档。
+- [x] 设计 Tool Runtime 类型和模块边界；
+- [x] 选择并验证 Zod 运行时 schema 方案；
+- [x] 修复工具结构化错误语义；
+- [x] 实现路径边界与链接逃逸防护；
+- [x] 实现异步 Shell、timeout 和 cancellation；
+- [x] 实现最小权限审批与写入 diff；
+- [x] 补充真实工具测试；
+- [x] 更新安全与架构文档。
+
+### 下一阶段入口
+
+- [ ] 设计 Phase 2 的 Agent Event 联合类型与消费边界；
+- [ ] 定义 Provider typed errors、timeout 和有限重试策略；
+- [ ] 设计 usage、延迟和执行审计数据模型；
+- [ ] 保持 Phase 1 的 37 项安全回归持续通过。
 
 ## 15. 路线图完成标准
 

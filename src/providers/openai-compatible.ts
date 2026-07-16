@@ -88,11 +88,14 @@ export class OpenAICompatibleProvider implements AIProvider {
 
   async chat(request: ProviderChatRequest): Promise<ProviderChatResponse> {
     try {
-      const response = await this.client.chat.completions.create({
-        model: this.model,
-        messages: convertMessagesToOpenAI(request.messages, request.systemPrompt) as any,
-        tools: convertToolsToOpenAI(request.tools) as any
-      });
+      const response = await this.client.chat.completions.create(
+        {
+          model: this.model,
+          messages: convertMessagesToOpenAI(request.messages, request.systemPrompt) as any,
+          tools: convertToolsToOpenAI(request.tools) as any
+        },
+        { signal: request.signal }
+      );
 
       const choice = response.choices[0];
       if (!choice) {
@@ -131,6 +134,9 @@ export class OpenAICompatibleProvider implements AIProvider {
         } : undefined
       };
     } catch (error: any) {
+      if (request.signal?.aborted || error?.name === 'AbortError') {
+        throw error;
+      }
       throw new Error(`${this.providerName} API Error: ${error.message}`);
     }
   }

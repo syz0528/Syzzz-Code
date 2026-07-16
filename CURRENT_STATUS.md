@@ -1,10 +1,10 @@
 # Syzzz Code 当前项目状态
 
-**状态日期：** 2026-07-15  
+**状态日期：** 2026-06-16  
 **包版本：** 1.0.0  
-**当前阶段：** 多 Provider CLI Agent MVP 已贯通，准备进入 Tool Runtime 安全与可靠性升级  
+**当前阶段：** Phase 1 安全与执行正确性底座已在本地完成，等待审阅和版本化  
 **远程仓库：** https://github.com/syz0528/Syzzz-Code  
-**远程基线提交：** `6aa1cc5`（`实现多厂商 Provider 架构与交互式 CLI`）
+**远程基线提交：** `7ea3aa1`（`完善当前状态与后续升级路线文档`）
 
 > 本文档描述当前代码的真实状态，而不是未来设计目标。历史规划和旧测试报告已归档到 [`archive/pre-v1.0.0`](archive/pre-v1.0.0)。
 
@@ -45,7 +45,7 @@ Syzzz Code 是一个使用 TypeScript 构建的实验性命令行 AI 编程助�
 
 当前可以定义为：
 
-> 多 Provider、连续对话和基础 Tool Loop 已经可运行，但权限控制、执行隔离、上下文治理和长期会话仍处于原型阶段。
+> 多 Provider、连续对话和 Tool Loop 已经可运行；Phase 1 已补齐工具输入校验、工作区边界、审批、diff、异步 Shell 与端到端取消，但执行隔离、事件审计、上下文治理和长期会话仍待后续阶段完成。
 
 ## 3. 已实现能力
 
@@ -71,6 +71,8 @@ syzzz --version                    查看版本
 - 每条输入只处理一次；
 - 回答一轮后继续等待下一条输入；
 - 输入 `exit` 退出；
+- 审批提示只接受 `y` 或 `yes`，其他输入默认拒绝；
+- 执行中按一次 `Ctrl+C` 取消当前 turn；
 - 两秒内连续按两次 `Ctrl+C` 退出；
 - 默认命令和 `chat` 子命令复用同一个交互循环。
 
@@ -112,6 +114,9 @@ syzzz --version                    查看版本
 - 工具调用最多执行 10 轮；
 - 单个工具结果最多保留 100,000 个字符；
 - 未知工具返回显式错误结果；
+- 使用 Zod 在副作用发生前校验工具输入；
+- 写入和命令工具缺少审批处理器时默认拒绝；
+- 取消信号贯穿 CLI、Engine、Provider 和工具上下文；
 - Provider 或工具循环失败时，不把未完成回合提交到正式消息历史；
 - Provider 和 Tool 可以通过构造参数注入，便于隔离测试。
 
@@ -153,12 +158,19 @@ C:\Users\<用户名>\.syzzz-code\config.json
 
 当前内置四种工具：
 
-- `Shell`：执行 Shell 命令；
-- `Read`：读取文本文件；
-- `Write`：创建或覆盖文件；
-- `Edit`：使用字符串查找替换修改文件。
+- `Shell`：审批后异步执行非交互命令，支持超时、取消、进程树终止、stdout/stderr 分离与输出限制；
+- `Read`：读取工作区内通过真实路径与敏感路径检查的 UTF-8 文件；
+- `Write`：审批前生成 diff，审批后校验内容 hash 再创建或覆盖文件；
+- `Edit`：要求 `old_string` 唯一匹配，审批前生成 diff，并检测审批后的并发变化。
 
-工具调用在 OpenAI-compatible 和 Anthropic 两类协议下均有对应的消息转换实现。
+工具使用统一的 `ToolDefinition`、`ToolContext` 和 `ToolResult` 契约。工具调用与结构化错误在 OpenAI-compatible 和 Anthropic 两类协议下均有对应转换；Anthropic 错误结果会设置 `is_error: true`。
+
+文件工具默认拒绝：
+
+- 工作区外路径；
+- `.git`、`.ssh`、`.env`、私钥和常见凭据文件；
+- 通过 symlink 或 Windows junction 产生的越界；
+- 通过链接别名访问工作区内敏感目录。
 
 ## 4. 测试与验证状态
 
@@ -172,12 +184,14 @@ npm test
 
 该命令先执行 TypeScript 构建，再运行 `tests/*.test.mjs`。
 
-当前正式测试套件包含 15 项离线测试：
+当前正式测试套件包含 37 项离线测试：
 
 - `tests/config.test.mjs`：4 项；
-- `tests/provider-protocol.test.mjs`：4 项；
-- `tests/engine.test.mjs`：4 项；
-- `tests/cli.test.mjs`：3 项。
+- `tests/provider-protocol.test.mjs`：5 项；
+- `tests/engine.test.mjs`：10 项；
+- `tests/cli.test.mjs`：4 项；
+- `tests/tools.test.mjs`：7 项；
+- `tests/shell-runner.test.mjs`：7 项。
 
 覆盖范围包括：
 
@@ -187,19 +201,27 @@ npm test
 - 当前 Provider 不存在；
 - OpenAI-compatible 工具消息转换；
 - Anthropic 工具消息转换；
+- 两类 Provider 的工具错误语义；
 - Engine 工具调用历史；
+- Zod 工具输入校验；
+- 审批通过、拒绝和缺少审批处理器时的 fail-closed 行为；
+- 取消后消息历史回滚和下一轮恢复；
 - 失败回合的消息历史回滚；
 - 并发消息保护；
 - 工具循环上限；
+- 路径越界、敏感路径、symlink 和 Windows junction；
+- Write/Edit diff、唯一匹配和审批后冲突检测；
+- Shell 正常退出、非零退出、超时、取消和输出超限；
 - CLI 命令注册；
 - Provider 与模型切换持久化；
-- 连续消息分别只处理一次。
+- 连续消息分别只处理一次；
+- 审批输入不会泄漏成下一条聊天消息。
 
 最近一次完整结果：
 
 ```text
-tests 15
-pass 15
+tests 37
+pass 37
 fail 0
 ```
 
@@ -207,7 +229,7 @@ fail 0
 
 ### 4.2 已完成人工真实验证
 
-2026-07-15 在 Windows PowerShell 环境中完成过一次人工验证，使用用户配置中的 OpenAI-compatible 中转服务和 `deepseek-v4-flash-free` 模型标识。
+在 Phase 1 之前，项目已在 Windows PowerShell 环境中完成过一次人工验证，使用用户配置中的 OpenAI-compatible 中转服务和 `deepseek-v4-flash-free` 模型标识。
 
 已观察到：
 
@@ -270,38 +292,28 @@ Remote Model API
 
 ## 6. 已知问题与技术债
 
-### 6.1 P0：工具权限和执行安全
+### 6.1 P0：Shell 仍不是安全沙箱
 
-当前最严重的问题是工具拥有过高权限：
+- 所有 Shell 命令都会请求确认，但获批命令仍拥有当前账户权限；
+- 文件工具的工作区边界不会限制 Shell 命令自身的路径、网络或系统副作用；
+- 当前没有容器、系统调用过滤、网络隔离或资源配额；
+- 提示注入仍可能诱导模型提出危险命令，安全性依赖用户审查审批预览。
 
-- `Shell` 可以执行当前账户有权执行的任意命令；
-- `Read`、`Write`、`Edit` 可以访问当前账户有权访问的任意路径；
-- 没有工作区边界；
-- 没有命令审批；
-- 没有写入前 diff；
-- 没有沙箱；
-- 没有提示注入防护；
-- 没有 symlink/junction 逃逸防护。
+因此当前版本仍不适合在生产目录、包含敏感凭据的目录或不可恢复环境中无人监督运行。
 
-当前版本不适合在生产目录、包含敏感凭据的目录或不可恢复环境中无人监督运行。
+### 6.2 P1：文件写入尚非原子替换
 
-### 6.2 P0：工具错误语义不完整
+- Write/Edit 已有 diff、唯一匹配和审批后 hash 冲突检测；
+- 最终落盘仍使用直接 `writeFile`，进程在写入中途崩溃时可能留下部分内容；
+- 尚无通用 Patch、临时文件原子替换、备份或自动回滚；
+- 路径检查与真正写入之间仍存在操作系统层面的 TOCTOU 窗口。
 
-内置工具通常在内部捕获异常，然后返回 `Error: ...` 普通字符串。Engine 只有在工具抛出异常时才会设置结构化错误状态。
+### 6.3 P1：Provider 可靠性仍不完整
 
-因此当前可能出现：
-
-- 工具实际失败，但协议层收到普通工具结果；
-- 模型需要通过解析字符串判断是否失败；
-- Anthropic `is_error` 语义无法始终可靠表达。
-
-### 6.3 P1：缺少超时和取消
-
-- Shell 仍使用同步 `execSync`；
-- Shell 没有 timeout；
-- Provider 请求没有统一的 `AbortSignal`；
-- Ctrl+C 主要控制交互界面，不能可靠取消底层网络请求和子进程；
-- 长命令可能阻塞整个 CLI。
+- `AbortSignal` 已贯穿 Provider SDK 请求，但尚无统一请求 timeout；
+- 401、404、429、5xx、网络和上下文超限仍没有分类错误；
+- 尚无遵循 `Retry-After` 的有限重试；
+- usage、finish reason、延迟和 request ID 尚未进入统一事件与审计记录。
 
 ### 6.4 P1：上下文无限增长
 
@@ -340,14 +352,14 @@ Remote Model API
 
 ### 6.7 P2：类型和协议遗留
 
-- 工具协议仍使用 `input_schema`，Provider 中间协议使用 `inputSchema`；
-- 工具执行输入仍存在 `any`；
 - Provider SDK 转换中仍有 `as any`；
-- ProviderConfig 和消息类型曾存在多套定义，仍需继续收敛。
+- 部分异常捕获仍使用显式 `any`，尚未完全收敛为 `unknown`；
+- ProviderConfig 和消息类型曾存在多套定义，仍需继续收敛；
+- 完整的 typed Provider error 与 typed ToolError 分类尚未建立。
 
 ## 7. 安全使用建议
 
-在 Tool Runtime 完成安全升级前：
+即使 Phase 1 已完成，当前版本仍应遵循以下安全建议：
 
 1. 只在可恢复的 Git 仓库副本中运行；
 2. 使用低权限账户、容器或虚拟机；
@@ -361,28 +373,25 @@ Remote Model API
 
 ### 8.1 已推送基线
 
-当前核心实现已经推送到远程 `main`：
+当前文档化基线已经推送到远程 `main`：
 
 ```text
-commit: 6aa1cc5
-title:  实现多厂商 Provider 架构与交互式 CLI
+commit: 7ea3aa1
+title:  完善当前状态与后续升级路线文档
 ```
 
-该提交包含：
+该远程基线包含：
 
 - 多 Provider 核心实现；
 - CLI 连续交互修复；
 - 配置切换；
 - 15 项正式测试；
-- 历史文档和旧测试脚本归档。
+- 历史文档和旧测试脚本归档；
+- 重建后的 README、当前状态与路线图。
 
 ### 8.2 当前本地文档工作
 
-当前正在本地重新建立活跃文档：
-
-- `README.md`：已完成本地重写，尚未提交和推送；
-- `CURRENT_STATUS.md`：本文档，尚未提交和推送；
-- 其他架构、安全和路线文档：待用户确认后继续编写。
+Phase 1 的实现、37 项测试和本轮文档同步目前只存在于本地工作区，尚未提交或推送。包版本也仍为 `1.0.0`；是否发布为 `v1.1.0` 应在用户审阅和人工试用后决定。
 
 ### 8.3 Tag 状态
 
@@ -390,49 +399,31 @@ title:  实现多厂商 Provider 架构与交互式 CLI
 
 ## 9. 下一阶段目标
 
-下一阶段不优先增加更多模型、供应商或高级 UI，而是建设可信执行底座。
+Phase 1 已完成本地实现和自动化验收。下一阶段按路线进入 Phase 2，不优先增加更多模型、供应商、代码工具或高级 UI：
 
-### Phase 1：Tool Runtime 安全与正确性
+1. 定义统一 Agent Event Stream；
+2. 支持文本流式输出和事件驱动 CLI；
+3. 建立 Provider 分类错误、请求 timeout 和有限重试；
+4. 消费并记录 usage、finish reason、延迟和 request ID；
+5. 建立可脱敏、可追踪的逐轮执行审计。
 
-优先实施：
-
-1. 统一 `ToolDefinition`、`ToolContext`、`ToolResult` 和类型化错误；
-2. 为工具输入增加运行时 schema 校验；
-3. 实现工作区路径边界和 symlink/junction 防逃逸；
-4. 将 Shell 改为异步执行；
-5. 增加超时、取消和输出限制；
-6. 建立工具风险分级和用户审批；
-7. 写入前展示 diff；
-8. 增加真实工具的安全与错误测试。
-
-### 后续阶段
-
-在 Phase 1 稳定后，再按顺序考虑：
-
-1. Agent Event Stream 和流式输出；
-2. token usage、延迟、成本和执行审计；
-3. Glob、Grep、范围 Read、Patch、Diagnostics 等专用代码工具；
-4. 上下文预算、自动压缩和 repo map；
-5. ask/plan/code 模式；
-6. 会话持久化和 checkpoint；
-7. MCP、Hooks 和受限子 Agent。
+Phase 3 的专用代码工具、Context Manager 与 repo map，Phase 4 的会话和模式，以及 Phase 5 的 MCP、Hooks 与子 Agent，均不在下一轮实现范围内。
 
 Browser、Web UI、Electron、VS Code 插件、插件市场和团队协作暂不进入近期范围。
 
 ## 10. 下一里程碑验收标准
 
-下一阶段完成时，至少应满足：
+Phase 2 完成时，至少应满足：
 
-- 工具非法输入在执行前被拒绝；
-- 工具失败具有可靠的结构化错误语义；
-- 默认不能访问工作区外文件；
-- Shell 可以超时和取消；
-- 危险操作未经确认不会执行；
-- 文件写入前可以查看 diff；
-- 关键安全路径具有自动化测试；
-- CLI 可以清楚展示工具执行状态和失败原因；
-- 文档、代码和测试对当前能力的描述保持一致。
+- 文本响应可以流式展示；
+- CLI 由事件流驱动，不再由 Engine 直接打印工具状态；
+- 401、404、429、超时、网络错误和上下文超限具有稳定分类；
+- 重试有最大次数和总时间预算，且不会重复工具副作用；
+- 每轮可以追踪模型、token、耗时、工具、重试和最终状态；
+- 日志对 API Key、Authorization 和疑似凭据脱敏；
+- 非交互调用可以选择机器可读事件输出；
+- Phase 1 的 37 项安全回归继续保持通过。
 
 ---
 
-当前最重要的判断是：Provider 主链路已经证明可行。接下来决定项目质量的，不是再增加多少模型，而是能否把工具执行、权限、上下文和验证过程建设成可信的工程系统。
+当前最重要的判断是：Provider 主链路和安全 Tool Runtime 已证明可行。下一步决定项目质量的，是能否把这一执行底座演进为可观察、可分类恢复且可供多个界面消费的事件化 Runtime。

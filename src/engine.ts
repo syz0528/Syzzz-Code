@@ -1,4 +1,9 @@
-import type { Tool } from './types.js';
+import type {
+  ToolApprovalDetails,
+  ToolApprovalHandler,
+  ToolContext,
+  ToolDefinition
+} from './types.js';
 import { getCurrentProviderConfig } from './config.js';
 import { createProvider } from './providers/factory.js';
 import type {
@@ -8,24 +13,37 @@ import type {
   ToolResultMessage
 } from './providers/base.js';
 import { allTools } from './tools/index.js';
+import { isAbortError, OperationAbortedError, throwIfAborted } from './tools/abort.js';
+import {
+  convertToolSchemaToJsonSchema,
+  validateToolInput
+} from './tools/runtime.js';
 
 const MAX_TOOL_ROUNDS = 10;
 const MAX_TOOL_RESULT_CHARACTERS = 100_000;
 
 export interface QueryEngineOptions {
   provider?: AIProvider;
-  tools?: Tool[];
+  tools?: ToolDefinition[];
+  workspaceRoot?: string;
   announceProvider?: boolean;
+}
+
+export interface ChatOptions {
+  signal?: AbortSignal;
+  requestApproval?: ToolApprovalHandler;
 }
 
 export class QueryEngine {
   private provider: AIProvider;
   private messages: ConversationMessage[] = [];
-  private tools: Tool[];
+  private tools: ToolDefinition[];
+  private workspaceRoot: string;
   private isProcessing = false;
 
   constructor(options: QueryEngineOptions = {}) {
     this.tools = options.tools ?? allTools;
+    this.workspaceRoot = options.workspaceRoot ?? process.cwd();
 
     if (options.provider) {
       this.provider = options.provider;
@@ -55,7 +73,10 @@ export class QueryEngine {
     
   }
 
-  async chat(userMessage: string): Promise<string> {
+  async chat(userMessage: string, options: ChatOptions = {}): Promise<string> {
+    const signal = options.signal ?? new AbortController().signal;
+    throwIfAborted(signal);
+
     if (this.isProcessing) {
       throw new Error('Another message is still being processed');
     }
@@ -73,16 +94,19 @@ export class QueryEngine {
     const providerTools: ProviderTool[] = this.tools.map(tool => ({
       name: tool.name,
       description: tool.description,
-      inputSchema: tool.input_schema
+      inputSchema: convertToolSchemaToJsonSchema(tool)
     }));
 
     try {
       for (let toolRound = 0; toolRound <= MAX_TOOL_ROUNDS; toolRound++) {
+        throwIfAborted(signal);
         const response = await this.provider.chat({
           messages: workingMessages,
           tools: providerTools,
-          systemPrompt: this.getSystemPrompt()
+          systemPrompt: this.getSystemPrompt(),
+          signal
         });
+        throwIfAborted(signal);
 
         workingMessages.push(response.message);
         if (response.message.content.trim()) {
@@ -100,12 +124,22 @@ export class QueryEngine {
         }
 
         for (const toolCall of toolCalls) {
-          workingMessages.push(await this.executeToolCall(toolCall.id, toolCall.name, toolCall.input));
+          throwIfAborted(signal);
+          workingMessages.push(await this.executeToolCall(
+            toolCall.id,
+            toolCall.name,
+            toolCall.input,
+            signal,
+            options.requestApproval
+          ));
         }
       }
 
       throw new Error('Chat ended without a final response');
     } catch (error) {
+      if (signal.aborted || isAbortError(error)) {
+        throw isAbortError(error) ? error : new OperationAbortedError();
+      }
       const reason = error instanceof Error ? error.message : String(error);
       throw new Error(`Chat error: ${reason}`);
     } finally {
@@ -113,7 +147,13 @@ export class QueryEngine {
     }
   }
 
-  private async executeToolCall(toolCallId: string, toolName: string, input: unknown): Promise<ToolResultMessage> {
+  private async executeToolCall(
+    toolCallId: string,
+    toolName: string,
+    input: unknown,
+    signal: AbortSignal,
+    requestApproval?: ToolApprovalHandler
+  ): Promise<ToolResultMessage> {
     const tool = this.tools.find(candidate => candidate.name === toolName);
     if (!tool) {
       return {
@@ -125,17 +165,95 @@ export class QueryEngine {
       };
     }
 
-    console.log(`\n[Tool: ${toolName}]`);
-
-    try {
-      const rawResult = await tool.execute(input);
+    const validationResult = validateToolInput(tool, input);
+    if (!validationResult.success) {
       return {
         role: 'tool',
         toolCallId,
         toolName,
-        content: this.truncateToolResult(rawResult)
+        content: validationResult.message,
+        isError: true
+      };
+    }
+
+    const baseContext: ToolContext = {
+      toolCallId,
+      workspaceRoot: this.workspaceRoot,
+      workingDirectory: this.workspaceRoot,
+      signal
+    };
+
+    try {
+      throwIfAborted(signal);
+      let executionContext = baseContext;
+
+      if (tool.approval === 'always') {
+        let approvalDetails: ToolApprovalDetails = {
+          description: `Execute ${tool.name}`
+        };
+
+        if (tool.prepareApproval) {
+          approvalDetails = await tool.prepareApproval(
+            validationResult.data,
+            baseContext
+          );
+        }
+
+        if (!requestApproval) {
+          return {
+            role: 'tool',
+            toolCallId,
+            toolName,
+            content: `Tool execution denied: ${tool.name} requires user approval, but no approval handler is available`,
+            isError: true
+          };
+        }
+
+        throwIfAborted(signal);
+        const isApproved = await requestApproval({
+          toolCallId,
+          toolName,
+          risk: tool.risk,
+          input: validationResult.data,
+          description: approvalDetails.description,
+          preview: approvalDetails.preview
+        }, signal);
+        throwIfAborted(signal);
+
+        if (!isApproved) {
+          return {
+            role: 'tool',
+            toolCallId,
+            toolName,
+            content: `Tool execution denied by the user: ${approvalDetails.description}`,
+            isError: true
+          };
+        }
+
+        executionContext = {
+          ...baseContext,
+          approvalData: approvalDetails.executionData
+        };
+      }
+
+      console.log(`\n[Tool: ${toolName}]`);
+      const toolResult = await tool.execute(
+        validationResult.data,
+        executionContext
+      );
+      throwIfAborted(signal);
+
+      return {
+        role: 'tool',
+        toolCallId,
+        toolName,
+        content: this.truncateToolResult(toolResult.content),
+        ...(toolResult.isError ? { isError: true } : {})
       };
     } catch (error) {
+      if (signal.aborted || isAbortError(error)) {
+        throw isAbortError(error) ? error : new OperationAbortedError();
+      }
       const reason = error instanceof Error ? error.message : String(error);
       return {
         role: 'tool',
@@ -166,7 +284,7 @@ Rules:
 3. Run relevant checks after making changes.
 4. Never claim a tool succeeded unless its result confirms success.
 
-Current working directory: ${process.cwd()}`;
+Workspace root: ${this.workspaceRoot}`;
   }
 
   getMessages(): ConversationMessage[] {

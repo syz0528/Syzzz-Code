@@ -1,5 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { z } from 'zod';
 import { QueryEngine } from '../dist/engine.js';
 
 test('executes a tool call and preserves structured tool history', async () => {
@@ -42,16 +43,13 @@ test('executes a tool call and preserves structured tool history', async () => {
   const readTool = {
     name: 'Read',
     description: 'Read a file',
-    input_schema: {
-      type: 'object',
-      properties: {
-        path: { type: 'string' }
-      },
-      required: ['path']
-    },
-    async execute(input) {
+    inputSchema: z.object({ path: z.string() }).strict(),
+    risk: 'read',
+    approval: 'never',
+    async execute(input, context) {
       assert.deepEqual(input, { path: 'package.json' });
-      return '{"name":"syzzz-code"}';
+      assert.equal(context.toolCallId, 'call-1');
+      return { content: '{"name":"syzzz-code"}' };
     }
   };
 
@@ -181,4 +179,269 @@ test('stops an endless tool-call loop without committing the failed turn', async
   );
   assert.equal(requestCount, 11);
   assert.deepEqual(engine.getMessages(), []);
+});
+
+test('rejects invalid tool input before execution', async () => {
+  const requests = [];
+  let executionCount = 0;
+  const provider = {
+    async chat(request) {
+      requests.push(structuredClone(request));
+      if (requests.length === 1) {
+        return {
+          message: {
+            role: 'assistant',
+            content: '',
+            toolCalls: [{ id: 'invalid-1', name: 'Read', input: { path: 42 } }]
+          }
+        };
+      }
+      return { message: { role: 'assistant', content: 'Input rejected.' } };
+    },
+    getInfo() {
+      return { name: 'Fake', type: 'test' };
+    }
+  };
+  const tool = {
+    name: 'Read',
+    description: 'Read a file',
+    inputSchema: z.object({ path: z.string() }).strict(),
+    risk: 'read',
+    approval: 'never',
+    async execute() {
+      executionCount += 1;
+      return { content: 'unexpected' };
+    }
+  };
+
+  const engine = new QueryEngine({ provider, tools: [tool], announceProvider: false });
+  assert.equal(await engine.chat('Use an invalid tool input'), 'Input rejected.');
+  assert.equal(executionCount, 0);
+  assert.equal(requests[1].messages.at(-1).isError, true);
+  assert.match(requests[1].messages.at(-1).content, /Invalid tool input/);
+});
+
+test('preserves a structured tool error in provider history', async () => {
+  const requests = [];
+  const provider = {
+    async chat(request) {
+      requests.push(structuredClone(request));
+      if (requests.length === 1) {
+        return {
+          message: {
+            role: 'assistant',
+            content: '',
+            toolCalls: [{ id: 'error-1', name: 'Read', input: { path: 'missing' } }]
+          }
+        };
+      }
+      return { message: { role: 'assistant', content: 'The tool failed.' } };
+    },
+    getInfo() {
+      return { name: 'Fake', type: 'test' };
+    }
+  };
+  const tool = {
+    name: 'Read',
+    description: 'Read a file',
+    inputSchema: z.object({ path: z.string() }).strict(),
+    risk: 'read',
+    approval: 'never',
+    async execute() {
+      return { content: 'Read failed: file not found', isError: true };
+    }
+  };
+
+  const engine = new QueryEngine({ provider, tools: [tool], announceProvider: false });
+  assert.equal(await engine.chat('Read a missing file'), 'The tool failed.');
+  assert.deepEqual(requests[1].messages.at(-1), {
+    role: 'tool',
+    toolCallId: 'error-1',
+    toolName: 'Read',
+    content: 'Read failed: file not found',
+    isError: true
+  });
+});
+
+test('denies a high-risk tool without approval and does not execute it', async () => {
+  const requests = [];
+  let executionCount = 0;
+  const provider = {
+    async chat(request) {
+      requests.push(structuredClone(request));
+      if (requests.length === 1) {
+        return {
+          message: {
+            role: 'assistant',
+            content: '',
+            toolCalls: [{ id: 'write-1', name: 'Write', input: { value: 'new' } }]
+          }
+        };
+      }
+      return { message: { role: 'assistant', content: 'No change was made.' } };
+    },
+    getInfo() {
+      return { name: 'Fake', type: 'test' };
+    }
+  };
+  const tool = {
+    name: 'Write',
+    description: 'Write data',
+    inputSchema: z.object({ value: z.string() }).strict(),
+    risk: 'write',
+    approval: 'always',
+    async prepareApproval() {
+      return { description: 'Replace a file', preview: 'sample diff' };
+    },
+    async execute() {
+      executionCount += 1;
+      return { content: 'written' };
+    }
+  };
+
+  const engine = new QueryEngine({ provider, tools: [tool], announceProvider: false });
+  assert.equal(await engine.chat('Write without approval'), 'No change was made.');
+  assert.equal(executionCount, 0);
+  assert.equal(requests[1].messages.at(-1).isError, true);
+  assert.match(requests[1].messages.at(-1).content, /requires user approval/);
+});
+
+test('honors an explicit approval decision before executing a tool', async () => {
+  let requestCount = 0;
+  let executionCount = 0;
+  const provider = {
+    async chat() {
+      requestCount += 1;
+      if (requestCount === 1) {
+        return {
+          message: {
+            role: 'assistant',
+            content: '',
+            toolCalls: [{ id: 'shell-1', name: 'Shell', input: { command: 'echo ok' } }]
+          }
+        };
+      }
+      return { message: { role: 'assistant', content: 'Approved.' } };
+    },
+    getInfo() {
+      return { name: 'Fake', type: 'test' };
+    }
+  };
+  const tool = {
+    name: 'Shell',
+    description: 'Execute a command',
+    inputSchema: z.object({ command: z.string() }).strict(),
+    risk: 'execute',
+    approval: 'always',
+    async prepareApproval(input) {
+      return {
+        description: 'Execute command',
+        preview: input.command,
+        executionData: { approved: true }
+      };
+    },
+    async execute(_input, context) {
+      executionCount += 1;
+      assert.deepEqual(context.approvalData, { approved: true });
+      return { content: 'ok' };
+    }
+  };
+  const approvalRequests = [];
+
+  const engine = new QueryEngine({ provider, tools: [tool], announceProvider: false });
+  const response = await engine.chat('Run a command', {
+    async requestApproval(request) {
+      approvalRequests.push(request);
+      return true;
+    }
+  });
+
+  assert.equal(response, 'Approved.');
+  assert.equal(executionCount, 1);
+  assert.equal(approvalRequests.length, 1);
+  assert.equal(approvalRequests[0].risk, 'execute');
+  assert.equal(approvalRequests[0].preview, 'echo ok');
+});
+
+test('does not execute a tool when the user rejects approval', async () => {
+  let requestCount = 0;
+  let executionCount = 0;
+  let toolResult;
+  const provider = {
+    async chat(request) {
+      requestCount += 1;
+      if (requestCount === 1) {
+        return {
+          message: {
+            role: 'assistant',
+            content: '',
+            toolCalls: [{ id: 'write-denied', name: 'Write', input: { value: 'new' } }]
+          }
+        };
+      }
+      toolResult = structuredClone(request.messages.at(-1));
+      return { message: { role: 'assistant', content: 'Denied.' } };
+    },
+    getInfo() {
+      return { name: 'Fake', type: 'test' };
+    }
+  };
+  const tool = {
+    name: 'Write',
+    description: 'Write data',
+    inputSchema: z.object({ value: z.string() }).strict(),
+    risk: 'write',
+    approval: 'always',
+    async prepareApproval() {
+      return { description: 'Replace a file', preview: 'sample diff' };
+    },
+    async execute() {
+      executionCount += 1;
+      return { content: 'written' };
+    }
+  };
+
+  const engine = new QueryEngine({ provider, tools: [tool], announceProvider: false });
+  const response = await engine.chat('Reject this write', {
+    async requestApproval() {
+      return false;
+    }
+  });
+
+  assert.equal(response, 'Denied.');
+  assert.equal(executionCount, 0);
+  assert.equal(toolResult.isError, true);
+  assert.match(toolResult.content, /denied by the user/);
+});
+
+test('cancels an active provider request without committing the turn', async () => {
+  let shouldWaitForCancellation = true;
+  const provider = {
+    chat(request) {
+      if (!shouldWaitForCancellation) {
+        return Promise.resolve({
+          message: { role: 'assistant', content: 'Recovered.' }
+        });
+      }
+
+      return new Promise((resolve, reject) => {
+        request.signal.addEventListener('abort', () => {
+          reject(new Error('provider request aborted'));
+        }, { once: true });
+      });
+    },
+    getInfo() {
+      return { name: 'Fake', type: 'test' };
+    }
+  };
+  const engine = new QueryEngine({ provider, tools: [], announceProvider: false });
+  const abortController = new AbortController();
+
+  const cancelledTurn = engine.chat('Cancel me', { signal: abortController.signal });
+  abortController.abort();
+  await assert.rejects(cancelledTurn, error => error?.name === 'AbortError');
+  assert.deepEqual(engine.getMessages(), []);
+
+  shouldWaitForCancellation = false;
+  assert.equal(await engine.chat('Try again'), 'Recovered.');
 });

@@ -119,3 +119,38 @@ test('converts tools to Anthropic definitions', () => {
     }
   ]);
 });
+
+test('preserves tool error semantics across provider protocols', () => {
+  const errorMessages = [
+    { role: 'user', content: 'Read a missing file' },
+    {
+      role: 'assistant',
+      content: '',
+      toolCalls: [{ id: 'error-1', name: 'Read', input: { path: 'missing.txt' } }]
+    },
+    {
+      role: 'tool',
+      toolCallId: 'error-1',
+      toolName: 'Read',
+      content: 'Read failed: file not found',
+      isError: true
+    }
+  ];
+
+  assert.deepEqual(convertMessagesToOpenAI(errorMessages, 'System prompt').at(-1), {
+    role: 'tool',
+    tool_call_id: 'error-1',
+    content: 'Read failed: file not found'
+  });
+  assert.deepEqual(convertMessagesToAnthropic(errorMessages).at(-1), {
+    role: 'user',
+    content: [
+      {
+        type: 'tool_result',
+        tool_use_id: 'error-1',
+        content: 'Read failed: file not found',
+        is_error: true
+      }
+    ]
+  });
+});

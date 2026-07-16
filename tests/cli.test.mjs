@@ -115,3 +115,46 @@ test('interactive session processes consecutive messages exactly once', () => {
   assert.match(result.stdout, /reply:second/);
   assert.match(result.stdout, /Goodbye!/);
 });
+
+test('interactive approval input is not handled as a chat message', () => {
+  const script = `
+    import { runInteractiveSession } from './dist/interactive.js';
+
+    const engine = {
+      async chat(message, options) {
+        console.log('HANDLED:' + message);
+        if (message === 'change') {
+          const approved = await options.requestApproval({
+            toolCallId: 'write-1',
+            toolName: 'Write',
+            risk: 'write',
+            input: { path: 'file.txt' },
+            description: 'Update file.txt',
+            preview: '-before\\n+after'
+          }, options.signal);
+          console.log('APPROVED:' + approved);
+        }
+        return 'reply:' + message;
+      }
+    };
+
+    await runInteractiveSession(engine);
+  `;
+
+  const result = spawnSync(
+    process.execPath,
+    ['--input-type=module', '--eval', script],
+    {
+      cwd: projectDirectory,
+      encoding: 'utf-8',
+      input: 'change\ny\nnext\nexit\n',
+      timeout: 5_000
+    }
+  );
+
+  assert.equal(result.status, 0, result.stderr || result.error?.message);
+  assert.match(result.stdout, /APPROVED:true/);
+  assert.equal((result.stdout.match(/HANDLED:change/g) ?? []).length, 1);
+  assert.equal((result.stdout.match(/HANDLED:next/g) ?? []).length, 1);
+  assert.doesNotMatch(result.stdout, /HANDLED:y/);
+});

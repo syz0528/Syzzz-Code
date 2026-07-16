@@ -39,6 +39,7 @@ export interface ProviderChatRequest {
   messages: ConversationMessage[];
   tools: ProviderTool[];
   systemPrompt: string;
+  signal?: AbortSignal;
 }
 
 export interface ProviderChatResponse {

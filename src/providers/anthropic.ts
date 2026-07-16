@@ -86,13 +86,16 @@ export class AnthropicProvider implements AIProvider {
 
   async chat(request: ProviderChatRequest): Promise<ProviderChatResponse> {
     try {
-      const response = await this.client.messages.create({
-        model: this.model,
-        max_tokens: 8192,
-        system: request.systemPrompt,
-        messages: convertMessagesToAnthropic(request.messages) as any,
-        tools: convertToolsToAnthropic(request.tools) as any
-      });
+      const response = await this.client.messages.create(
+        {
+          model: this.model,
+          max_tokens: 8192,
+          system: request.systemPrompt,
+          messages: convertMessagesToAnthropic(request.messages) as any,
+          tools: convertToolsToAnthropic(request.tools) as any
+        },
+        { signal: request.signal }
+      );
 
       let content = '';
       const toolCalls: ToolCall[] = [];
@@ -127,6 +130,9 @@ export class AnthropicProvider implements AIProvider {
         } : undefined
       };
     } catch (error: any) {
+      if (request.signal?.aborted || error?.name === 'AbortError') {
+        throw error;
+      }
       throw new Error(`Anthropic API Error: ${error.message}`);
     }
   }
