@@ -1,5 +1,5 @@
-import { readFile, writeFile } from 'node:fs/promises';
-import { relative } from 'node:path';
+import { readdir, readFile, writeFile } from 'node:fs/promises';
+import { join, relative } from 'node:path';
 import { z } from 'zod';
 import type { ToolDefinition, ToolResult } from '../types.js';
 import { isAbortError, OperationAbortedError, throwIfAborted } from './abort.js';
@@ -18,6 +18,7 @@ const MAX_PATH_CHARACTERS = 4_096;
 const MAX_FILE_CONTENT_CHARACTERS = 2_000_000;
 const MAX_SHELL_COMMAND_CHARACTERS = 20_000;
 const MAX_SHELL_TIMEOUT_MS = 120_000;
+const MAX_LIST_DIRECTORY_ENTRIES = 500;
 
 function createToolError(action: string, error: unknown): ToolResult {
   if (isAbortError(error)) {
@@ -136,6 +137,78 @@ export const shellTool = defineTool({
         stderrTruncated: result.stderrTruncated
       }
     };
+  }
+});
+
+const listDirectoryInputSchema = z.object({
+  path: pathSchema
+    .optional()
+    .describe('Directory path inside the workspace; defaults to the workspace root')
+}).strict();
+
+export const listDirectoryTool = defineTool({
+  name: 'ListDirectory',
+  description:
+    'List files and directories inside the current workspace. Prefer this over Shell for exploring project structure.',
+  inputSchema: listDirectoryInputSchema,
+  risk: 'read',
+  approval: 'never',
+  async execute(input, context) {
+    try {
+      throwIfAborted(context.signal);
+      const requestedPath = input.path?.trim() || '.';
+      const targetPath = await resolveWorkspacePath(
+        requestedPath,
+        context.workspaceRoot,
+        'read'
+      );
+      const directoryEntries = await readdir(targetPath, {
+        withFileTypes: true
+      });
+      throwIfAborted(context.signal);
+
+      const sortedEntries = [...directoryEntries].sort((left, right) =>
+        left.name.localeCompare(right.name)
+      );
+      const truncated = sortedEntries.length > MAX_LIST_DIRECTORY_ENTRIES;
+      const visibleEntries = truncated
+        ? sortedEntries.slice(0, MAX_LIST_DIRECTORY_ENTRIES)
+        : sortedEntries;
+
+      const formattedLines = visibleEntries.map(entry => {
+        const kind = entry.isDirectory()
+          ? 'dir'
+          : entry.isSymbolicLink()
+            ? 'link'
+            : entry.isFile()
+              ? 'file'
+              : 'other';
+        const displayPath = relative(
+          context.workspaceRoot,
+          join(targetPath, entry.name)
+        );
+        return `${kind.padEnd(4)} ${displayPath || entry.name}`;
+      });
+
+      const header = `Directory: ${relative(context.workspaceRoot, targetPath) || '.'}`;
+      const body = formattedLines.length > 0
+        ? formattedLines.join('\n')
+        : '(empty directory)';
+      const footer = truncated
+        ? `\n\n[Truncated: showing ${MAX_LIST_DIRECTORY_ENTRIES} of ${sortedEntries.length} entries]`
+        : '';
+
+      return {
+        content: `${header}\n${body}${footer}`,
+        metadata: {
+          entryCount: sortedEntries.length,
+          shownCount: visibleEntries.length,
+          truncated
+        }
+      };
+    } catch (error) {
+      return createToolError('ListDirectory', error);
+    }
   }
 });
 
@@ -333,8 +406,9 @@ export const editTool = defineTool({
 });
 
 export const allTools: ToolDefinition[] = [
-  shellTool,
+  listDirectoryTool,
   readTool,
+  editTool,
   writeTool,
-  editTool
+  shellTool
 ];

@@ -1,8 +1,9 @@
 # Syzzz Code 路线图
 
 **制定日期：** 2026-06-16  
-**适用基线：** `1.0.0` / 远程提交 `7ea3aa1`  
-**当前入口：** Phase 1 已在本地完成并通过 37 项测试，下一阶段为事件化 Agent Runtime 与 Provider 可靠性
+**最近更新：** 2026-07-16  
+**适用基线：** `1.0.0` / 远程 Phase 1 提交 `63ad76c`  
+**当前入口：** Phase 1 已推送；Phase 1.1 稳定化已实现并通过 44 项测试，下一阶段为事件化 Agent Runtime 与 Provider 可靠性
 
 > 本文档只描述尚未完成的工作、实施顺序和验收标准。当前已经实现的能力以 [`README.md`](README.md) 和 [`CURRENT_STATUS.md`](CURRENT_STATUS.md) 为准。
 
@@ -131,6 +132,9 @@ Phase 0  基线文档与版本冻结
 Phase 1  Tool Runtime 安全与正确性
    |
    v
+Phase 1.1  稳定化（权限模式 / ListDirectory / 环境 prompt）
+   |
+   v
 Phase 2  事件化 Agent Runtime 与 Provider 可靠性
    |
    v
@@ -176,7 +180,7 @@ Phase 6  持续评测、发布与工程治理
 
 ## 6. Phase 1：Tool Runtime 安全与正确性
 
-**状态：** 本地实现与自动化验收已完成，尚未提交、推送或发布。
+**状态：** 已推送到远程 `main`（`63ad76c`），37 项离线测试通过。
 
 ### 目标
 
@@ -193,9 +197,38 @@ Phase 6  持续评测、发布与工程治理
 - [x] Write/Edit/Shell 在缺少审批或用户拒绝时 fail closed；
 - [x] 使用异步 Shell，支持 timeout、取消、进程树终止和输出限制；
 - [x] 贯通 CLI、Engine、Provider 与工具的 `AbortSignal`；
-- [x] 扩展到 37 项离线回归测试并同步活跃文档。
+- [x] 扩展到 37 项离线回归测试并同步活跃文档；
+- [x] 提交并推送 Phase 1 基线。
 
 已知限制：Shell 审批不是操作系统沙箱；文件最终落盘尚非原子替换；Provider typed errors、请求 timeout、事件审计属于后续阶段。
+
+## 6A. Phase 1.1：Tool Runtime 稳定化
+
+**状态：** 本地实现与 44 项自动化测试已完成；提交/推送与 dogfood 冻结由用户决定。
+
+### 目标
+
+在不进入 Phase 2 的前提下，修复真实试用暴露的审批疲劳与探索依赖 Shell 的问题，使 Phase 1 从 Validated 进入 Stabilized，再冻结进入 Phase 2。
+
+### 交付内容
+
+- [x] 会话级权限模式 `safe` / `acceptEdits` / `fullAccess`；
+- [x] `/permissions` 查看与切换；`fullAccess` 需 `I understand` 确认；
+- [x] 策略求值：自动放行时仍运行 `prepareApproval` 以保留 Write/Edit `executionData`；
+- [x] system prompt 注入 Platform、Shell executor 与专用工具偏好；
+- [x] 最小只读工具 `ListDirectory`；
+- [x] 扩展离线测试至 44 项并同步 README / CURRENT_STATUS / ROADMAP。
+
+### 明确不做
+
+- Shell 语义分类器、沙箱、永久权限配置、Glob/Grep 全家桶、EventStream。
+
+### 退出条件
+
+- 三模式行为符合矩阵，且 fullAccess 下文件边界仍生效；
+- `/permissions` 不泄漏为聊天消息；
+- `npm test` 全绿；
+- 人工 dogfood 三场景（结构探索 / acceptEdits 编辑+测试 / fullAccess 危险确认）通过后冻结，进入 Phase 2。
 
 ### 6.1 统一工具契约
 

@@ -445,3 +445,205 @@ test('cancels an active provider request without committing the turn', async () 
   shouldWaitForCancellation = false;
   assert.equal(await engine.chat('Try again'), 'Recovered.');
 });
+
+test('acceptEdits auto-approves write tools and still runs prepareApproval', async () => {
+  let requestCount = 0;
+  let prepareCount = 0;
+  let approvalHandlerCalls = 0;
+  let executionCount = 0;
+  const provider = {
+    async chat() {
+      requestCount += 1;
+      if (requestCount === 1) {
+        return {
+          message: {
+            role: 'assistant',
+            content: '',
+            toolCalls: [{ id: 'write-auto', name: 'Write', input: { value: 'new' } }]
+          }
+        };
+      }
+      return { message: { role: 'assistant', content: 'Wrote without a prompt.' } };
+    },
+    getInfo() {
+      return { name: 'Fake', type: 'test' };
+    }
+  };
+  const tool = {
+    name: 'Write',
+    description: 'Write data',
+    inputSchema: z.object({ value: z.string() }).strict(),
+    risk: 'write',
+    approval: 'always',
+    async prepareApproval() {
+      prepareCount += 1;
+      return {
+        description: 'Replace a file',
+        preview: 'sample diff',
+        executionData: { approved: true }
+      };
+    },
+    async execute(_input, context) {
+      executionCount += 1;
+      assert.deepEqual(context.approvalData, { approved: true });
+      return { content: 'written' };
+    }
+  };
+
+  const engine = new QueryEngine({
+    provider,
+    tools: [tool],
+    announceProvider: false,
+    permissionMode: 'acceptEdits'
+  });
+  const response = await engine.chat('Write automatically', {
+    async requestApproval() {
+      approvalHandlerCalls += 1;
+      return false;
+    }
+  });
+
+  assert.equal(response, 'Wrote without a prompt.');
+  assert.equal(prepareCount, 1);
+  assert.equal(executionCount, 1);
+  assert.equal(approvalHandlerCalls, 0);
+});
+
+test('acceptEdits still requires approval for shell tools', async () => {
+  let requestCount = 0;
+  let executionCount = 0;
+  const provider = {
+    async chat() {
+      requestCount += 1;
+      if (requestCount === 1) {
+        return {
+          message: {
+            role: 'assistant',
+            content: '',
+            toolCalls: [{ id: 'shell-1', name: 'Shell', input: { command: 'echo hi' } }]
+          }
+        };
+      }
+      return { message: { role: 'assistant', content: 'Shell blocked.' } };
+    },
+    getInfo() {
+      return { name: 'Fake', type: 'test' };
+    }
+  };
+  const tool = {
+    name: 'Shell',
+    description: 'Execute a command',
+    inputSchema: z.object({ command: z.string() }).strict(),
+    risk: 'execute',
+    approval: 'always',
+    async prepareApproval() {
+      return { description: 'Run shell' };
+    },
+    async execute() {
+      executionCount += 1;
+      return { content: 'ok' };
+    }
+  };
+
+  const engine = new QueryEngine({
+    provider,
+    tools: [tool],
+    announceProvider: false,
+    permissionMode: 'acceptEdits'
+  });
+  const response = await engine.chat('Run shell', {
+    // No handler — must fail closed for execute risk.
+  });
+
+  assert.equal(response, 'Shell blocked.');
+  assert.equal(executionCount, 0);
+});
+
+test('fullAccess skips shell approval prompts while preserving executionData prep', async () => {
+  let requestCount = 0;
+  let prepareCount = 0;
+  let approvalHandlerCalls = 0;
+  let executionCount = 0;
+  const provider = {
+    async chat() {
+      requestCount += 1;
+      if (requestCount === 1) {
+        return {
+          message: {
+            role: 'assistant',
+            content: '',
+            toolCalls: [{ id: 'shell-full', name: 'Shell', input: { command: 'echo full' } }]
+          }
+        };
+      }
+      return { message: { role: 'assistant', content: 'Shell ran.' } };
+    },
+    getInfo() {
+      return { name: 'Fake', type: 'test' };
+    }
+  };
+  const tool = {
+    name: 'Shell',
+    description: 'Execute a command',
+    inputSchema: z.object({ command: z.string() }).strict(),
+    risk: 'execute',
+    approval: 'always',
+    async prepareApproval(input) {
+      prepareCount += 1;
+      return {
+        description: 'Execute command',
+        preview: input.command,
+        executionData: { approved: true }
+      };
+    },
+    async execute(_input, context) {
+      executionCount += 1;
+      assert.deepEqual(context.approvalData, { approved: true });
+      return { content: 'ok' };
+    }
+  };
+
+  const engine = new QueryEngine({
+    provider,
+    tools: [tool],
+    announceProvider: false,
+    permissionMode: 'fullAccess'
+  });
+  const response = await engine.chat('Run freely', {
+    async requestApproval() {
+      approvalHandlerCalls += 1;
+      return false;
+    }
+  });
+
+  assert.equal(response, 'Shell ran.');
+  assert.equal(prepareCount, 1);
+  assert.equal(executionCount, 1);
+  assert.equal(approvalHandlerCalls, 0);
+  assert.equal(engine.getPermissionMode(), 'fullAccess');
+});
+
+test('system prompt includes platform and shell executor details', async () => {
+  let capturedPrompt = '';
+  const provider = {
+    async chat(request) {
+      capturedPrompt = request.systemPrompt;
+      return { message: { role: 'assistant', content: 'ok' } };
+    },
+    getInfo() {
+      return { name: 'Fake', type: 'test' };
+    }
+  };
+  const engine = new QueryEngine({
+    provider,
+    tools: [],
+    announceProvider: false,
+    workspaceRoot: '/tmp/workspace'
+  });
+  await engine.chat('hello');
+
+  assert.match(capturedPrompt, /Platform: /);
+  assert.match(capturedPrompt, /Shell executor: /);
+  assert.match(capturedPrompt, /ListDirectory/);
+  assert.match(capturedPrompt, /Permission mode: safe/);
+});

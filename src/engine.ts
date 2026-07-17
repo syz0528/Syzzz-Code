@@ -5,6 +5,11 @@ import type {
   ToolDefinition
 } from './types.js';
 import { getCurrentProviderConfig } from './config.js';
+import {
+  DEFAULT_PERMISSION_MODE,
+  type PermissionMode
+} from './permissions/mode.js';
+import { requiresUserApproval } from './permissions/policy.js';
 import { createProvider } from './providers/factory.js';
 import type {
   AIProvider,
@@ -18,6 +23,7 @@ import {
   convertToolSchemaToJsonSchema,
   validateToolInput
 } from './tools/runtime.js';
+import { resolveShellInvocation } from './tools/shell-runner.js';
 
 const MAX_TOOL_ROUNDS = 10;
 const MAX_TOOL_RESULT_CHARACTERS = 100_000;
@@ -27,6 +33,7 @@ export interface QueryEngineOptions {
   tools?: ToolDefinition[];
   workspaceRoot?: string;
   announceProvider?: boolean;
+  permissionMode?: PermissionMode;
 }
 
 export interface ChatOptions {
@@ -40,10 +47,12 @@ export class QueryEngine {
   private tools: ToolDefinition[];
   private workspaceRoot: string;
   private isProcessing = false;
+  private permissionMode: PermissionMode;
 
   constructor(options: QueryEngineOptions = {}) {
     this.tools = options.tools ?? allTools;
     this.workspaceRoot = options.workspaceRoot ?? process.cwd();
+    this.permissionMode = options.permissionMode ?? DEFAULT_PERMISSION_MODE;
 
     if (options.provider) {
       this.provider = options.provider;
@@ -51,8 +60,7 @@ export class QueryEngine {
     }
 
     const providerConfig = getCurrentProviderConfig();
-    
-    // 检查 API Key
+
     if (!providerConfig.env.API_KEY) {
       throw new Error(
         `No API key found for provider: ${providerConfig.name}\n\n` +
@@ -60,8 +68,7 @@ export class QueryEngine {
         `  syzzz config set apiKey YOUR_KEY\n`
       );
     }
-    
-    // 创建 Provider
+
     try {
       this.provider = createProvider(providerConfig);
       if (options.announceProvider !== false) {
@@ -70,7 +77,14 @@ export class QueryEngine {
     } catch (error: any) {
       throw new Error(`Failed to initialize provider: ${error.message}`);
     }
-    
+  }
+
+  getPermissionMode(): PermissionMode {
+    return this.permissionMode;
+  }
+
+  setPermissionMode(mode: PermissionMode): void {
+    this.permissionMode = mode;
   }
 
   async chat(userMessage: string, options: ChatOptions = {}): Promise<string> {
@@ -85,8 +99,8 @@ export class QueryEngine {
     const workingMessages: ConversationMessage[] = [
       ...this.messages,
       {
-      role: 'user',
-      content: userMessage
+        role: 'user',
+        content: userMessage
       }
     ];
 
@@ -186,8 +200,14 @@ export class QueryEngine {
     try {
       throwIfAborted(signal);
       let executionContext = baseContext;
+      const needsUserApproval = requiresUserApproval(this.permissionMode, tool);
 
-      if (tool.approval === 'always') {
+      // Tools that declare approval metadata may still need prepareApproval for
+      // executionData (Write/Edit hash), even when the mode auto-approves.
+      const needsPreparation =
+        tool.approval === 'always' || Boolean(tool.prepareApproval);
+
+      if (needsPreparation) {
         let approvalDetails: ToolApprovalDetails = {
           description: `Execute ${tool.name}`
         };
@@ -199,35 +219,37 @@ export class QueryEngine {
           );
         }
 
-        if (!requestApproval) {
-          return {
-            role: 'tool',
+        if (needsUserApproval) {
+          if (!requestApproval) {
+            return {
+              role: 'tool',
+              toolCallId,
+              toolName,
+              content: `Tool execution denied: ${tool.name} requires user approval, but no approval handler is available`,
+              isError: true
+            };
+          }
+
+          throwIfAborted(signal);
+          const isApproved = await requestApproval({
             toolCallId,
             toolName,
-            content: `Tool execution denied: ${tool.name} requires user approval, but no approval handler is available`,
-            isError: true
-          };
-        }
+            risk: tool.risk,
+            input: validationResult.data,
+            description: approvalDetails.description,
+            preview: approvalDetails.preview
+          }, signal);
+          throwIfAborted(signal);
 
-        throwIfAborted(signal);
-        const isApproved = await requestApproval({
-          toolCallId,
-          toolName,
-          risk: tool.risk,
-          input: validationResult.data,
-          description: approvalDetails.description,
-          preview: approvalDetails.preview
-        }, signal);
-        throwIfAborted(signal);
-
-        if (!isApproved) {
-          return {
-            role: 'tool',
-            toolCallId,
-            toolName,
-            content: `Tool execution denied by the user: ${approvalDetails.description}`,
-            isError: true
-          };
+          if (!isApproved) {
+            return {
+              role: 'tool',
+              toolCallId,
+              toolName,
+              content: `Tool execution denied by the user: ${approvalDetails.description}`,
+              isError: true
+            };
+          }
         }
 
         executionContext = {
@@ -274,6 +296,19 @@ export class QueryEngine {
   }
 
   private getSystemPrompt(): string {
+    const shell = resolveShellInvocation(':', process.platform);
+    const shellExecutor = shell.executable;
+    const shellHints = shell.kind === 'cmd'
+      ? [
+          '- This session uses Windows cmd.exe syntax for Shell.',
+          '- Prefer `dir`, `type`, and `findstr` over Unix-only commands like `ls -la`.',
+          '- Invoke PowerShell explicitly when needed: powershell -Command "..."'
+        ]
+      : [
+          `- This session uses ${shellExecutor} for Shell.`,
+          '- Prefer portable POSIX shell syntax for Shell commands.'
+        ];
+
     return `You are Syzzz Code, an AI programming assistant.
 
 Help developers write, debug, and understand code. Use the available tools when needed.
@@ -283,8 +318,15 @@ Rules:
 2. Prefer precise edits over replacing entire files.
 3. Run relevant checks after making changes.
 4. Never claim a tool succeeded unless its result confirms success.
+5. Prefer ListDirectory, Read, Edit, and Write over Shell for exploring and changing files.
+6. Use Shell for real system commands such as builds, tests, and git — not for cat/ls equivalents.
 
-Workspace root: ${this.workspaceRoot}`;
+Environment:
+- Workspace root: ${this.workspaceRoot}
+- Platform: ${process.platform}
+- Shell executor: ${shellExecutor}
+- Permission mode: ${this.permissionMode}
+${shellHints.join('\n')}`;
   }
 
   getMessages(): ConversationMessage[] {

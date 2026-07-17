@@ -158,3 +158,60 @@ test('interactive approval input is not handled as a chat message', () => {
   assert.equal((result.stdout.match(/HANDLED:next/g) ?? []).length, 1);
   assert.doesNotMatch(result.stdout, /HANDLED:y/);
 });
+
+test('interactive /permissions does not become a chat message and can switch modes', () => {
+  const script = `
+    import { runInteractiveSession } from './dist/interactive.js';
+
+    const engine = {
+      mode: 'safe',
+      getPermissionMode() {
+        return this.mode;
+      },
+      setPermissionMode(mode) {
+        this.mode = mode;
+        console.log('MODE:' + mode);
+      },
+      async chat(message) {
+        console.log('HANDLED:' + message);
+        return 'reply:' + message;
+      }
+    };
+
+    await runInteractiveSession(engine);
+    console.log('FINAL:' + engine.mode);
+  `;
+
+  const result = spawnSync(
+    process.execPath,
+    ['--input-type=module', '--eval', script],
+    {
+      cwd: projectDirectory,
+      encoding: 'utf-8',
+      input: '/permissions\n/permissions acceptEdits\nhello\n/permissions fullAccess\nnope\n/permissions fullAccess\nI understand\nexit\n',
+      timeout: 5_000
+    }
+  );
+
+  assert.equal(result.status, 0, result.stderr || result.error?.message);
+  assert.match(result.stdout, /Current permission mode/);
+  assert.match(result.stdout, /MODE:acceptEdits/);
+  assert.equal((result.stdout.match(/HANDLED:hello/g) ?? []).length, 1);
+  assert.doesNotMatch(result.stdout, /HANDLED:\/permissions/);
+  assert.doesNotMatch(result.stdout, /HANDLED:I understand/);
+  assert.doesNotMatch(result.stdout, /MODE:fullAccess\n.*MODE:fullAccess/s);
+  assert.match(result.stdout, /Full Access not enabled/);
+  assert.match(result.stdout, /MODE:fullAccess/);
+  assert.match(result.stdout, /FINAL:fullAccess/);
+});
+
+test('permission mode helpers parse aliases', async () => {
+  const { parsePermissionMode, FULL_ACCESS_CONFIRMATION } = await import(
+    '../dist/permissions/mode.js'
+  );
+  assert.equal(parsePermissionMode('accept'), 'acceptEdits');
+  assert.equal(parsePermissionMode('full'), 'fullAccess');
+  assert.equal(parsePermissionMode('yolo'), 'fullAccess');
+  assert.equal(parsePermissionMode('nope'), null);
+  assert.equal(FULL_ACCESS_CONFIRMATION, 'I understand');
+});

@@ -2,6 +2,14 @@ import chalk from 'chalk';
 import ora from 'ora';
 import { createInterface } from 'readline';
 import type { QueryEngine } from './engine.js';
+import {
+  DEFAULT_PERMISSION_MODE,
+  FULL_ACCESS_CONFIRMATION,
+  formatPermissionModesHelp,
+  parsePermissionMode,
+  permissionModeTitle,
+  type PermissionMode
+} from './permissions/mode.js';
 import type { ToolApprovalRequest } from './types.js';
 import { isAbortError, OperationAbortedError } from './tools/abort.js';
 
@@ -96,20 +104,91 @@ function formatApprovalRequest(request: ToolApprovalRequest): string {
   return lines.join('\n');
 }
 
+function getEnginePermissionMode(engine: QueryEngine): PermissionMode {
+  if (typeof engine.getPermissionMode === 'function') {
+    return engine.getPermissionMode();
+  }
+  return DEFAULT_PERMISSION_MODE;
+}
+
+function setEnginePermissionMode(engine: QueryEngine, mode: PermissionMode): void {
+  if (typeof engine.setPermissionMode === 'function') {
+    engine.setPermissionMode(mode);
+  }
+}
+
+function buildPrompt(mode: PermissionMode): string {
+  return chalk.blue(`You [${mode}]: `);
+}
+
+async function handlePermissionsCommand(
+  engine: QueryEngine,
+  argument: string | undefined,
+  lineQueue: TerminalLineQueue
+): Promise<void> {
+  const currentMode = getEnginePermissionMode(engine);
+
+  if (!argument) {
+    console.log(chalk.cyan(`\n${formatPermissionModesHelp(currentMode)}\n`));
+    return;
+  }
+
+  const nextMode = parsePermissionMode(argument);
+  if (!nextMode) {
+    console.log(chalk.red(`\nUnknown permission mode: ${argument}`));
+    console.log(chalk.gray('Use: /permissions safe | acceptEdits | fullAccess\n'));
+    return;
+  }
+
+  if (nextMode === currentMode) {
+    console.log(chalk.green(
+      `\nPermission mode is already ${permissionModeTitle(nextMode)} (${nextMode}).\n`
+    ));
+    return;
+  }
+
+  if (nextMode === 'fullAccess') {
+    console.log(chalk.red('\nWARNING: Full Access disables approval prompts for this session.'));
+    console.log(chalk.yellow(
+      'File tools remain workspace-bound, but Shell can still affect the whole account.'
+    ));
+    console.log(chalk.yellow(
+      `Type "${FULL_ACCESS_CONFIRMATION}" to confirm, or anything else to cancel.`
+    ));
+    process.stdout.write(chalk.red('Confirm Full Access: '));
+    const confirmation = await lineQueue.read();
+    if (confirmation?.trim().toLowerCase() !== FULL_ACCESS_CONFIRMATION.toLowerCase()) {
+      console.log(chalk.yellow('\nFull Access not enabled. Permission mode unchanged.\n'));
+      return;
+    }
+  }
+
+  setEnginePermissionMode(engine, nextMode);
+  console.log(chalk.green(
+    `\nPermission mode set to ${permissionModeTitle(nextMode)} (${nextMode}).`
+  ));
+  console.log(chalk.gray('This setting applies only to the current process session.\n'));
+}
+
 export async function runInteractiveSession(engine: QueryEngine): Promise<void> {
   console.log(chalk.cyan('\nSyzzz Code - Interactive Mode'));
-  console.log(chalk.gray('Type your message and press Enter. Press Ctrl+C twice to exit.\n'));
+  console.log(chalk.gray('Type your message and press Enter. Press Ctrl+C twice to exit.'));
+  console.log(chalk.gray('Use /permissions to view or change the session permission mode.\n'));
 
   const readlineInterface = createInterface({
     input: process.stdin,
     output: process.stdout,
-    prompt: chalk.blue('You: ')
+    prompt: buildPrompt(getEnginePermissionMode(engine))
   });
   const lineQueue = new TerminalLineQueue();
 
   let lastInterruptAt = 0;
   let isClosed = false;
   let activeTurnAbortController: AbortController | undefined;
+
+  const refreshPrompt = () => {
+    readlineInterface.setPrompt(buildPrompt(getEnginePermissionMode(engine)));
+  };
 
   readlineInterface.on('line', line => {
     lineQueue.push(line);
@@ -131,6 +210,7 @@ export async function runInteractiveSession(engine: QueryEngine): Promise<void> 
 
     lastInterruptAt = now;
     console.log(chalk.yellow('\nPress Ctrl+C again within two seconds to exit.'));
+    refreshPrompt();
     readlineInterface.prompt();
   });
 
@@ -140,6 +220,7 @@ export async function runInteractiveSession(engine: QueryEngine): Promise<void> 
   });
 
   while (!isClosed) {
+    refreshPrompt();
     readlineInterface.prompt();
     const input = await lineQueue.read();
     if (input === null) {
@@ -156,6 +237,23 @@ export async function runInteractiveSession(engine: QueryEngine): Promise<void> 
     if (message.toLowerCase() === 'exit') {
       readlineInterface.close();
       break;
+    }
+
+    if (message === '/permissions' || message.startsWith('/permissions ')) {
+      const argument = message === '/permissions'
+        ? undefined
+        : message.slice('/permissions'.length).trim();
+      try {
+        await handlePermissionsCommand(engine, argument, lineQueue);
+      } catch (error) {
+        if (isAbortError(error)) {
+          console.log(chalk.yellow('\nPermission command cancelled.\n'));
+        } else {
+          const reason = error instanceof Error ? error.message : String(error);
+          console.error(chalk.red('\nError:'), reason + '\n');
+        }
+      }
+      continue;
     }
 
     const spinner = ora({

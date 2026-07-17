@@ -4,7 +4,7 @@ import { mkdtemp, mkdir, readFile, rm, symlink, writeFile } from 'node:fs/promis
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { z } from 'zod';
-import { editTool, readTool, writeTool } from '../dist/tools/index.js';
+import { editTool, listDirectoryTool, readTool, writeTool } from '../dist/tools/index.js';
 import {
   convertToolSchemaToJsonSchema,
   validateToolInput
@@ -128,6 +128,38 @@ test('read tool returns errors instead of accessing paths outside the workspace'
     assert.equal(result.isError, true);
     assert.match(result.content, /outside the workspace/);
     assert.equal(result.metadata.errorCode, 'OUTSIDE_WORKSPACE');
+  });
+});
+
+test('list directory tool lists workspace entries and blocks escapes', async () => {
+  await withWorkspace(async workspaceRoot => {
+    await mkdir(join(workspaceRoot, 'src'));
+    await writeFile(join(workspaceRoot, 'README.md'), 'hi', 'utf8');
+    await writeFile(join(workspaceRoot, '.env'), 'SECRET=1', 'utf8');
+
+    const listed = await listDirectoryTool.execute(
+      {},
+      createContext(workspaceRoot)
+    );
+    assert.equal(listed.isError, undefined);
+    assert.match(listed.content, /README\.md/);
+    assert.match(listed.content, /src/);
+    assert.match(listed.content, /dir\s+src/);
+    assert.match(listed.content, /file\s+README\.md/);
+
+    const outside = await listDirectoryTool.execute(
+      { path: '../outside' },
+      createContext(workspaceRoot)
+    );
+    assert.equal(outside.isError, true);
+    assert.match(outside.content, /outside the workspace/);
+
+    const sensitive = await listDirectoryTool.execute(
+      { path: '.env' },
+      createContext(workspaceRoot)
+    );
+    assert.equal(sensitive.isError, true);
+    assert.match(sensitive.content, /sensitive path/i);
   });
 });
 

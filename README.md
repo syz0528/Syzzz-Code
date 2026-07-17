@@ -5,7 +5,7 @@ Syzzz Code 是一个使用 TypeScript 构建的实验性命令行 AI 编程助�
 该项目受现代终端编程 Agent 的架构理念启发，但拥有独立实现的 CLI、对话引擎、Provider 适配层和工具循环。当前目标是将一个已经跑通核心链路的 MVP，逐步升级为安全、可观察、可恢复的本地编程 Agent。
 
 > [!WARNING]
-> 当前版本仍处于实验阶段。文件工具已经限制在工作区内，写入和 Shell 执行也要求用户逐次确认，但 Shell 仍不是安全沙箱，获批命令可以产生工作区外副作用。请只在可恢复、低权限且不包含敏感数据的环境中使用，并在执行前后检查文件和 Git 变更。
+> 当前版本仍处于实验阶段。文件工具已经限制在工作区内；默认 Safe 模式下写入和 Shell 执行要求用户逐次确认。`fullAccess` 可在**当前会话**内跳过审批提示，但 **Shell 仍不是安全沙箱**，获批或自动放行的命令可以产生工作区外副作用。请只在可恢复、低权限且不包含敏感数据的环境中使用，并在执行前后检查文件和 Git 变更。
 
 ## 当前能力
 
@@ -16,16 +16,18 @@ Syzzz Code 是一个使用 TypeScript 构建的实验性命令行 AI 编程助�
 - 供应商、Base URL、模型和 API Key 由用户配置文件管理；
 - 通过 `syzzz switch` 交互选择已配置的供应商和模型；
 - 支持模型发起结构化工具调用；
-- 内置 `Shell`、`Read`、`Write` 和 `Edit` 四种工具；
+- 内置 `ListDirectory`、`Read`、`Write`、`Edit` 和 `Shell` 五种工具；
+- 会话级权限模式：`safe`（默认）、`acceptEdits`、`fullAccess`，通过 `/permissions` 查看或切换；
 - 使用 Zod 在工具执行前校验模型生成的参数，并将失败作为结构化错误返回；
 - 文件工具默认只能访问启动时确定的工作区，并拦截路径越界、敏感文件及 symlink/junction 逃逸；
-- `Write` 和 `Edit` 在执行前展示 diff 并要求确认，执行时检测审批后的文件变化；
-- `Shell` 使用异步子进程，执行前要求确认，并支持超时、取消、stdout/stderr 分离和输出上限；
+- `Write` 和 `Edit` 在 Safe 模式下展示 diff 并要求确认；`acceptEdits`/`fullAccess` 可自动写入，但仍做工作区校验与审批后 hash 检测；
+- `Shell` 使用异步子进程，支持超时、取消、stdout/stderr 分离和输出上限；Safe/`acceptEdits` 下仍要求确认；
+- system prompt 注入 Platform、真实 Shell executor 与工具偏好，减少 Windows 下错误的 `ls` 类命令；
 - 执行过程中按 `Ctrl+C` 可取消当前 Provider 请求或工具执行；
 - 工具调用最多执行 10 轮，避免无限循环；
 - 单个工具结果超过 100,000 个字符时会被截断；
 - Provider 请求失败时不会把未完成回合提交到正式对话历史；
-- 提供 37 项离线自动化测试，覆盖配置、CLI、Engine、Provider 协议、路径策略、文件编辑和 Shell 生命周期。
+- 提供 44 项离线自动化测试，覆盖配置、CLI、Engine、权限模式、Provider 协议、路径策略、目录列表、文件编辑和 Shell 生命周期。
 
 ## 当前不具备的能力
 
@@ -36,6 +38,7 @@ Syzzz Code 是一个使用 TypeScript 构建的实验性命令行 AI 编程助�
 - 上下文 token 预算和自动压缩；
 - Provider 请求超时、分类错误和有限重试；
 - Shell 沙箱和基于命令语义的细粒度风险判定；
+- 永久写入配置文件的权限模式（当前权限仅会话有效）；
 - 工作区外路径的逐次授权；
 - 原子文件替换、通用 Patch 和自动回滚；
 - 持久化执行审计与事件流；
@@ -126,6 +129,9 @@ syzzz chat
 
 - 输入消息并按 Enter 发送；
 - 输入 `exit` 退出；
+- 输入 `/permissions` 查看当前会话权限模式；
+- 输入 `/permissions safe|acceptEdits|fullAccess` 切换模式（仅当前进程有效）；
+- 启用 `fullAccess` 需输入确认短语 `I understand`；
 - 工具要求审批时，输入 `y` 或 `yes` 批准，其他输入默认拒绝；
 - Provider 或工具执行期间按一次 `Ctrl+C` 取消当前操作；
 - 在两秒内连续按两次 `Ctrl+C` 退出。
@@ -290,11 +296,27 @@ Provider 按 API 协议划分，而不是为每个供应商品牌重复实现一
 
 每轮对话先在工作副本中执行，只有完整成功后才提交到正式历史。需要注意，这只能回滚对话历史，不能回滚已经发生的文件修改或 Shell 副作用。
 
+## 权限模式
+
+会话级模式，**不写入**用户配置文件；退出进程后恢复为 `safe`。
+
+| 模式 | Read / ListDirectory | Write / Edit | Shell |
+|------|----------------------|--------------|-------|
+| `safe`（默认） | 自动 | 每次审批 | 每次审批 |
+| `acceptEdits` | 自动 | 自动（仍受工作区与校验约束） | 每次审批 |
+| `fullAccess` | 自动 | 自动 | 自动（仍非沙箱） |
+
+所有模式下仍保留：Zod 校验、文件工作区边界、Shell 超时/取消/输出上限、工具轮次上限。
+
 ## 工具
+
+### ListDirectory
+
+列出工作区内某个目录的文件与子目录（默认工作区根）。只读、无需审批；路径受工作区与敏感路径策略约束；条目过多时截断。
 
 ### Shell
 
-在当前工作区执行非交互式 Shell 命令。每次执行都要求用户确认，默认超时为 30 秒，分别限制 stdout 和 stderr，并可通过当前 turn 的 `AbortSignal` 取消。Windows 使用 `cmd.exe`，POSIX 使用 `/bin/sh`；终止进程树属于尽力清理，不构成安全沙箱。
+在当前工作区执行非交互式 Shell 命令。Safe/`acceptEdits` 下每次执行都要求用户确认；`fullAccess` 下跳过确认。默认超时为 30 秒，分别限制 stdout 和 stderr，并可通过当前 turn 的 `AbortSignal` 取消。Windows 使用 `cmd.exe`，POSIX 使用 `/bin/sh`；终止进程树属于尽力清理，不构成安全沙箱。
 
 ### Read
 
@@ -302,11 +324,11 @@ Provider 按 API 协议划分，而不是为每个供应商品牌重复实现一
 
 ### Write
 
-创建或覆盖工作区内的 UTF-8 文本文件。执行前展示 diff 并要求确认；审批后如果文件内容发生变化，本次写入会被拒绝。
+创建或覆盖工作区内的 UTF-8 文本文件。Safe 模式下执行前展示 diff 并要求确认；自动放行模式仍会生成内部审批元数据并在落盘前检测内容变化。
 
 ### Edit
 
-使用 `old_string` 和 `new_string` 修改工作区文件。`old_string` 必须恰好匹配一次；执行前展示 diff，并使用内容 hash 检测审批后的并发变化。
+使用 `old_string` 和 `new_string` 修改工作区文件。`old_string` 必须恰好匹配一次；Safe 模式下展示 diff，并使用内容 hash 检测审批后的并发变化。
 
 ## 测试
 
@@ -318,15 +340,18 @@ npm test
 
 该命令会先执行 TypeScript 构建，再运行 `tests/*.test.mjs`。
 
-当前正式测试套件包含 37 项离线测试：
+当前正式测试套件包含 44 项离线测试：
 
 - 配置校验与 Base URL 规范化；
 - CLI 命令注册；
 - Provider 和模型切换持久化；
 - 连续交互消息只处理一次；
+- `/permissions` 不进入聊天且可切换模式；
 - QueryEngine 工具调用历史；
+- 权限模式矩阵（safe / acceptEdits / fullAccess）；
 - 工具 Zod 输入校验、结构化错误和审批通过/拒绝；
 - 工作区越界、敏感路径和 symlink/junction 逃逸；
+- ListDirectory 列表与越界拦截；
 - Write/Edit diff、唯一匹配和审批后冲突检测；
 - Shell 成功、非零退出、超时、取消和输出超限；
 - 交互审批输入不会泄漏为下一条聊天消息；
@@ -367,6 +392,9 @@ src/
 |-- engine.ts
 |-- config.ts
 |-- types.ts
+|-- permissions/
+|   |-- mode.ts
+|   `-- policy.ts
 |-- providers/
 |   |-- base.ts
 |   |-- factory.ts
@@ -384,7 +412,9 @@ tests/
 |-- cli.test.mjs
 |-- config.test.mjs
 |-- engine.test.mjs
-`-- provider-protocol.test.mjs
+|-- provider-protocol.test.mjs
+|-- tools.test.mjs
+`-- shell-runner.test.mjs
 ```
 
 ## 安全限制
@@ -409,17 +439,17 @@ tests/
 
 ## 后续方向
 
-Phase 1 的 Tool Runtime 安全底座已在本地完成。接下来的重点不是继续堆叠模型和工具数量，而是进入事件化 Runtime 与 Provider 可靠性建设：
+Phase 1 Tool Runtime 与 Phase 1.1 稳定化（权限模式、ListDirectory、环境 prompt）已落地。接下来的重点不是继续堆叠模型和工具数量，而是进入事件化 Runtime 与 Provider 可靠性建设：
 
 1. 事件化运行时、流式输出和持久化执行审计；
 2. Provider 分类错误、请求超时、有限重试和 usage 展示；
 3. 上下文预算、会话压缩和代码仓库映射；
-4. 专用代码工具、可靠 Patch 和修改验证；
+4. 更多专用代码工具（Glob/Grep 等）、可靠 Patch 和修改验证；
 5. 会话持久化与 ask/plan/code 模式；
 6. 在上述基础稳定后接入 MCP、Hooks 和受限子 Agent。
 
 ## 项目状态
 
-当前包版本仍为 `1.0.0`。本地代码已经完成计划中的 Phase 1，可作为后续 `v1.1.0` 安全 Tool Runtime 候选，但尚未提交、推送或发布，也不代表生产安全级或完整的自动化编程 Agent。
+当前包版本仍为 `1.0.0`。Phase 1 已推送至远程；Phase 1.1 为在其之上的会话权限与可用性稳定化，仍属实验阶段，不代表生产安全级或完整的自动化编程 Agent。
 
 历史规划和旧测试资料保存在 [`archive/pre-v1.0.0`](archive/pre-v1.0.0)，仅用于记录项目演进，不应作为当前功能、测试或安全说明。

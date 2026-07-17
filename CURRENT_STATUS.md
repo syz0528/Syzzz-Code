@@ -1,10 +1,10 @@
 # Syzzz Code 当前项目状态
 
-**状态日期：** 2026-06-16  
+**状态日期：** 2026-07-16  
 **包版本：** 1.0.0  
-**当前阶段：** Phase 1 安全与执行正确性底座已在本地完成，等待审阅和版本化  
+**当前阶段：** Phase 1 已推送；Phase 1.1 稳定化（权限模式 / ListDirectory / 环境 prompt）已在本地完成  
 **远程仓库：** https://github.com/syz0528/Syzzz-Code  
-**远程基线提交：** `7ea3aa1`（`完善当前状态与后续升级路线文档`）
+**远程 Phase 1 基线：** `63ad76c`（`完成 Phase 1 Tool Runtime 安全与执行正确性底座`）
 
 > 本文档描述当前代码的真实状态，而不是未来设计目标。历史规划和旧测试报告已归档到 [`archive/pre-v1.0.0`](archive/pre-v1.0.0)。
 
@@ -45,7 +45,7 @@ Syzzz Code 是一个使用 TypeScript 构建的实验性命令行 AI 编程助�
 
 当前可以定义为：
 
-> 多 Provider、连续对话和 Tool Loop 已经可运行；Phase 1 已补齐工具输入校验、工作区边界、审批、diff、异步 Shell 与端到端取消，但执行隔离、事件审计、上下文治理和长期会话仍待后续阶段完成。
+> 多 Provider、连续对话和 Tool Loop 已经可运行；Phase 1 已补齐工具输入校验、工作区边界、审批、diff、异步 Shell 与端到端取消；Phase 1.1 补齐会话级权限模式、`ListDirectory` 与环境/Shell 提示，降低审批疲劳与探索误用 Shell 的问题。执行隔离、事件审计、上下文治理和长期会话仍待后续阶段完成。
 
 ## 3. 已实现能力
 
@@ -156,12 +156,13 @@ C:\Users\<用户名>\.syzzz-code\config.json
 
 ### 3.5 本地工具
 
-当前内置四种工具：
+当前内置五种工具：
 
-- `Shell`：审批后异步执行非交互命令，支持超时、取消、进程树终止、stdout/stderr 分离与输出限制；
+- `ListDirectory`：只读列出工作区目录条目，默认无需审批，输出有条目上限；
 - `Read`：读取工作区内通过真实路径与敏感路径检查的 UTF-8 文件；
-- `Write`：审批前生成 diff，审批后校验内容 hash 再创建或覆盖文件；
-- `Edit`：要求 `old_string` 唯一匹配，审批前生成 diff，并检测审批后的并发变化。
+- `Write`：生成 diff/内部审批元数据，按权限模式决定是否弹窗，落盘前校验内容 hash；
+- `Edit`：要求 `old_string` 唯一匹配，同样按权限模式审批，并检测并发变化；
+- `Shell`：异步执行非交互命令，支持超时、取消、进程树终止、stdout/stderr 分离与输出限制。
 
 工具使用统一的 `ToolDefinition`、`ToolContext` 和 `ToolResult` 契约。工具调用与结构化错误在 OpenAI-compatible 和 Anthropic 两类协议下均有对应转换；Anthropic 错误结果会设置 `is_error: true`。
 
@@ -171,6 +172,31 @@ C:\Users\<用户名>\.syzzz-code\config.json
 - `.git`、`.ssh`、`.env`、私钥和常见凭据文件；
 - 通过 symlink 或 Windows junction 产生的越界；
 - 通过链接别名访问工作区内敏感目录。
+
+### 3.6 会话权限模式（Phase 1.1）
+
+交互会话支持：
+
+```text
+/permissions
+/permissions safe
+/permissions acceptEdits
+/permissions fullAccess
+```
+
+| 模式 | Read / ListDirectory | Write / Edit | Shell |
+|------|----------------------|--------------|-------|
+| `safe`（默认） | 自动 | 每次审批 | 每次审批 |
+| `acceptEdits` | 自动 | 自动 | 每次审批 |
+| `fullAccess` | 自动 | 自动 | 自动 |
+
+要点：
+
+- 仅当前进程有效，不写入 `~/.syzzz-code/config.json`；
+- `fullAccess` 需输入 `I understand` 确认；
+- 自动放行 Write/Edit 时仍调用 `prepareApproval` 以保留 hash/`executionData`；
+- 所有模式保留 Zod、工作区边界、Shell 超时/取消与轮次上限；
+- `fullAccess` 下文件工具仍受工作区约束，Shell 仍可产生账户级副作用。
 
 ## 4. 测试与验证状态
 
@@ -184,13 +210,13 @@ npm test
 
 该命令先执行 TypeScript 构建，再运行 `tests/*.test.mjs`。
 
-当前正式测试套件包含 37 项离线测试：
+当前正式测试套件包含 44 项离线测试：
 
 - `tests/config.test.mjs`：4 项；
 - `tests/provider-protocol.test.mjs`：5 项；
-- `tests/engine.test.mjs`：10 项；
-- `tests/cli.test.mjs`：4 项；
-- `tests/tools.test.mjs`：7 项；
+- `tests/engine.test.mjs`：14 项；
+- `tests/cli.test.mjs`：6 项；
+- `tests/tools.test.mjs`：8 项；
 - `tests/shell-runner.test.mjs`：7 项。
 
 覆盖范围包括：
@@ -220,8 +246,8 @@ npm test
 最近一次完整结果：
 
 ```text
-tests 37
-pass 37
+tests 44
+pass 44
 fail 0
 ```
 
@@ -389,13 +415,15 @@ title:  完善当前状态与后续升级路线文档
 - 历史文档和旧测试脚本归档；
 - 重建后的 README、当前状态与路线图。
 
-### 8.2 当前本地文档工作
+### 8.2 Phase 1 / 1.1 版本状态
 
-Phase 1 的实现、37 项测试和本轮文档同步目前只存在于本地工作区，尚未提交或推送。包版本也仍为 `1.0.0`；是否发布为 `v1.1.0` 应在用户审阅和人工试用后决定。
+- Phase 1 已推送到远程 `main`（`63ad76c`），含 37 项测试基线后的 Tool Runtime。
+- Phase 1.1 在其之上增加权限模式、`ListDirectory` 与环境 prompt，离线测试 44 项；提交/推送取决于用户审阅与 dogfood。
+- 包版本仍为 `1.0.0`；是否打 `v1.1.0` 应在稳定化 dogfood 后决定。
 
 ### 8.3 Tag 状态
 
-虽然 `package.json` 和 CLI 当前版本号是 `1.0.0`，但远程仓库尚未创建 `v1.0.0` Git Tag。正式 Tag 应在活跃文档审核完成并提交后创建。
+虽然 `package.json` 和 CLI 当前版本号是 `1.0.0`，但远程仓库尚未创建正式语义化 Tag。Tag 策略可在 Phase 1.1 冻结后一并决定。
 
 ## 9. 下一阶段目标
 
