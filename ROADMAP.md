@@ -1,9 +1,9 @@
 # Syzzz Code 路线图
 
-**制定日期：** 2026-06-16  
-**最近更新：** 2026-07-16  
-**适用基线：** `1.0.0` / 远程 Phase 1 提交 `63ad76c`  
-**当前入口：** Phase 1 已推送；Phase 1.1 稳定化已实现并通过 44 项测试，下一阶段为事件化 Agent Runtime 与 Provider 可靠性
+**制定日期：** 2026-06-16<br>
+**最近更新：** 2026-07-21<br>
+**适用基线：** `1.0.0` / 远程 Phase 1.1 提交 `da6858d`<br>
+**当前入口：** Phase 1.1 最终稳定化已冻结；下一阶段为事件化 Agent Runtime 与 Provider 可靠性
 
 > 本文档只描述尚未完成的工作、实施顺序和验收标准。当前已经实现的能力以 [`README.md`](README.md) 和 [`CURRENT_STATUS.md`](CURRENT_STATUS.md) 为准。
 
@@ -200,11 +200,11 @@ Phase 6  持续评测、发布与工程治理
 - [x] 扩展到 37 项离线回归测试并同步活跃文档；
 - [x] 提交并推送 Phase 1 基线。
 
-已知限制：Shell 审批不是操作系统沙箱；文件最终落盘尚非原子替换；Provider typed errors、请求 timeout、事件审计属于后续阶段。
+该基线的已知限制包括 Shell 非沙箱和文件非原子落盘；其中原子替换已在 Phase 1.1 最终稳定化中闭合。Provider typed errors、请求 timeout、事件审计仍属于后续阶段。
 
 ## 6A. Phase 1.1：Tool Runtime 稳定化
 
-**状态：** 本地实现与 44 项自动化测试已完成；提交/推送与 dogfood 冻结由用户决定。
+**状态：** 最终稳定化实现、57 项自动化测试、生产依赖审计、npm 包内容检查与真实 Provider dogfood 已通过；状态为 **Frozen**。
 
 ### 目标
 
@@ -213,22 +213,36 @@ Phase 6  持续评测、发布与工程治理
 ### 交付内容
 
 - [x] 会话级权限模式 `safe` / `acceptEdits` / `fullAccess`；
-- [x] `/permissions` 查看与切换；`fullAccess` 需 `I understand` 确认；
+- [x] `/permissions` 查看与切换；`fullAccess` 只有单独输入 `y`/`Y` 才启用，确认可由 `Ctrl+C` 单独取消；
+- [x] 结构化审批选择：`allow-once` / `allow-edits-session` / `deny`，由 Engine 提供允许选项并对非法返回 fail closed；
+- [x] Write/Edit 可授权本会话后续编辑，Shell 只能逐次允许且不能间接升级权限；
 - [x] 策略求值：自动放行时仍运行 `prepareApproval` 以保留 Write/Edit `executionData`；
 - [x] system prompt 注入 Platform、Shell executor 与专用工具偏好；
 - [x] 最小只读工具 `ListDirectory`；
-- [x] 扩展离线测试至 44 项并同步 README / CURRENT_STATUS / ROADMAP。
+- [x] Read 通过文件句柄限制为 1 MiB 普通 UTF-8 文件，并补充 Windows 特殊路径词法拦截；
+- [x] Write/Edit 使用同目录临时文件、flush、mode 保留、最终复核和原子替换；
+- [x] 移除 dotenv 自动加载，Shell 仅继承启动进程环境；
+- [x] npm 包采用 `dist`/`README.md` 白名单、Node.js `>=20` 与构建型 `prepack`；
+- [x] `form-data` 更新到 `4.0.6`，生产依赖审计为 0 漏洞；
+- [x] OpenAI-compatible 工具链保留 `reasoning_content`，并对 reasoning-only `stop` 进行一次同模型、禁用 thinking 的受限恢复；
+- [x] 扩展离线测试至 57 项并同步 README / CURRENT_STATUS / ROADMAP。
 
 ### 明确不做
 
-- Shell 语义分类器、沙箱、永久权限配置、Glob/Grep 全家桶、EventStream。
+- Shell 语义分类器、命令 allowlist、沙箱、凭证隔离或后台任务；
+- 永久权限配置、完整输入路由/TUI 状态机、文件锁或事务日志；
+- Glob/Grep/Read Range/Patch、Event Stream 或新的 Agent 能力。
 
 ### 退出条件
 
-- 三模式行为符合矩阵，且 fullAccess 下文件边界仍生效；
-- `/permissions` 不泄漏为聊天消息；
-- `npm test` 全绿；
-- 人工 dogfood 三场景（结构探索 / acceptEdits 编辑+测试 / fullAccess 危险确认）通过后冻结，进入 Phase 2。
+- [x] 三模式行为符合矩阵，且 `fullAccess` 下文件边界仍生效；
+- [x] `/permissions` 与审批输入不泄漏为聊天消息；
+- [x] `npm test` 57/57 全绿；
+- [x] `npm audit --omit=dev` 无 High/Critical（当前实际为 0 漏洞）；
+- [x] `npm pack --dry-run --json` 内容符合 allowlist；
+- [x] dogfood：Safe 会话编辑、Full Access 严格确认、冲突/临时文件、Shell 子进程和重启恢复；
+- [x] 使用真实 Provider 完成一次“查看结构、修改文件、运行测试”的小任务；
+- [x] 标记 **Frozen**，此后除 P0 安全或数据破坏问题外直接进入 Phase 2。
 
 ### 6.1 统一工具契约
 
@@ -420,10 +434,9 @@ CLI 只消费事件并负责展示，不再依赖 Engine 内部直接 `console.l
 1. Glob：按文件模式发现候选文件；
 2. Grep：按内容和正则搜索；
 3. Read Range：按行范围读取文件；
-4. List Directory：结构化目录浏览；
-5. Patch：上下文感知的局部修改；
-6. Diagnostics：读取 TypeScript、lint 或 IDE 诊断；
-7. Git Status/Diff：只读查看工作区变化。
+4. Patch：上下文感知的局部修改；
+5. Diagnostics：读取 TypeScript、lint 或 IDE 诊断；
+6. Git Status/Diff：只读查看工作区变化。
 
 这些工具必须复用 Phase 1 的权限、路径和审计机制。
 
@@ -432,7 +445,7 @@ CLI 只消费事件并负责展示，不再依赖 Engine 内部直接 `console.l
 - 修改前要求文件版本或内容 hash；
 - 上下文必须唯一匹配；
 - 多匹配时拒绝并要求更多上下文；
-- 使用临时文件和原子替换；
+- 复用 Phase 1.1 的同目录临时文件和原子替换；
 - 检测用户或其他进程的并发修改；
 - 修改后生成 diff；
 - 支持用户拒绝和后续撤销策略。

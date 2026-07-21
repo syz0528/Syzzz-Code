@@ -13,6 +13,8 @@ export interface AssistantMessage {
   role: 'assistant';
   content: string;
   toolCalls?: ToolCall[];
+  /** Provider-private reasoning metadata needed to continue some tool-call conversations. */
+  reasoningContent?: string;
 }
 
 export interface ToolResultMessage {

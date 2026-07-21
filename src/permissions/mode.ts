@@ -4,8 +4,6 @@ export type PermissionMode = (typeof PERMISSION_MODES)[number];
 
 export const DEFAULT_PERMISSION_MODE: PermissionMode = 'safe';
 
-export const FULL_ACCESS_CONFIRMATION = 'I understand';
-
 const MODE_ALIASES: Record<string, PermissionMode> = {
   safe: 'safe',
   default: 'safe',
@@ -73,7 +71,7 @@ export function formatPermissionModesHelp(currentMode: PermissionMode): string {
     '',
     'Aliases: accept, auto-edit → acceptEdits; full, yolo → fullAccess',
     '',
-    `Full Access confirmation phrase: ${FULL_ACCESS_CONFIRMATION}`
+    'Full Access requires an explicit y confirmation.'
   ];
   return lines.join('\n');
 }

@@ -26,6 +26,9 @@ export function convertMessagesToOpenAI(
       convertedMessages.push({
         role: 'assistant',
         content: message.content || null,
+        ...(message.reasoningContent
+          ? { reasoning_content: message.reasoningContent }
+          : {}),
         ...(message.toolCalls?.length
           ? {
               tool_calls: message.toolCalls.map(toolCall => ({
@@ -72,6 +75,21 @@ function parseToolArguments(toolName: string, rawArguments: string): unknown {
   }
 }
 
+function getReasoningContent(message: unknown): string | undefined {
+  if (!message || typeof message !== 'object') {
+    return undefined;
+  }
+
+  const reasoningContent = (message as Record<string, unknown>).reasoning_content;
+  return typeof reasoningContent === 'string' && reasoningContent.trim()
+    ? reasoningContent
+    : undefined;
+}
+
+function getErrorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
+
 export class OpenAICompatibleProvider implements AIProvider {
   private client: OpenAI;
   private model: string;
@@ -88,22 +106,65 @@ export class OpenAICompatibleProvider implements AIProvider {
 
   async chat(request: ProviderChatRequest): Promise<ProviderChatResponse> {
     try {
-      const response = await this.client.chat.completions.create(
-        {
-          model: this.model,
-          messages: convertMessagesToOpenAI(request.messages, request.systemPrompt) as any,
-          tools: convertToolsToOpenAI(request.tools) as any
-        },
+      const completionRequest: Record<string, unknown> = {
+        model: this.model,
+        messages: convertMessagesToOpenAI(request.messages, request.systemPrompt),
+        tools: convertToolsToOpenAI(request.tools)
+      };
+
+      let response = await this.client.chat.completions.create(
+        completionRequest as any,
         { signal: request.signal }
       );
 
-      const choice = response.choices[0];
+      let choice = response.choices[0];
       if (!choice) {
         throw new Error('Provider returned no completion choices');
       }
 
-      const message = choice.message;
-      const content = message.content || '';
+      let message = choice.message;
+      let content = message.content || '';
+      let reasoningContent = getReasoningContent(message);
+
+      if (!content.trim() && !message.tool_calls?.length) {
+        const canRecover = choice.finish_reason === 'stop' && reasoningContent !== undefined;
+        if (!canRecover) {
+          throw new Error(
+            `Provider returned an empty response (finish reason: ${choice.finish_reason ?? 'unknown'})`
+          );
+        }
+
+        try {
+          response = await this.client.chat.completions.create(
+            {
+              ...completionRequest,
+              thinking: { type: 'disabled' }
+            } as any,
+            { signal: request.signal }
+          );
+        } catch (error) {
+          if (request.signal?.aborted || (error instanceof Error && error.name === 'AbortError')) {
+            throw error;
+          }
+          throw new Error(
+            `Provider returned only reasoning content, and recovery with thinking disabled failed: ${getErrorMessage(error)}`
+          );
+        }
+
+        choice = response.choices[0];
+        if (!choice) {
+          throw new Error('Provider returned no completion choices after one recovery attempt');
+        }
+
+        message = choice.message;
+        content = message.content || '';
+        reasoningContent = getReasoningContent(message);
+        if (!content.trim() && !message.tool_calls?.length) {
+          throw new Error(
+            `Provider returned an empty response after one recovery attempt (finish reason: ${choice.finish_reason ?? 'unknown'})`
+          );
+        }
+      }
 
       const toolCalls: ToolCall[] = [];
       for (const toolCall of message.tool_calls ?? []) {
@@ -117,14 +178,17 @@ export class OpenAICompatibleProvider implements AIProvider {
       }
 
       if (!content.trim() && toolCalls.length === 0) {
-        throw new Error(`Provider returned an empty response (finish reason: ${choice.finish_reason ?? 'unknown'})`);
+        throw new Error(
+          `Provider returned no usable content or function tool calls (finish reason: ${choice.finish_reason ?? 'unknown'})`
+        );
       }
 
       return {
         message: {
           role: 'assistant',
           content,
-          toolCalls: toolCalls.length > 0 ? toolCalls : undefined
+          toolCalls: toolCalls.length > 0 ? toolCalls : undefined,
+          reasoningContent: toolCalls.length > 0 ? reasoningContent : undefined
         },
         finishReason: choice.finish_reason,
         usage: response.usage ? {
@@ -133,11 +197,11 @@ export class OpenAICompatibleProvider implements AIProvider {
           totalTokens: response.usage.total_tokens
         } : undefined
       };
-    } catch (error: any) {
-      if (request.signal?.aborted || error?.name === 'AbortError') {
+    } catch (error: unknown) {
+      if (request.signal?.aborted || (error instanceof Error && error.name === 'AbortError')) {
         throw error;
       }
-      throw new Error(`${this.providerName} API Error: ${error.message}`);
+      throw new Error(`${this.providerName} API Error: ${getErrorMessage(error)}`);
     }
   }
 

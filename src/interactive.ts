@@ -4,7 +4,6 @@ import { createInterface } from 'readline';
 import type { QueryEngine } from './engine.js';
 import {
   DEFAULT_PERMISSION_MODE,
-  FULL_ACCESS_CONFIRMATION,
   formatPermissionModesHelp,
   parsePermissionMode,
   permissionModeTitle,
@@ -124,7 +123,8 @@ function buildPrompt(mode: PermissionMode): string {
 async function handlePermissionsCommand(
   engine: QueryEngine,
   argument: string | undefined,
-  lineQueue: TerminalLineQueue
+  lineQueue: TerminalLineQueue,
+  signal: AbortSignal
 ): Promise<void> {
   const currentMode = getEnginePermissionMode(engine);
 
@@ -153,11 +153,11 @@ async function handlePermissionsCommand(
       'File tools remain workspace-bound, but Shell can still affect the whole account.'
     ));
     console.log(chalk.yellow(
-      `Type "${FULL_ACCESS_CONFIRMATION}" to confirm, or anything else to cancel.`
+      'Type y to confirm. Any other input cancels.'
     ));
-    process.stdout.write(chalk.red('Confirm Full Access: '));
-    const confirmation = await lineQueue.read();
-    if (confirmation?.trim().toLowerCase() !== FULL_ACCESS_CONFIRMATION.toLowerCase()) {
+    process.stdout.write(chalk.red('Enable Full Access for this session? [y/N]: '));
+    const confirmation = await lineQueue.read(signal);
+    if (confirmation?.trim().toLowerCase() !== 'y') {
       console.log(chalk.yellow('\nFull Access not enabled. Permission mode unchanged.\n'));
       return;
     }
@@ -184,7 +184,7 @@ export async function runInteractiveSession(engine: QueryEngine): Promise<void> 
 
   let lastInterruptAt = 0;
   let isClosed = false;
-  let activeTurnAbortController: AbortController | undefined;
+  let activeOperationAbortController: AbortController | undefined;
 
   const refreshPrompt = () => {
     readlineInterface.setPrompt(buildPrompt(getEnginePermissionMode(engine)));
@@ -195,9 +195,9 @@ export async function runInteractiveSession(engine: QueryEngine): Promise<void> 
   });
 
   readlineInterface.on('SIGINT', () => {
-    if (activeTurnAbortController && !activeTurnAbortController.signal.aborted) {
+    if (activeOperationAbortController && !activeOperationAbortController.signal.aborted) {
       console.log(chalk.yellow('\nCancelling the current operation...'));
-      activeTurnAbortController.abort(new OperationAbortedError());
+      activeOperationAbortController.abort(new OperationAbortedError());
       return;
     }
 
@@ -243,14 +243,25 @@ export async function runInteractiveSession(engine: QueryEngine): Promise<void> 
       const argument = message === '/permissions'
         ? undefined
         : message.slice('/permissions'.length).trim();
+      const permissionAbortController = new AbortController();
+      activeOperationAbortController = permissionAbortController;
       try {
-        await handlePermissionsCommand(engine, argument, lineQueue);
+        await handlePermissionsCommand(
+          engine,
+          argument,
+          lineQueue,
+          permissionAbortController.signal
+        );
       } catch (error) {
         if (isAbortError(error)) {
           console.log(chalk.yellow('\nPermission command cancelled.\n'));
         } else {
           const reason = error instanceof Error ? error.message : String(error);
           console.error(chalk.red('\nError:'), reason + '\n');
+        }
+      } finally {
+        if (activeOperationAbortController === permissionAbortController) {
+          activeOperationAbortController = undefined;
         }
       }
       continue;
@@ -261,7 +272,7 @@ export async function runInteractiveSession(engine: QueryEngine): Promise<void> 
       discardStdin: false
     }).start();
     const turnAbortController = new AbortController();
-    activeTurnAbortController = turnAbortController;
+    activeOperationAbortController = turnAbortController;
 
     try {
       const response = await engine.chat(message, {
@@ -269,15 +280,24 @@ export async function runInteractiveSession(engine: QueryEngine): Promise<void> 
         requestApproval: async (request, signal) => {
           spinner.stop();
           console.log(formatApprovalRequest(request));
-          process.stdout.write(chalk.yellow('Approve this operation? [y/N]: '));
+          const allowsEditSession = request.choices.includes('allow-edits-session');
+          process.stdout.write(chalk.yellow(
+            allowsEditSession
+              ? 'Approve? [y] once / [a] all edits this session / [N] deny: '
+              : 'Approve this operation? [y/N]: '
+          ));
           const answer = await lineQueue.read(signal);
-          const isApproved = answer?.trim().toLowerCase() === 'y' ||
-            answer?.trim().toLowerCase() === 'yes';
+          const normalizedAnswer = answer?.trim().toLowerCase();
+          const approvalChoice = normalizedAnswer === 'y' || normalizedAnswer === 'yes'
+            ? 'allow-once'
+            : allowsEditSession && normalizedAnswer === 'a'
+              ? 'allow-edits-session'
+              : 'deny';
 
           if (!signal.aborted) {
             spinner.start();
           }
-          return isApproved;
+          return approvalChoice;
         }
       });
       console.log(chalk.green('\nAssistant:\n') + response + '\n');
@@ -290,8 +310,8 @@ export async function runInteractiveSession(engine: QueryEngine): Promise<void> 
       }
     } finally {
       spinner.stop();
-      if (activeTurnAbortController === turnAbortController) {
-        activeTurnAbortController = undefined;
+      if (activeOperationAbortController === turnAbortController) {
+        activeOperationAbortController = undefined;
       }
     }
   }

@@ -20,14 +20,16 @@ Syzzz Code 是一个使用 TypeScript 构建的实验性命令行 AI 编程助�
 - 会话级权限模式：`safe`（默认）、`acceptEdits`、`fullAccess`，通过 `/permissions` 查看或切换；
 - 使用 Zod 在工具执行前校验模型生成的参数，并将失败作为结构化错误返回；
 - 文件工具默认只能访问启动时确定的工作区，并拦截路径越界、敏感文件及 symlink/junction 逃逸；
-- `Write` 和 `Edit` 在 Safe 模式下展示 diff 并要求确认；`acceptEdits`/`fullAccess` 可自动写入，但仍做工作区校验与审批后 hash 检测；
+- `Write` 和 `Edit` 在 Safe 模式下展示 diff，可选择仅允许本次或允许本会话后续编辑；自动写入仍执行工作区校验、审批后 hash 检测和同目录原子替换；
+- `Read` 仅接受普通 UTF-8 文件，单次读取硬上限为 1 MiB；
 - `Shell` 使用异步子进程，支持超时、取消、stdout/stderr 分离和输出上限；Safe/`acceptEdits` 下仍要求确认；
 - system prompt 注入 Platform、真实 Shell executor 与工具偏好，减少 Windows 下错误的 `ls` 类命令；
 - 执行过程中按 `Ctrl+C` 可取消当前 Provider 请求或工具执行；
 - 工具调用最多执行 10 轮，避免无限循环；
 - 单个工具结果超过 100,000 个字符时会被截断；
 - Provider 请求失败时不会把未完成回合提交到正式对话历史；
-- 提供 44 项离线自动化测试，覆盖配置、CLI、Engine、权限模式、Provider 协议、路径策略、目录列表、文件编辑和 Shell 生命周期。
+- 项目目录中的 `.env` 不会被自动加载；Shell 只继承启动 Syzzz 时已有的进程环境；
+- 提供 57 项离线自动化测试，覆盖配置、CLI、Engine、权限模式、Provider 协议、路径策略、目录列表、文件编辑和 Shell 生命周期。
 
 ## 当前不具备的能力
 
@@ -40,7 +42,7 @@ Syzzz Code 是一个使用 TypeScript 构建的实验性命令行 AI 编程助�
 - Shell 沙箱和基于命令语义的细粒度风险判定；
 - 永久写入配置文件的权限模式（当前权限仅会话有效）；
 - 工作区外路径的逐次授权；
-- 原子文件替换、通用 Patch 和自动回滚；
+- 通用 Patch、文件锁、事务日志、备份和自动回滚；
 - 持久化执行审计与事件流；
 - Glob、Grep、Diagnostics 和 Git 专用工具；
 - MCP、Hooks、插件和子 Agent；
@@ -49,11 +51,11 @@ Syzzz Code 是一个使用 TypeScript 构建的实验性命令行 AI 编程助�
 
 ## 环境要求
 
-- Node.js
+- Node.js 20 或更高版本
 - npm
 - 一个可用的 Anthropic 或 OpenAI-compatible API 服务
 
-建议使用当前 Node.js LTS 版本。
+建议使用当前 Node.js LTS 版本；npm 包也通过 `engines.node` 明确要求 Node.js `>=20`。
 
 ## 安装
 
@@ -131,9 +133,10 @@ syzzz chat
 - 输入 `exit` 退出；
 - 输入 `/permissions` 查看当前会话权限模式；
 - 输入 `/permissions safe|acceptEdits|fullAccess` 切换模式（仅当前进程有效）；
-- 启用 `fullAccess` 需输入确认短语 `I understand`；
-- 工具要求审批时，输入 `y` 或 `yes` 批准，其他输入默认拒绝；
-- Provider 或工具执行期间按一次 `Ctrl+C` 取消当前操作；
+- 启用 `fullAccess` 时只有单独输入 `y` 或 `Y` 才会生效；`yes`、空行、EOF 和其他输入均取消；
+- `Write`/`Edit` 审批中输入 `y` 仅允许本次，输入 `a` 允许本会话后续编辑，其他输入默认拒绝；
+- `Shell` 审批仍为逐次 `[y/N]`，不能通过普通审批升级到 `fullAccess`；
+- Provider、工具执行或权限确认期间按一次 `Ctrl+C` 只取消当前操作；
 - 在两秒内连续按两次 `Ctrl+C` 退出。
 
 ### 4. 发送单次消息
@@ -192,6 +195,8 @@ syzzz --version                    查看版本
 - `models`：允许通过 `syzzz switch` 选择的模型列表；
 - `BASE_URL`：API 基地址，而不是完整的 `/chat/completions` 地址；
 - `API_KEY`：供应商密钥，当前以明文保存在配置文件中。
+
+Provider 配置只从上述用户配置文件读取。项目工作区中的 `.env` 不会被 Syzzz 自动解析或注入；`Shell` 仍会继承启动 Syzzz 的正常进程环境，因此本阶段不宣称实现凭证隔离。
 
 配置校验要求 `model` 必须包含在同一供应商的 `models` 数组中。例如，以下配置是无效的：
 
@@ -283,6 +288,8 @@ Provider Layer            Tool Layer
 
 Provider 按 API 协议划分，而不是为每个供应商品牌重复实现一套客户端。DeepSeek、OpenAI-compatible 中转服务以及其他兼容端点可以复用同一个适配器。
 
+对于会在工具调用消息中返回 `reasoning_content` 的兼容端点，适配器只在工具链内部保存并回放该字段，不会把它作为最终文本展示。若端点明确以 `stop` 结束、没有正文或工具调用、但仅返回了该推理字段，适配器会对同一模型进行一次 `thinking: disabled` 恢复请求；这不是通用网络重试，也不会自动执行或重放工具。
+
 ### Query Engine
 
 [`QueryEngine`](src/engine.ts) 不依赖具体 SDK，主要负责：
@@ -308,6 +315,8 @@ Provider 按 API 协议划分，而不是为每个供应商品牌重复实现一
 
 所有模式下仍保留：Zod 校验、文件工作区边界、Shell 超时/取消/输出上限、工具轮次上限。
 
+普通工具审批不能进入 `fullAccess`。Safe 模式下，`Write`/`Edit` 可返回“仅本次允许”“本会话允许编辑”或“拒绝”；`Shell` 只允许“仅本次允许”或“拒绝”。切换 `fullAccess` 必须单独执行权限命令并输入 `y`，确认期间按 `Ctrl+C` 只会取消切换。
+
 ## 工具
 
 ### ListDirectory
@@ -320,15 +329,15 @@ Provider 按 API 协议划分，而不是为每个供应商品牌重复实现一
 
 ### Read
 
-读取工作区内的 UTF-8 文本文件。路径会经过规范化、真实路径和敏感路径检查，默认拒绝工作区外访问及 symlink/junction 逃逸。
+读取工作区内的普通 UTF-8 文本文件。工具先通过文件句柄检查类型和大小，再按固定上限读取；单次硬上限为 1 MiB，无效 UTF-8、目录和其他非普通文件会明确失败。路径会经过规范化、真实路径和敏感路径检查，默认拒绝工作区外访问及 symlink/junction 逃逸；Windows 还会拒绝 ADS、设备命名空间、DOS 保留设备名和尾随点/空格。
 
 ### Write
 
-创建或覆盖工作区内的 UTF-8 文本文件。Safe 模式下执行前展示 diff 并要求确认；自动放行模式仍会生成内部审批元数据并在落盘前检测内容变化。
+创建或覆盖工作区内的 UTF-8 文本文件。Safe 模式下执行前展示 diff 并要求确认；自动放行模式仍会生成内部审批元数据。落盘使用同目录唯一临时文件和 `wx` 创建，写入后 flush，保留原文件 mode，并在最终路径/hash 复核通过后原子替换目标；失败或取消会清理临时文件。
 
 ### Edit
 
-使用 `old_string` 和 `new_string` 修改工作区文件。`old_string` 必须恰好匹配一次；Safe 模式下展示 diff，并使用内容 hash 检测审批后的并发变化。
+使用 `old_string` 和 `new_string` 修改工作区文件。`old_string` 必须恰好匹配一次；Safe 模式下展示 diff，并与 `Write` 复用审批快照、并发冲突检测和同目录原子替换。
 
 ## 测试
 
@@ -340,25 +349,28 @@ npm test
 
 该命令会先执行 TypeScript 构建，再运行 `tests/*.test.mjs`。
 
-当前正式测试套件包含 44 项离线测试：
+当前正式测试套件包含 57 项离线测试：
 
 - 配置校验与 Base URL 规范化；
 - CLI 命令注册；
 - Provider 和模型切换持久化；
 - 连续交互消息只处理一次；
-- `/permissions` 不进入聊天且可切换模式；
+- `/permissions` 不进入聊天且可切换模式，`fullAccess` 严格确认及 `Ctrl+C` 取消；
 - QueryEngine 工具调用历史；
 - 权限模式矩阵（safe / acceptEdits / fullAccess）；
-- 工具 Zod 输入校验、结构化错误和审批通过/拒绝；
-- 工作区越界、敏感路径和 symlink/junction 逃逸；
+- 工具 Zod 输入校验、结构化审批选择、非法选择与缺少 handler 时的 fail-closed 行为；
+- 工作区越界、敏感路径、symlink/junction 逃逸和 Windows 特殊路径；
 - ListDirectory 列表与越界拦截；
-- Write/Edit diff、唯一匹配和审批后冲突检测；
-- Shell 成功、非零退出、超时、取消和输出超限；
+- Read 的 1 MiB 边界、普通文件约束和严格 UTF-8 校验；
+- Write/Edit diff、唯一匹配、审批后冲突、mode 保留、原子替换和临时文件清理；
+- Shell 成功、非零退出、超时、取消、输出超限和子进程树清理；
+- 配置模块不会自动加载工作区 `.env`；
 - 交互审批输入不会泄漏为下一条聊天消息；
 - Provider 失败后的消息历史回滚；
 - 并发消息保护；
 - 工具调用轮次上限；
 - OpenAI-compatible 消息与 function tools 转换；
+- OpenAI-compatible 工具链推理字段回放与单次空响应恢复；
 - Anthropic 消息与工具定义转换。
 
 这些测试不会连接真实 AI 服务，因此不能单独证明每个第三方供应商、模型或中转服务都能正常工作。真实 Provider 验证仍需要有效凭据、网络和供应商侧模型权限。
@@ -382,6 +394,15 @@ npm run build
 ```bash
 npm start
 ```
+
+发布前本地验收：
+
+```bash
+npm audit --omit=dev
+npm pack --dry-run --json
+```
+
+`prepack` 会先执行构建；npm 包采用 `dist` 与 `README.md` 白名单（`package.json` 由 npm 固定包含），不会打入 `src`、`tests`、`archive` 或本地配置样例。本阶段只验证包内容，不发布、打 Tag 或调整版本号。
 
 项目结构：
 
@@ -422,12 +443,13 @@ tests/
 使用当前版本前，请理解以下风险：
 
 1. 获批的 `Shell` 命令仍可以执行当前系统账户有权执行的任意操作，工作区约束只适用于文件工具；
-2. 文件边界和敏感路径拦截会降低误操作风险，但不是操作系统级隔离；
+2. 文件边界和敏感路径拦截会降低误操作风险，但不是操作系统级隔离；最终路径/hash 复核到 `rename` 之间仍有极小 TOCTOU 窗口；
 3. 模型读取到的文件内容和工具结果可能被发送给远程 Provider；
 4. API Key 当前明文保存在用户配置文件中；
 5. 审批依赖用户审查命令和 diff，不能自动消除提示注入或恶意命令风险；
 6. Windows `taskkill` 和 POSIX 进程组终止是尽力而为，不能等同于容器或沙箱；
-7. 失败回合不会提交消息历史，但已经发生的外部副作用不会自动撤销。
+7. 失败回合不会提交消息历史，但已经发生的外部副作用不会自动撤销；
+8. Shell 继承启动进程环境，当前没有凭证过滤、命令 allowlist 或网络隔离。
 
 建议：
 
@@ -439,7 +461,7 @@ tests/
 
 ## 后续方向
 
-Phase 1 Tool Runtime 与 Phase 1.1 稳定化（权限模式、ListDirectory、环境 prompt）已落地。接下来的重点不是继续堆叠模型和工具数量，而是进入事件化 Runtime 与 Provider 可靠性建设：
+Phase 1 Tool Runtime 与 Phase 1.1 最终稳定化已经落地，自动化验收与真实 Provider dogfood 均已通过，Phase 1.1 现已冻结。下一项开发直接进入事件化 Runtime 与 Provider 可靠性建设：
 
 1. 事件化运行时、流式输出和持久化执行审计；
 2. Provider 分类错误、请求超时、有限重试和 usage 展示；
@@ -450,6 +472,6 @@ Phase 1 Tool Runtime 与 Phase 1.1 稳定化（权限模式、ListDirectory、�
 
 ## 项目状态
 
-当前包版本仍为 `1.0.0`。Phase 1 已推送至远程；Phase 1.1 为在其之上的会话权限与可用性稳定化，仍属实验阶段，不代表生产安全级或完整的自动化编程 Agent。
+当前包版本仍为 `1.0.0`，远程 `main` 的 Phase 1.1 基线为 `da6858d`。本轮最终稳定化已通过 57 项离线测试、生产依赖审计、npm 包内容检查和真实 Provider dogfood，状态为 **Frozen**。此后除 P0 安全或数据破坏问题外，不再回到 Phase 1 增加能力。当前版本仍属实验阶段，不代表生产安全级或完整的自动化编程 Agent。
 
 历史规划和旧测试资料保存在 [`archive/pre-v1.0.0`](archive/pre-v1.0.0)，仅用于记录项目演进，不应作为当前功能、测试或安全说明。

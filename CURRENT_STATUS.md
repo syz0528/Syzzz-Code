@@ -1,10 +1,10 @@
 # Syzzz Code 当前项目状态
 
-**状态日期：** 2026-07-16  
-**包版本：** 1.0.0  
-**当前阶段：** Phase 1 已推送；Phase 1.1 稳定化（权限模式 / ListDirectory / 环境 prompt）已在本地完成  
-**远程仓库：** https://github.com/syz0528/Syzzz-Code  
-**远程 Phase 1 基线：** `63ad76c`（`完成 Phase 1 Tool Runtime 安全与执行正确性底座`）
+**状态日期：** 2026-07-21<br>
+**包版本：** 1.0.0<br>
+**当前阶段：** Phase 1.1 最终稳定化与 dogfood 已通过，状态为 **Frozen**；下一项开发进入 Phase 2<br>
+**远程仓库：** https://github.com/syz0528/Syzzz-Code<br>
+**远程 Phase 1.1 基线：** `da6858d`（`完成 Phase 1.1 Tool Runtime 稳定化`）
 
 > 本文档描述当前代码的真实状态，而不是未来设计目标。历史规划和旧测试报告已归档到 [`archive/pre-v1.0.0`](archive/pre-v1.0.0)。
 
@@ -45,7 +45,7 @@ Syzzz Code 是一个使用 TypeScript 构建的实验性命令行 AI 编程助�
 
 当前可以定义为：
 
-> 多 Provider、连续对话和 Tool Loop 已经可运行；Phase 1 已补齐工具输入校验、工作区边界、审批、diff、异步 Shell 与端到端取消；Phase 1.1 补齐会话级权限模式、`ListDirectory` 与环境/Shell 提示，降低审批疲劳与探索误用 Shell 的问题。执行隔离、事件审计、上下文治理和长期会话仍待后续阶段完成。
+> 多 Provider、连续对话和 Tool Loop 已经可运行；Phase 1 已补齐工具输入校验、工作区边界、审批、diff、异步 Shell 与端到端取消；Phase 1.1 进一步闭合结构化审批、会话编辑授权、受限读取、原子文件替换、配置与 npm 包卫生。执行隔离、事件审计、Provider 可靠性、上下文治理和长期会话仍待后续阶段完成。
 
 ## 3. 已实现能力
 
@@ -71,8 +71,8 @@ syzzz --version                    查看版本
 - 每条输入只处理一次；
 - 回答一轮后继续等待下一条输入；
 - 输入 `exit` 退出；
-- 审批提示只接受 `y` 或 `yes`，其他输入默认拒绝；
-- 执行中按一次 `Ctrl+C` 取消当前 turn；
+- Write/Edit 审批支持 `y`（仅本次）、`a`（本会话后续编辑）和默认拒绝；Shell 只支持逐次批准或拒绝；
+- 执行或 `fullAccess` 确认中按一次 `Ctrl+C` 只取消当前操作；
 - 两秒内连续按两次 `Ctrl+C` 退出；
 - 默认命令和 `chat` 子命令复用同一个交互循环。
 
@@ -84,6 +84,8 @@ syzzz --version                    查看版本
 - `OpenAICompatibleProvider`：适配 OpenAI-compatible Chat Completions API。
 
 当前架构按 API 协议划分 Provider，而不是为每个供应商品牌重复实现 Provider。DeepSeek、OpenAI 以及兼容 OpenAI 协议的中转服务可以复用同一个适配器。
+
+OpenAI-compatible 适配器会在内部保存并回放工具调用所需的 `reasoning_content`，但不会将其展示为最终文本。如果端点明确以 `stop` 结束、没有正文或工具调用、却只返回该字段，适配器会对同一模型进行一次 `thinking: disabled` 恢复请求。该行为不是通用网络重试，也不会自动执行或重放工具。
 
 统一协议已经能够表达：
 
@@ -153,15 +155,16 @@ C:\Users\<用户名>\.syzzz-code\config.json
 - 每个 Provider 的 `model` 必须包含在其 `models` 数组中；
 - 模型列表完全来自用户配置文件，不通过网络获取；
 - `syzzz switch` 只显示配置文件中已经存在的 Provider 和模型。
+- 配置模块不会自动加载工作区 `.env`；Shell 仍继承启动 Syzzz 时已有的正常进程环境。
 
 ### 3.5 本地工具
 
 当前内置五种工具：
 
 - `ListDirectory`：只读列出工作区目录条目，默认无需审批，输出有条目上限；
-- `Read`：读取工作区内通过真实路径与敏感路径检查的 UTF-8 文件；
-- `Write`：生成 diff/内部审批元数据，按权限模式决定是否弹窗，落盘前校验内容 hash；
-- `Edit`：要求 `old_string` 唯一匹配，同样按权限模式审批，并检测并发变化；
+- `Read`：通过文件句柄先检查类型和大小，只读取不超过 1 MiB 的普通 UTF-8 文件；
+- `Write`：生成 diff/审批快照，按权限模式决定是否弹窗，以同目录临时文件 flush、复核并原子替换；
+- `Edit`：要求 `old_string` 唯一匹配，复用审批快照、并发冲突检测、mode 保留和原子替换；
 - `Shell`：异步执行非交互命令，支持超时、取消、进程树终止、stdout/stderr 分离与输出限制。
 
 工具使用统一的 `ToolDefinition`、`ToolContext` 和 `ToolResult` 契约。工具调用与结构化错误在 OpenAI-compatible 和 Anthropic 两类协议下均有对应转换；Anthropic 错误结果会设置 `is_error: true`。
@@ -171,7 +174,8 @@ C:\Users\<用户名>\.syzzz-code\config.json
 - 工作区外路径；
 - `.git`、`.ssh`、`.env`、私钥和常见凭据文件；
 - 通过 symlink 或 Windows junction 产生的越界；
-- 通过链接别名访问工作区内敏感目录。
+- 通过链接别名访问工作区内敏感目录；
+- Windows ADS、设备命名空间、DOS 保留设备名和尾随点/空格路径。
 
 ### 3.6 会话权限模式（Phase 1.1）
 
@@ -193,7 +197,9 @@ C:\Users\<用户名>\.syzzz-code\config.json
 要点：
 
 - 仅当前进程有效，不写入 `~/.syzzz-code/config.json`；
-- `fullAccess` 需输入 `I understand` 确认；
+- `fullAccess` 只有单独输入 `y` 或 `Y` 才启用，`yes`、空行、其他输入和 EOF 均取消；
+- 普通审批不能进入 `fullAccess`；Write/Edit 可选择仅本次或本会话后续编辑，Shell 不允许会话升级；
+- 权限确认拥有独立 `AbortController`，期间按 `Ctrl+C` 不退出进程且不改变原模式；
 - 自动放行 Write/Edit 时仍调用 `prepareApproval` 以保留 hash/`executionData`；
 - 所有模式保留 Zod、工作区边界、Shell 超时/取消与轮次上限；
 - `fullAccess` 下文件工具仍受工作区约束，Shell 仍可产生账户级副作用。
@@ -210,14 +216,14 @@ npm test
 
 该命令先执行 TypeScript 构建，再运行 `tests/*.test.mjs`。
 
-当前正式测试套件包含 44 项离线测试：
+当前正式测试套件包含 57 项离线测试：
 
-- `tests/config.test.mjs`：4 项；
-- `tests/provider-protocol.test.mjs`：5 项；
-- `tests/engine.test.mjs`：14 项；
-- `tests/cli.test.mjs`：6 项；
-- `tests/tools.test.mjs`：8 项；
-- `tests/shell-runner.test.mjs`：7 项。
+- `tests/config.test.mjs`：5 项；
+- `tests/provider-protocol.test.mjs`：8 项；
+- `tests/engine.test.mjs`：17 项；
+- `tests/cli.test.mjs`：8 项；
+- `tests/tools.test.mjs`：11 项；
+- `tests/shell-runner.test.mjs`：8 项。
 
 覆盖范围包括：
 
@@ -226,18 +232,22 @@ npm test
 - 当前模型不在模型列表中；
 - 当前 Provider 不存在；
 - OpenAI-compatible 工具消息转换；
+- OpenAI-compatible 工具调用推理字段回放与单次空响应恢复；
 - Anthropic 工具消息转换；
 - 两类 Provider 的工具错误语义；
 - Engine 工具调用历史；
 - Zod 工具输入校验；
-- 审批通过、拒绝和缺少审批处理器时的 fail-closed 行为；
+- 单次允许、会话编辑、拒绝、非法选择、Shell 禁止升级和缺少审批处理器时的 fail-closed 行为；
+- `fullAccess` 的 `y/Y/yes/n/空行/乱码/EOF/Ctrl+C` 行为和输入隔离；
 - 取消后消息历史回滚和下一轮恢复；
 - 失败回合的消息历史回滚；
 - 并发消息保护；
 - 工具循环上限；
-- 路径越界、敏感路径、symlink 和 Windows junction；
-- Write/Edit diff、唯一匹配和审批后冲突检测；
-- Shell 正常退出、非零退出、超时、取消和输出超限；
+- 路径越界、敏感路径、symlink、Windows junction 与特殊路径语法；
+- Read 的 1 MiB 边界、普通文件约束和严格 UTF-8 校验；
+- Write/Edit diff、唯一匹配、审批后冲突、mode 保留、原子替换和临时文件清理；
+- Shell 正常退出、非零退出、超时、取消、输出超限和子进程树残留检查；
+- 导入配置模块不会加载工作区 `.env`；
 - CLI 命令注册；
 - Provider 与模型切换持久化；
 - 连续消息分别只处理一次；
@@ -246,12 +256,18 @@ npm test
 最近一次完整结果：
 
 ```text
-tests 44
-pass 44
+tests 57
+pass 57
 fail 0
 ```
 
 这些测试均为离线测试，不会调用真实模型服务。
+
+发布卫生验收也已通过：
+
+- `npm audit --omit=dev --json`：生产依赖漏洞为 0（含 High/Critical 为 0）；
+- `form-data` 解析为已修复的 `4.0.6`；
+- `npm pack --dry-run --json`：只包含 `dist`、`README.md` 与 npm 固定包含的 `package.json`，不包含 `src`、`tests`、`archive` 或本地配置样例。
 
 ### 4.2 已完成人工真实验证
 
@@ -270,6 +286,16 @@ fail 0
 - 同一个用户问题中可以发生多轮工具调用。
 
 这次人工验证证明了当前 OpenAI-compatible 主链路在该具体配置下能够工作，但它不是可重复的自动化 E2E 测试。
+
+2026-07-21 又在独立最小工作区完成 Phase 1.1 最终 dogfood：
+
+- 真实 Provider 使用 `ListDirectory` 和 `Read` 获取结构与源码；
+- 首次 `Edit` 选择 `a` 后会话进入 `acceptEdits`，`Shell` 仍单独要求 `y`；
+- Provider 修复单行逻辑错误并运行 `node --test`，随后独立复跑结果为 1/1 通过；
+- 工作区未遗留 `.syzzz-*` 临时文件；自动化用例同时覆盖 `Write -> Edit` 后续自动执行、审批后外部冲突和子进程树清理；
+- 正式 CLI 中 `yes` 未启用 Full Access，单独输入 `Y` 后启用；退出并重启后提示恢复为 `safe`。
+
+该 dogfood 证明了本轮关键交互在当前 OpenAI-compatible 配置和 Windows 环境中可工作，但仍不替代多 Provider、跨平台 E2E。
 
 ### 4.3 尚未完成的真实验证
 
@@ -320,19 +346,19 @@ Remote Model API
 
 ### 6.1 P0：Shell 仍不是安全沙箱
 
-- 所有 Shell 命令都会请求确认，但获批命令仍拥有当前账户权限；
+- Safe 与 `acceptEdits` 模式下 Shell 逐次请求确认；`fullAccess` 下跳过确认，但命令仍拥有当前账户权限；
 - 文件工具的工作区边界不会限制 Shell 命令自身的路径、网络或系统副作用；
 - 当前没有容器、系统调用过滤、网络隔离或资源配额；
 - 提示注入仍可能诱导模型提出危险命令，安全性依赖用户审查审批预览。
 
 因此当前版本仍不适合在生产目录、包含敏感凭据的目录或不可恢复环境中无人监督运行。
 
-### 6.2 P1：文件写入尚非原子替换
+### 6.2 P1：文件写入仍有极小竞态边界
 
-- Write/Edit 已有 diff、唯一匹配和审批后 hash 冲突检测；
-- 最终落盘仍使用直接 `writeFile`，进程在写入中途崩溃时可能留下部分内容；
-- 尚无通用 Patch、临时文件原子替换、备份或自动回滚；
-- 路径检查与真正写入之间仍存在操作系统层面的 TOCTOU 窗口。
+- Write/Edit 已使用同目录唯一临时文件、`wx` 创建、flush、mode 保留和原子替换；
+- 临时文件完成后会再次校验路径与当前内容 hash，失败或取消会清理临时文件；
+- 最终复核到 `rename` 之间仍存在操作系统层面的极小 TOCTOU 窗口；
+- 当前没有锁服务、事务日志、备份、自动回滚或目录级 fsync 持久性承诺。
 
 ### 6.3 P1：Provider 可靠性仍不完整
 
@@ -361,7 +387,7 @@ Remote Model API
 - `config set apiKey` 会把密钥作为命令参数，可能进入 Shell 历史；
 - Windows 上不能仅依赖 POSIX `0600` 文件模式作为安全保障；
 - 当前没有系统凭据存储；
-- 虽然加载了 dotenv，但尚未实现 Provider 环境变量到运行时配置的映射。
+- 配置模块已取消 dotenv 自动加载；Shell 仍继承启动进程环境，尚无凭证过滤或系统凭据存储。
 
 此前在调试和对话中展示过的真实 API Key 应视为已暴露并进行轮换。
 
@@ -418,8 +444,9 @@ title:  完善当前状态与后续升级路线文档
 ### 8.2 Phase 1 / 1.1 版本状态
 
 - Phase 1 已推送到远程 `main`（`63ad76c`），含 37 项测试基线后的 Tool Runtime。
-- Phase 1.1 在其之上增加权限模式、`ListDirectory` 与环境 prompt，离线测试 44 项；提交/推送取决于用户审阅与 dogfood。
-- 包版本仍为 `1.0.0`；是否打 `v1.1.0` 应在稳定化 dogfood 后决定。
+- Phase 1.1 已推送基线为 `da6858d`；当前工作树在其上完成最终稳定化，57 项离线测试与发布卫生验收通过。
+- Phase 1.1 最终自动化验收与真实 Provider dogfood 已通过，状态为 **Frozen**。
+- 包版本仍为 `1.0.0`；本阶段不发布 npm 包、不创建 Tag、不调整版本号。
 
 ### 8.3 Tag 状态
 
@@ -427,7 +454,7 @@ title:  完善当前状态与后续升级路线文档
 
 ## 9. 下一阶段目标
 
-Phase 1 已完成本地实现和自动化验收。下一阶段按路线进入 Phase 2，不优先增加更多模型、供应商、代码工具或高级 UI：
+Phase 1.1 已冻结。下一项开发按路线进入 Phase 2，不再回到 Phase 1 增加能力（P0 安全或数据破坏问题除外）：
 
 1. 定义统一 Agent Event Stream；
 2. 支持文本流式输出和事件驱动 CLI；

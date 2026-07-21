@@ -1,6 +1,16 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtemp, mkdir, readFile, rm, symlink, writeFile } from 'node:fs/promises';
+import {
+  chmod,
+  mkdtemp,
+  mkdir,
+  readFile,
+  readdir,
+  rm,
+  stat,
+  symlink,
+  writeFile
+} from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { z } from 'zod';
@@ -9,7 +19,10 @@ import {
   convertToolSchemaToJsonSchema,
   validateToolInput
 } from '../dist/tools/runtime.js';
-import { resolveWorkspacePath } from '../dist/tools/workspace.js';
+import {
+  resolveWorkspacePath,
+  validateWorkspacePathSyntax
+} from '../dist/tools/workspace.js';
 
 async function withWorkspace(run) {
   const workspaceRoot = await mkdtemp(join(tmpdir(), 'syzzz-tools-'));
@@ -84,6 +97,31 @@ test('keeps file access inside the workspace and blocks sensitive paths', async 
   });
 });
 
+test('rejects unsafe Windows path syntax without blocking normal drive paths', () => {
+  assert.doesNotThrow(() =>
+    validateWorkspacePathSyntax('C:\\workspace\\src\\index.ts', 'win32')
+  );
+  assert.doesNotThrow(() =>
+    validateWorkspacePathSyntax('NUL.txt', 'linux')
+  );
+
+  for (const unsafePath of [
+    'file.txt:secret',
+    '\\\\?\\C:\\workspace\\file.txt',
+    '\\\\.\\NUL',
+    'NUL.txt',
+    'folder\\COM1.log',
+    'folder.',
+    'folder '
+  ]) {
+    assert.throws(
+      () => validateWorkspacePathSyntax(unsafePath, 'win32'),
+      error => error?.code === 'INVALID_PATH',
+      unsafePath
+    );
+  }
+});
+
 test('blocks symbolic-link or junction escapes and sensitive aliases', async t => {
   await withWorkspace(async workspaceRoot => {
     const outsideRoot = await mkdtemp(join(tmpdir(), 'syzzz-outside-'));
@@ -128,6 +166,48 @@ test('read tool returns errors instead of accessing paths outside the workspace'
     assert.equal(result.isError, true);
     assert.match(result.content, /outside the workspace/);
     assert.equal(result.metadata.errorCode, 'OUTSIDE_WORKSPACE');
+  });
+});
+
+test('read tool bounds allocation and only accepts regular files', async () => {
+  await withWorkspace(async workspaceRoot => {
+    const limitBytes = 1024 * 1024;
+    await writeFile(join(workspaceRoot, 'limit.txt'), Buffer.alloc(limitBytes, 0x61));
+    await writeFile(join(workspaceRoot, 'too-large.txt'), Buffer.alloc(limitBytes + 1, 0x62));
+    await writeFile(join(workspaceRoot, 'invalid-utf8.txt'), Buffer.from([0xc3, 0x28]));
+    await mkdir(join(workspaceRoot, 'directory'));
+
+    const atLimit = await readTool.execute(
+      { path: 'limit.txt' },
+      createContext(workspaceRoot)
+    );
+    assert.equal(atLimit.isError, undefined);
+    assert.equal(Buffer.byteLength(atLimit.content), limitBytes);
+    assert.equal(atLimit.metadata.sizeBytes, limitBytes);
+
+    const tooLarge = await readTool.execute(
+      { path: 'too-large.txt' },
+      createContext(workspaceRoot)
+    );
+    assert.equal(tooLarge.isError, true);
+    assert.match(tooLarge.content, /limit is 1048576 bytes/);
+    assert.equal(tooLarge.metadata.errorCode, 'FILE_TOO_LARGE');
+
+    const directory = await readTool.execute(
+      { path: 'directory' },
+      createContext(workspaceRoot)
+    );
+    assert.equal(directory.isError, true);
+    assert.match(directory.content, /regular files/);
+    assert.equal(directory.metadata.errorCode, 'NOT_REGULAR_FILE');
+
+    const invalidUtf8 = await readTool.execute(
+      { path: 'invalid-utf8.txt' },
+      createContext(workspaceRoot)
+    );
+    assert.equal(invalidUtf8.isError, true);
+    assert.match(invalidUtf8.content, /not valid UTF-8/);
+    assert.equal(invalidUtf8.metadata.errorCode, 'INVALID_UTF8');
   });
 });
 
@@ -184,6 +264,40 @@ test('write tool previews changes and rejects files changed after approval', asy
     assert.equal(rejected.isError, true);
     assert.match(rejected.content, /changed after approval/);
     assert.equal(await readFile(targetPath, 'utf8'), 'changed externally\n');
+    assert.equal(
+      (await readdir(workspaceRoot)).some(name => name.includes('.syzzz-')),
+      false
+    );
+  });
+});
+
+test('write tool atomically replaces content, preserves mode, and cleans temporary files', async () => {
+  await withWorkspace(async workspaceRoot => {
+    const targetPath = join(workspaceRoot, 'atomic.txt');
+    await writeFile(targetPath, 'before\n', 'utf8');
+    if (process.platform !== 'win32') {
+      await chmod(targetPath, 0o640);
+    }
+
+    const input = { path: 'atomic.txt', contents: 'after\n' };
+    const approval = await writeTool.prepareApproval(
+      input,
+      createContext(workspaceRoot)
+    );
+    const result = await writeTool.execute(
+      input,
+      createContext(workspaceRoot, approval.executionData)
+    );
+
+    assert.equal(result.isError, undefined);
+    assert.equal(await readFile(targetPath, 'utf8'), 'after\n');
+    if (process.platform !== 'win32') {
+      assert.equal((await stat(targetPath)).mode & 0o777, 0o640);
+    }
+    assert.equal(
+      (await readdir(workspaceRoot)).some(name => name.includes('.syzzz-')),
+      false
+    );
   });
 });
 

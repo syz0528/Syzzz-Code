@@ -198,7 +198,7 @@ async function terminateWindowsProcessTree(
       {
         shell: false,
         windowsHide: true,
-        stdio: ['ignore', 'pipe', 'pipe']
+        stdio: ['ignore', 'ignore', 'pipe']
       }
     );
 

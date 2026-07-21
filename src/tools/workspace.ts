@@ -20,6 +20,66 @@ export class WorkspacePathError extends Error {
   }
 }
 
+const WINDOWS_RESERVED_DEVICE_NAMES = new Set([
+  'con',
+  'prn',
+  'aux',
+  'nul',
+  ...Array.from({ length: 9 }, (_, index) => `com${index + 1}`),
+  ...Array.from({ length: 9 }, (_, index) => `lpt${index + 1}`)
+]);
+
+export function validateWorkspacePathSyntax(
+  inputPath: string,
+  platform: NodeJS.Platform = process.platform
+): void {
+  if (inputPath.includes('\0')) {
+    throw new WorkspacePathError('File path cannot contain a null byte', 'INVALID_PATH');
+  }
+
+  if (platform !== 'win32') {
+    return;
+  }
+
+  const windowsPath = inputPath.replace(/\//g, '\\');
+  if (windowsPath.startsWith('\\\\?\\') || windowsPath.startsWith('\\\\.\\')) {
+    throw new WorkspacePathError(
+      `Windows device paths are not allowed: ${inputPath}`,
+      'INVALID_PATH'
+    );
+  }
+
+  const withoutDrive = /^[a-z]:/i.test(windowsPath)
+    ? windowsPath.slice(2)
+    : windowsPath;
+  if (withoutDrive.includes(':')) {
+    throw new WorkspacePathError(
+      `Windows alternate data streams are not allowed: ${inputPath}`,
+      'INVALID_PATH'
+    );
+  }
+
+  for (const segment of withoutDrive.split('\\').filter(Boolean)) {
+    if (segment === '.' || segment === '..') {
+      continue;
+    }
+    if (segment.endsWith('.') || segment.endsWith(' ')) {
+      throw new WorkspacePathError(
+        `Windows paths cannot contain trailing dots or spaces: ${inputPath}`,
+        'INVALID_PATH'
+      );
+    }
+
+    const baseName = segment.split('.', 1)[0].toLowerCase();
+    if (WINDOWS_RESERVED_DEVICE_NAMES.has(baseName)) {
+      throw new WorkspacePathError(
+        `Windows reserved device names are not allowed: ${inputPath}`,
+        'INVALID_PATH'
+      );
+    }
+  }
+}
+
 function isWithinDirectory(rootPath: string, candidatePath: string): boolean {
   const relativePath = relative(rootPath, candidatePath);
   return relativePath === '' || (
@@ -91,6 +151,8 @@ export async function resolveWorkspacePath(
   if (!inputPath.trim()) {
     throw new WorkspacePathError('File path cannot be empty', 'INVALID_PATH');
   }
+
+  validateWorkspacePathSyntax(inputPath);
 
   const realWorkspaceRoot = await realpath(resolve(workspaceRoot));
   const candidatePath = resolve(realWorkspaceRoot, inputPath);

@@ -1,5 +1,6 @@
 import type {
   ToolApprovalDetails,
+  ToolApprovalChoice,
   ToolApprovalHandler,
   ToolContext,
   ToolDefinition
@@ -27,6 +28,31 @@ import { resolveShellInvocation } from './tools/shell-runner.js';
 
 const MAX_TOOL_ROUNDS = 10;
 const MAX_TOOL_RESULT_CHARACTERS = 100_000;
+
+const BASIC_APPROVAL_CHOICES: readonly ToolApprovalChoice[] = Object.freeze([
+  'allow-once',
+  'deny'
+]);
+const WRITE_APPROVAL_CHOICES: readonly ToolApprovalChoice[] = Object.freeze([
+  'allow-once',
+  'allow-edits-session',
+  'deny'
+]);
+
+function approvalChoicesForTool(
+  tool: Pick<ToolDefinition, 'name' | 'risk'>
+): readonly ToolApprovalChoice[] {
+  return tool.risk === 'write' && (tool.name === 'Write' || tool.name === 'Edit')
+    ? WRITE_APPROVAL_CHOICES
+    : BASIC_APPROVAL_CHOICES;
+}
+
+function isOfferedApprovalChoice(
+  value: unknown,
+  choices: readonly ToolApprovalChoice[]
+): value is ToolApprovalChoice {
+  return typeof value === 'string' && choices.includes(value as ToolApprovalChoice);
+}
 
 export interface QueryEngineOptions {
   provider?: AIProvider;
@@ -231,17 +257,29 @@ export class QueryEngine {
           }
 
           throwIfAborted(signal);
-          const isApproved = await requestApproval({
+          const choices = approvalChoicesForTool(tool);
+          const approvalChoice = await requestApproval({
             toolCallId,
             toolName,
             risk: tool.risk,
             input: validationResult.data,
             description: approvalDetails.description,
-            preview: approvalDetails.preview
+            preview: approvalDetails.preview,
+            choices
           }, signal);
           throwIfAborted(signal);
 
-          if (!isApproved) {
+          if (!isOfferedApprovalChoice(approvalChoice, choices)) {
+            return {
+              role: 'tool',
+              toolCallId,
+              toolName,
+              content: `Tool execution denied: invalid approval choice for ${tool.name}`,
+              isError: true
+            };
+          }
+
+          if (approvalChoice === 'deny') {
             return {
               role: 'tool',
               toolCallId,
@@ -249,6 +287,10 @@ export class QueryEngine {
               content: `Tool execution denied by the user: ${approvalDetails.description}`,
               isError: true
             };
+          }
+
+          if (approvalChoice === 'allow-edits-session') {
+            this.permissionMode = 'acceptEdits';
           }
         }
 

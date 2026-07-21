@@ -352,7 +352,7 @@ test('honors an explicit approval decision before executing a tool', async () =>
   const response = await engine.chat('Run a command', {
     async requestApproval(request) {
       approvalRequests.push(request);
-      return true;
+      return 'allow-once';
     }
   });
 
@@ -361,6 +361,7 @@ test('honors an explicit approval decision before executing a tool', async () =>
   assert.equal(approvalRequests.length, 1);
   assert.equal(approvalRequests[0].risk, 'execute');
   assert.equal(approvalRequests[0].preview, 'echo ok');
+  assert.deepEqual(approvalRequests[0].choices, ['allow-once', 'deny']);
 });
 
 test('does not execute a tool when the user rejects approval', async () => {
@@ -404,7 +405,7 @@ test('does not execute a tool when the user rejects approval', async () => {
   const engine = new QueryEngine({ provider, tools: [tool], announceProvider: false });
   const response = await engine.chat('Reject this write', {
     async requestApproval() {
-      return false;
+      return 'deny';
     }
   });
 
@@ -412,6 +413,203 @@ test('does not execute a tool when the user rejects approval', async () => {
   assert.equal(executionCount, 0);
   assert.equal(toolResult.isError, true);
   assert.match(toolResult.content, /denied by the user/);
+});
+
+test('allows all edits for the session without granting shell approval', async () => {
+  let requestCount = 0;
+  let writeExecutions = 0;
+  let shellExecutions = 0;
+  const approvalRequests = [];
+  const provider = {
+    async chat() {
+      requestCount += 1;
+      if (requestCount === 1) {
+        return {
+          message: {
+            role: 'assistant',
+            content: '',
+            toolCalls: [{ id: 'write-1', name: 'Write', input: { value: 'one' } }]
+          }
+        };
+      }
+      if (requestCount === 2) {
+        return {
+          message: {
+            role: 'assistant',
+            content: '',
+            toolCalls: [{ id: 'edit-1', name: 'Edit', input: { value: 'two' } }]
+          }
+        };
+      }
+      if (requestCount === 3) {
+        return {
+          message: {
+            role: 'assistant',
+            content: '',
+            toolCalls: [{ id: 'shell-1', name: 'Shell', input: { command: 'echo hi' } }]
+          }
+        };
+      }
+      return { message: { role: 'assistant', content: 'Done.' } };
+    },
+    getInfo() {
+      return { name: 'Fake', type: 'test' };
+    }
+  };
+  const writeTool = {
+    name: 'Write',
+    description: 'Write data',
+    inputSchema: z.object({ value: z.string() }).strict(),
+    risk: 'write',
+    approval: 'always',
+    async prepareApproval(input) {
+      return {
+        description: 'Write ' + input.value,
+        executionData: { value: input.value }
+      };
+    },
+    async execute() {
+      writeExecutions += 1;
+      return { content: 'written' };
+    }
+  };
+  const editTool = {
+    ...writeTool,
+    name: 'Edit',
+    description: 'Edit data'
+  };
+  const shellTool = {
+    name: 'Shell',
+    description: 'Execute a command',
+    inputSchema: z.object({ command: z.string() }).strict(),
+    risk: 'execute',
+    approval: 'always',
+    async prepareApproval() {
+      return { description: 'Run shell' };
+    },
+    async execute() {
+      shellExecutions += 1;
+      return { content: 'executed' };
+    }
+  };
+  const engine = new QueryEngine({
+    provider,
+    tools: [writeTool, editTool, shellTool],
+    announceProvider: false
+  });
+
+  const response = await engine.chat('Edit, then run a command', {
+    async requestApproval(request) {
+      approvalRequests.push(request);
+      return request.toolName === 'Write'
+        ? 'allow-edits-session'
+        : 'deny';
+    }
+  });
+
+  assert.equal(response, 'Done.');
+  assert.equal(writeExecutions, 2);
+  assert.equal(shellExecutions, 0);
+  assert.equal(engine.getPermissionMode(), 'acceptEdits');
+  assert.equal(approvalRequests.length, 2);
+  assert.deepEqual(
+    approvalRequests[0].choices,
+    ['allow-once', 'allow-edits-session', 'deny']
+  );
+  assert.equal(Object.isFrozen(approvalRequests[0].choices), true);
+  assert.deepEqual(approvalRequests[1].choices, ['allow-once', 'deny']);
+  assert.equal(Object.isFrozen(approvalRequests[1].choices), true);
+});
+
+test('fails closed when an approval handler returns a choice not offered', async () => {
+  let requestCount = 0;
+  let executionCount = 0;
+  let toolResult;
+  const provider = {
+    async chat(request) {
+      requestCount += 1;
+      if (requestCount === 1) {
+        return {
+          message: {
+            role: 'assistant',
+            content: '',
+            toolCalls: [{ id: 'shell-invalid', name: 'Shell', input: { command: 'echo no' } }]
+          }
+        };
+      }
+      toolResult = request.messages.at(-1);
+      return { message: { role: 'assistant', content: 'Blocked.' } };
+    },
+    getInfo() {
+      return { name: 'Fake', type: 'test' };
+    }
+  };
+  const tool = {
+    name: 'Shell',
+    description: 'Execute a command',
+    inputSchema: z.object({ command: z.string() }).strict(),
+    risk: 'execute',
+    approval: 'always',
+    async execute() {
+      executionCount += 1;
+      return { content: 'executed' };
+    }
+  };
+  const engine = new QueryEngine({ provider, tools: [tool], announceProvider: false });
+
+  assert.equal(await engine.chat('Run shell', {
+    async requestApproval() {
+      return 'allow-edits-session';
+    }
+  }), 'Blocked.');
+  assert.equal(executionCount, 0);
+  assert.equal(toolResult.isError, true);
+  assert.match(toolResult.content, /invalid approval choice/);
+  assert.equal(engine.getPermissionMode(), 'safe');
+});
+
+test('aborts the turn when approval waiting is cancelled', async () => {
+  let executionCount = 0;
+  const provider = {
+    async chat() {
+      return {
+        message: {
+          role: 'assistant',
+          content: '',
+          toolCalls: [{ id: 'write-abort', name: 'Write', input: { value: 'new' } }]
+        }
+      };
+    },
+    getInfo() {
+      return { name: 'Fake', type: 'test' };
+    }
+  };
+  const tool = {
+    name: 'Write',
+    description: 'Write data',
+    inputSchema: z.object({ value: z.string() }).strict(),
+    risk: 'write',
+    approval: 'always',
+    async execute() {
+      executionCount += 1;
+      return { content: 'written' };
+    }
+  };
+  const abortController = new AbortController();
+  const engine = new QueryEngine({ provider, tools: [tool], announceProvider: false });
+
+  await assert.rejects(
+    engine.chat('Cancel this write', {
+      signal: abortController.signal,
+      async requestApproval() {
+        abortController.abort();
+        return 'allow-once';
+      }
+    }),
+    error => error?.name === 'AbortError'
+  );
+  assert.equal(executionCount, 0);
+  assert.deepEqual(engine.getMessages(), []);
 });
 
 test('cancels an active provider request without committing the turn', async () => {
@@ -499,7 +697,7 @@ test('acceptEdits auto-approves write tools and still runs prepareApproval', asy
   const response = await engine.chat('Write automatically', {
     async requestApproval() {
       approvalHandlerCalls += 1;
-      return false;
+      return 'deny';
     }
   });
 
@@ -612,7 +810,7 @@ test('fullAccess skips shell approval prompts while preserving executionData pre
   const response = await engine.chat('Run freely', {
     async requestApproval() {
       approvalHandlerCalls += 1;
-      return false;
+      return 'deny';
     }
   });
 

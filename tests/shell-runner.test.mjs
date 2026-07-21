@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtemp, rm } from 'node:fs/promises';
+import { mkdtemp, readFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
@@ -146,5 +146,40 @@ test('terminates commands that exceed the configured output limit', async () => 
     assert.equal(result.stdoutBytesCaptured, 128);
     assert.equal(result.stdoutTruncated, true);
     assert.equal(Buffer.byteLength(result.stdout), 128);
+  });
+});
+
+test('termination removes descendant processes instead of leaving them running', async () => {
+  await withWorkingDirectory(async cwd => {
+    const readyPath = join(cwd, 'child-ready.txt');
+    const survivedPath = join(cwd, 'child-survived.txt');
+    const childScript = [
+      "const fs=require('node:fs')",
+      "fs.writeFileSync(process.argv[1],String(process.pid))",
+      "setTimeout(()=>fs.writeFileSync(process.argv[2],'survived'),1000)"
+    ].join(';');
+    const command = `"${process.execPath}" -e "${childScript}" "${readyPath}" "${survivedPath}"`;
+
+    const result = await runShellCommand(command, {
+      cwd,
+      signal: new AbortController().signal,
+      timeoutMs: 300,
+      terminationGraceMs: 100
+    });
+
+    assert.equal(result.completionReason, 'timeout');
+    assert.equal(result.termination?.succeeded, true, JSON.stringify(result, null, 2));
+    const childProcessId = Number(await readFile(readyPath, 'utf8'));
+    assert.equal(Number.isInteger(childProcessId), true);
+
+    await new Promise(resolve => setTimeout(resolve, 1_100));
+    await assert.rejects(
+      readFile(survivedPath, 'utf8'),
+      error => error?.code === 'ENOENT'
+    );
+    assert.throws(
+      () => process.kill(childProcessId, 0),
+      error => error?.code === 'ESRCH'
+    );
   });
 });

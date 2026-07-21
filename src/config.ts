@@ -8,10 +8,6 @@ import {
 } from 'fs';
 import { homedir } from 'os';
 import { join } from 'path';
-import { config as dotenvConfig } from 'dotenv';
-
-// 加载 .env 文件
-dotenvConfig({ quiet: true });
 
 const CONFIG_DIR = join(homedir(), '.syzzz-code');
 const CONFIG_FILE = join(CONFIG_DIR, 'config.json');

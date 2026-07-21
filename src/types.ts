@@ -2,6 +2,11 @@ import type { ZodType } from 'zod';
 
 export type ToolRisk = 'read' | 'write' | 'execute';
 
+export type ToolApprovalChoice =
+  | 'allow-once'
+  | 'allow-edits-session'
+  | 'deny';
+
 export interface ToolResult<Output = unknown> {
   content: string;
   data?: Output;
@@ -22,12 +27,13 @@ export interface ToolApprovalRequest {
   input: unknown;
   description: string;
   preview?: string;
+  choices: readonly ToolApprovalChoice[];
 }
 
 export type ToolApprovalHandler = (
   request: ToolApprovalRequest,
   signal: AbortSignal
-) => Promise<boolean>;
+) => Promise<ToolApprovalChoice>;
 
 export interface ToolContext {
   toolCallId: string;

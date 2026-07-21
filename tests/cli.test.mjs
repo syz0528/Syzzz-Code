@@ -130,7 +130,8 @@ test('interactive approval input is not handled as a chat message', () => {
             risk: 'write',
             input: { path: 'file.txt' },
             description: 'Update file.txt',
-            preview: '-before\\n+after'
+            preview: '-before\\n+after',
+            choices: ['allow-once', 'allow-edits-session', 'deny']
           }, options.signal);
           console.log('APPROVED:' + approved);
         }
@@ -153,7 +154,7 @@ test('interactive approval input is not handled as a chat message', () => {
   );
 
   assert.equal(result.status, 0, result.stderr || result.error?.message);
-  assert.match(result.stdout, /APPROVED:true/);
+  assert.match(result.stdout, /APPROVED:allow-once/);
   assert.equal((result.stdout.match(/HANDLED:change/g) ?? []).length, 1);
   assert.equal((result.stdout.match(/HANDLED:next/g) ?? []).length, 1);
   assert.doesNotMatch(result.stdout, /HANDLED:y/);
@@ -188,7 +189,7 @@ test('interactive /permissions does not become a chat message and can switch mod
     {
       cwd: projectDirectory,
       encoding: 'utf-8',
-      input: '/permissions\n/permissions acceptEdits\nhello\n/permissions fullAccess\nnope\n/permissions fullAccess\nI understand\nexit\n',
+      input: '/permissions\n/permissions acceptEdits\nhello\n/permissions fullAccess\nyes\n/permissions fullAccess\ny\nexit\n',
       timeout: 5_000
     }
   );
@@ -198,20 +199,149 @@ test('interactive /permissions does not become a chat message and can switch mod
   assert.match(result.stdout, /MODE:acceptEdits/);
   assert.equal((result.stdout.match(/HANDLED:hello/g) ?? []).length, 1);
   assert.doesNotMatch(result.stdout, /HANDLED:\/permissions/);
-  assert.doesNotMatch(result.stdout, /HANDLED:I understand/);
+  assert.doesNotMatch(result.stdout, /HANDLED:yes/);
+  assert.doesNotMatch(result.stdout, /HANDLED:y/);
   assert.doesNotMatch(result.stdout, /MODE:fullAccess\n.*MODE:fullAccess/s);
   assert.match(result.stdout, /Full Access not enabled/);
   assert.match(result.stdout, /MODE:fullAccess/);
   assert.match(result.stdout, /FINAL:fullAccess/);
 });
 
+test('full access confirmation accepts only y or Y and fails closed for other input', () => {
+  const script = `
+    import { runInteractiveSession } from './dist/interactive.js';
+
+    const engine = {
+      mode: 'safe',
+      getPermissionMode() {
+        return this.mode;
+      },
+      setPermissionMode(mode) {
+        this.mode = mode;
+      },
+      async chat(message) {
+        console.log('HANDLED:' + message);
+        return 'reply:' + message;
+      }
+    };
+
+    await runInteractiveSession(engine);
+    console.log('FINAL:' + engine.mode);
+  `;
+  const cases = [
+    { label: 'lowercase y', answer: 'y', expectedMode: 'fullAccess' },
+    { label: 'uppercase Y', answer: 'Y', expectedMode: 'fullAccess' },
+    { label: 'yes', answer: 'yes', expectedMode: 'safe' },
+    { label: 'n', answer: 'n', expectedMode: 'safe' },
+    { label: 'empty line', answer: '', expectedMode: 'safe' },
+    { label: 'unrecognized text', answer: '乱码', expectedMode: 'safe' },
+    { label: 'EOF', answer: null, expectedMode: 'safe' }
+  ];
+
+  for (const confirmationCase of cases) {
+    const confirmationInput = confirmationCase.answer === null
+      ? '/permissions fullAccess\n'
+      : `/permissions fullAccess\n${confirmationCase.answer}\n`;
+    const result = spawnSync(
+      process.execPath,
+      ['--input-type=module', '--eval', script],
+      {
+        cwd: projectDirectory,
+        encoding: 'utf-8',
+        input: confirmationInput,
+        timeout: 5_000
+      }
+    );
+
+    assert.equal(
+      result.status,
+      0,
+      `${confirmationCase.label}: ${result.stderr || result.error?.message}`
+    );
+    assert.match(
+      result.stdout,
+      new RegExp(`FINAL:${confirmationCase.expectedMode}`),
+      confirmationCase.label
+    );
+    assert.doesNotMatch(result.stdout, /HANDLED:/, confirmationCase.label);
+  }
+});
+
+test('Ctrl+C cancels full access confirmation without exiting or changing mode', () => {
+  const script = `
+    import { PassThrough } from 'node:stream';
+
+    const originalStdout = process.stdout;
+    const input = new PassThrough();
+    const output = new PassThrough();
+    Object.defineProperty(input, 'isTTY', { value: true });
+    Object.defineProperty(output, 'isTTY', { value: true });
+    Object.defineProperty(output, 'columns', { value: 120 });
+    Object.defineProperty(output, 'rows', { value: 40 });
+    Object.defineProperty(process, 'stdin', { value: input });
+    Object.defineProperty(process, 'stdout', { value: output });
+
+    let transcript = '';
+    output.on('data', chunk => {
+      transcript += chunk.toString('utf8');
+    });
+
+    const { runInteractiveSession } = await import('./dist/interactive.js');
+    const engine = {
+      mode: 'safe',
+      getPermissionMode() {
+        return this.mode;
+      },
+      setPermissionMode(mode) {
+        this.mode = mode;
+      },
+      async chat(message) {
+        transcript += 'HANDLED:' + message;
+        return 'unexpected';
+      }
+    };
+
+    const deadline = setTimeout(() => input.end(), 3_000);
+    const promptWatcher = setInterval(() => {
+      if (transcript.includes('[y/N]:') && !transcript.includes('CTRL_C_SENT')) {
+        transcript += 'CTRL_C_SENT';
+        input.write('\\x03');
+        setTimeout(() => input.write('exit\\n'), 50);
+      }
+    }, 10);
+
+    input.write('/permissions fullAccess\\n');
+    await runInteractiveSession(engine);
+    clearTimeout(deadline);
+    clearInterval(promptWatcher);
+    originalStdout.write(JSON.stringify({ mode: engine.mode, transcript }));
+  `;
+
+  const result = spawnSync(
+    process.execPath,
+    ['--input-type=module', '--eval', script],
+    {
+      cwd: projectDirectory,
+      encoding: 'utf-8',
+      timeout: 5_000
+    }
+  );
+
+  assert.equal(result.status, 0, result.stderr || result.error?.message);
+  const outcome = JSON.parse(result.stdout);
+  assert.equal(outcome.mode, 'safe');
+  assert.match(outcome.transcript, /Cancelling the current operation/);
+  assert.match(outcome.transcript, /Permission command cancelled/);
+  assert.match(outcome.transcript, /Goodbye!/);
+  assert.doesNotMatch(outcome.transcript, /HANDLED:/);
+});
+
 test('permission mode helpers parse aliases', async () => {
-  const { parsePermissionMode, FULL_ACCESS_CONFIRMATION } = await import(
+  const { parsePermissionMode } = await import(
     '../dist/permissions/mode.js'
   );
   assert.equal(parsePermissionMode('accept'), 'acceptEdits');
   assert.equal(parsePermissionMode('full'), 'fullAccess');
   assert.equal(parsePermissionMode('yolo'), 'fullAccess');
   assert.equal(parsePermissionMode('nope'), null);
-  assert.equal(FULL_ACCESS_CONFIRMATION, 'I understand');
 });

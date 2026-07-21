@@ -1,14 +1,15 @@
-import { readdir, readFile, writeFile } from 'node:fs/promises';
+import { readdir } from 'node:fs/promises';
 import { join, relative } from 'node:path';
 import { z } from 'zod';
 import type { ToolDefinition, ToolResult } from '../types.js';
 import { isAbortError, OperationAbortedError, throwIfAborted } from './abort.js';
 import {
+  applyApprovedFileChange,
   createApprovedFileChange,
   createFileDiff,
-  hasFileChangedSinceApproval,
   parseApprovedFileChange,
-  readOptionalFile
+  readBoundedUtf8File,
+  readOptionalFileSnapshot
 } from './file-changes.js';
 import { defineTool } from './runtime.js';
 import { runShellCommand, type ShellRunResult } from './shell-runner.js';
@@ -16,6 +17,8 @@ import { resolveWorkspacePath } from './workspace.js';
 
 const MAX_PATH_CHARACTERS = 4_096;
 const MAX_FILE_CONTENT_CHARACTERS = 2_000_000;
+const MAX_FILE_CHANGE_BYTES = 8 * 1024 * 1024;
+const MAX_READ_FILE_BYTES = 1024 * 1024;
 const MAX_SHELL_COMMAND_CHARACTERS = 20_000;
 const MAX_SHELL_TIMEOUT_MS = 120_000;
 const MAX_LIST_DIRECTORY_ENTRIES = 500;
@@ -230,11 +233,18 @@ export const readTool = defineTool({
         context.workspaceRoot,
         'read'
       );
-      const content = await readFile(targetPath, {
-        encoding: 'utf8',
-        signal: context.signal
-      });
-      return { content };
+      const file = await readBoundedUtf8File(
+        targetPath,
+        MAX_READ_FILE_BYTES,
+        context.signal
+      );
+      return {
+        content: file.content,
+        metadata: {
+          sizeBytes: file.sizeBytes,
+          limitBytes: MAX_READ_FILE_BYTES
+        }
+      };
     } catch (error) {
       return createToolError('Read', error);
     }
@@ -260,10 +270,15 @@ export const writeTool = defineTool({
       context.workspaceRoot,
       'write'
     );
-    const currentContent = await readOptionalFile(targetPath, context.signal);
+    const currentFile = await readOptionalFileSnapshot(
+      targetPath,
+      MAX_FILE_CHANGE_BYTES,
+      context.signal
+    );
+    const currentContent = currentFile?.content ?? null;
     const approvedChange = createApprovedFileChange(
       targetPath,
-      currentContent,
+      currentFile,
       input.contents
     );
 
@@ -284,29 +299,26 @@ export const writeTool = defineTool({
         };
       }
 
-      const verifiedTargetPath = await resolveWorkspacePath(
-        approvedChange.targetPath,
-        context.workspaceRoot,
-        'write'
+      const applyResult = await applyApprovedFileChange(
+        approvedChange,
+        context.signal,
+        async () => {
+          const verifiedTargetPath = await resolveWorkspacePath(
+            approvedChange.targetPath,
+            context.workspaceRoot,
+            'write'
+          );
+          if (verifiedTargetPath !== approvedChange.targetPath) {
+            throw new Error('Approved target path changed before execution');
+          }
+        }
       );
-      if (verifiedTargetPath !== approvedChange.targetPath) {
-        return {
-          content: 'Write failed: approved target path changed before execution',
-          isError: true
-        };
-      }
-      if (await hasFileChangedSinceApproval(approvedChange, context.signal)) {
+      if (applyResult === 'changed') {
         return {
           content: 'Write failed: the file changed after approval; review a new diff before retrying',
           isError: true
         };
       }
-
-      throwIfAborted(context.signal);
-      await writeFile(approvedChange.targetPath, approvedChange.proposedContent, {
-        encoding: 'utf8',
-        signal: context.signal
-      });
       return {
         content: `Successfully wrote to ${relative(context.workspaceRoot, approvedChange.targetPath)}`
       };
@@ -339,10 +351,15 @@ export const editTool = defineTool({
       context.workspaceRoot,
       'write'
     );
-    const currentContent = await readOptionalFile(targetPath, context.signal);
-    if (currentContent === null) {
+    const currentFile = await readOptionalFileSnapshot(
+      targetPath,
+      MAX_FILE_CHANGE_BYTES,
+      context.signal
+    );
+    if (currentFile === null) {
       throw new Error(`Cannot edit a file that does not exist: ${input.path}`);
     }
+    const currentContent = currentFile.content;
 
     const occurrenceCount = countOccurrences(currentContent, input.old_string);
     if (occurrenceCount !== 1) {
@@ -357,7 +374,7 @@ export const editTool = defineTool({
       preview: createFileDiff(input.path, currentContent, proposedContent),
       executionData: createApprovedFileChange(
         targetPath,
-        currentContent,
+        currentFile,
         proposedContent
       )
     };
@@ -373,29 +390,27 @@ export const editTool = defineTool({
         };
       }
 
-      const verifiedTargetPath = await resolveWorkspacePath(
-        approvedChange.targetPath,
-        context.workspaceRoot,
-        'write'
+      const applyResult = await applyApprovedFileChange(
+        approvedChange,
+        context.signal,
+        async () => {
+          const verifiedTargetPath = await resolveWorkspacePath(
+            approvedChange.targetPath,
+            context.workspaceRoot,
+            'write'
+          );
+          if (verifiedTargetPath !== approvedChange.targetPath) {
+            throw new Error('Approved target path changed before execution');
+          }
+        }
       );
-      if (verifiedTargetPath !== approvedChange.targetPath) {
-        return {
-          content: 'Edit failed: approved target path changed before execution',
-          isError: true
-        };
-      }
-      if (await hasFileChangedSinceApproval(approvedChange, context.signal)) {
+      if (applyResult === 'changed') {
         return {
           content: 'Edit failed: the file changed after approval; review a new diff before retrying',
           isError: true
         };
       }
 
-      throwIfAborted(context.signal);
-      await writeFile(approvedChange.targetPath, approvedChange.proposedContent, {
-        encoding: 'utf8',
-        signal: context.signal
-      });
       return {
         content: `Successfully edited ${relative(context.workspaceRoot, approvedChange.targetPath)}`
       };
