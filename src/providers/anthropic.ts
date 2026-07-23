@@ -7,6 +7,11 @@ import type {
   ProviderTool,
   ToolCall
 } from './base.js';
+import {
+  isProviderAbort,
+  normalizeProviderError,
+  ProviderError
+} from './errors.js';
 
 export function convertMessagesToAnthropic(
   messages: ConversationMessage[]
@@ -79,14 +84,15 @@ export class AnthropicProvider implements AIProvider {
   constructor(apiKey: string, baseURL: string, model: string) {
     this.client = new Anthropic({
       apiKey,
-      baseURL
+      baseURL,
+      maxRetries: 0
     });
     this.model = model;
   }
 
   async chat(request: ProviderChatRequest): Promise<ProviderChatResponse> {
     try {
-      const response = await this.client.messages.create(
+      const requestPromise = this.client.messages.create(
         {
           model: this.model,
           max_tokens: 8192,
@@ -96,6 +102,17 @@ export class AnthropicProvider implements AIProvider {
         },
         { signal: request.signal }
       );
+      let response;
+      let requestId: string | undefined;
+      if (typeof requestPromise.withResponse === 'function') {
+        const result = await requestPromise.withResponse();
+        response = result.data;
+        requestId = result.response.headers.get('request-id') ??
+          result.response.headers.get('x-request-id') ??
+          undefined;
+      } else {
+        response = await requestPromise;
+      }
 
       let content = '';
       const toolCalls: ToolCall[] = [];
@@ -113,7 +130,10 @@ export class AnthropicProvider implements AIProvider {
       }
 
       if (!content.trim() && toolCalls.length === 0) {
-        throw new Error(`Provider returned an empty response (stop reason: ${response.stop_reason ?? 'unknown'})`);
+        throw new ProviderError('malformed_response', {
+          provider: 'Anthropic Claude',
+          message: `Anthropic API Error: Provider returned an empty response (stop reason: ${response.stop_reason ?? 'unknown'})`
+        });
       }
 
       return {
@@ -127,20 +147,34 @@ export class AnthropicProvider implements AIProvider {
           inputTokens: response.usage.input_tokens,
           outputTokens: response.usage.output_tokens,
           totalTokens: response.usage.input_tokens + response.usage.output_tokens
-        } : undefined
+        } : undefined,
+        ...(requestId ? { requestId } : {}),
+        ...(typeof response.model === 'string' ? { reportedModel: response.model } : {})
       };
-    } catch (error: any) {
-      if (request.signal?.aborted || error?.name === 'AbortError') {
+    } catch (error: unknown) {
+      if (request.signal?.aborted || isProviderAbort(error)) {
         throw error;
       }
-      throw new Error(`Anthropic API Error: ${error.message}`);
+      throw normalizeProviderError(error, 'Anthropic Claude');
     }
   }
 
   getInfo() {
     return {
       name: 'Anthropic Claude',
-      type: 'anthropic'
+      type: 'anthropic',
+      model: this.model,
+      capabilities: {
+        streaming: false,
+        reasoningToggle: false
+      }
     };
+  }
+
+  setModel(model: string): void {
+    if (!model.trim()) {
+      throw new Error('model must be a non-empty string');
+    }
+    this.model = model;
   }
 }

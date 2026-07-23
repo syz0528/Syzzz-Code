@@ -97,3 +97,58 @@ test('importing configuration does not load a workspace .env file', () => {
     rmSync(workingDirectory, { recursive: true, force: true });
   }
 });
+test('audit configuration defaults safely for existing config files', () => {
+  const config = validateConfig(createValidConfig());
+  assert.deepEqual(config.audit, {
+    retentionDays: 30,
+    maxBytes: 20 * 1024 * 1024
+  });
+});
+
+test('UI streaming defaults safely and validates explicit configuration', () => {
+  const legacyConfig = validateConfig(createValidConfig());
+  assert.deepEqual(legacyConfig.ui, { streamOutput: true });
+
+  const buffered = createValidConfig();
+  buffered.ui = { streamOutput: false };
+  assert.deepEqual(validateConfig(buffered).ui, { streamOutput: false });
+
+  const invalid = createValidConfig();
+  invalid.ui = { streamOutput: 'sometimes' };
+  assert.throws(
+    () => validateConfig(invalid),
+    /ui.streamOutput must be a boolean/
+  );
+});
+
+test('validates audit retention and size bounds', () => {
+  const invalidRetention = createValidConfig();
+  invalidRetention.audit = {
+    retentionDays: -1,
+    maxBytes: 1024
+  };
+  assert.throws(
+    () => validateConfig(invalidRetention),
+    /audit.retentionDays/
+  );
+
+  const invalidSize = createValidConfig();
+  invalidSize.audit = {
+    retentionDays: 30,
+    maxBytes: 0
+  };
+  assert.throws(
+    () => validateConfig(invalidSize),
+    /audit.maxBytes/
+  );
+
+  const disabled = createValidConfig();
+  disabled.audit = {
+    retentionDays: 0,
+    maxBytes: 4096
+  };
+  assert.deepEqual(validateConfig(disabled).audit, {
+    retentionDays: 0,
+    maxBytes: 4096
+  });
+});

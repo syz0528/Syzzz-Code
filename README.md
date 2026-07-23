@@ -9,44 +9,45 @@ Syzzz Code 是一个使用 TypeScript 构建的实验性命令行 AI 编程助�
 
 ## 当前能力
 
-- 直接运行 `syzzz` 进入连续对话模式；
-- 支持单次消息和交互式多轮对话；
-- 支持 Anthropic Messages API 协议；
-- 支持 OpenAI-compatible Chat Completions 协议；
-- 供应商、Base URL、模型和 API Key 由用户配置文件管理；
-- 通过 `syzzz switch` 交互选择已配置的供应商和模型；
-- 支持模型发起结构化工具调用；
-- 内置 `ListDirectory`、`Read`、`Write`、`Edit` 和 `Shell` 五种工具；
-- 会话级权限模式：`safe`（默认）、`acceptEdits`、`fullAccess`，通过 `/permissions` 查看或切换；
-- 使用 Zod 在工具执行前校验模型生成的参数，并将失败作为结构化错误返回；
-- 文件工具默认只能访问启动时确定的工作区，并拦截路径越界、敏感文件及 symlink/junction 逃逸；
-- `Write` 和 `Edit` 在 Safe 模式下展示 diff，可选择仅允许本次或允许本会话后续编辑；自动写入仍执行工作区校验、审批后 hash 检测和同目录原子替换；
-- `Read` 仅接受普通 UTF-8 文件，单次读取硬上限为 1 MiB；
-- `Shell` 使用异步子进程，支持超时、取消、stdout/stderr 分离和输出上限；Safe/`acceptEdits` 下仍要求确认；
-- system prompt 注入 Platform、真实 Shell executor 与工具偏好，减少 Windows 下错误的 `ls` 类命令；
-- 执行过程中按 `Ctrl+C` 可取消当前 Provider 请求或工具执行；
-- 工具调用最多执行 10 轮，避免无限循环；
-- 单个工具结果超过 100,000 个字符时会被截断；
-- Provider 请求失败时不会把未完成回合提交到正式对话历史；
-- 项目目录中的 `.env` 不会被自动加载；Shell 只继承启动 Syzzz 时已有的进程环境；
-- 提供 57 项离线自动化测试，覆盖配置、CLI、Engine、权限模式、Provider 协议、路径策略、目录列表、文件编辑和 Shell 生命周期。
+- 直接运行 `syzzz` 进入连续对话模式，也支持 `syzzz chat -m` 单次调用；
+- 支持 Anthropic Messages API 与 OpenAI-compatible Chat Completions；
+- OpenAI-compatible 路径使用真流式响应；Anthropic 当前保持非流式兼容，并在 Runtime 中转换为统一事件；
+- `QueryEngine.runTurn()` 以 `AsyncGenerator<AgentEvent, TurnResult>` 提供版本化事件流，`chat()` 保留原有 Promise 兼容契约；
+- 每个事件都包含 `schemaVersion`、`sessionId`、`turnId`、单调递增 `sequence` 与时间戳；
+- CLI 负责渲染 Thinking、reasoning 状态、正文 delta、工具、审批、重试和回合 footer，Engine 与 Provider 不直接输出日志；
+- 交互输入支持 `/` 即时候选菜单，首批命令为 `/stream`、`/permissions`、`/model`、`/help` 和 `/exit`；
+- `/stream on|off` 只控制终端正文是否逐段展示，Provider 与 `AgentEvent` 始终保持实时流式；
+- `/model` 可在当前 Provider 配置的模型列表内热切换，并清理历史中的 Provider 私有 reasoning metadata；
+- Read/List 成功状态为瞬时展示，Write/Edit/Shell 成功保留一行，异常始终保留；footer 同时统计工具调用、失败和重试；
+- `syzzz chat -m ... --output-format stream-json` 在 stdout 输出逐行 NDJSON 事件；
+- Provider Runner 统一处理分类错误、120 秒单次超时、最多 3 次 attempt、180 秒总预算、指数退避、jitter 与 `Retry-After`；
+- 一旦已输出正文或收到 tool-call delta 就不再重试，失败 attempt 的工具碎片不会执行；
+- Provider 原始 `reasoning_content` 不公开，只输出 started/completed、耗时和字符数；工具链需要时才在 Provider 内部回放；
+- 支持模型发起结构化工具调用，内置 `ListDirectory`、`Read`、`Write`、`Edit` 和 `Shell`；
+- 会话级权限模式为 `safe`、`acceptEdits`、`fullAccess`，普通审批不能间接进入 `fullAccess`；
+- 文件工具受工作区、敏感路径、symlink/junction 与 Windows 特殊路径约束；`Read` 上限为 1 MiB 普通 UTF-8 文件；
+- `Write`/`Edit` 使用审批后 hash 冲突检测、同目录唯一临时文件、flush、mode 保留和原子替换；
+- `Shell` 使用异步子进程，保留超时、取消、stdout/stderr 分离、输出上限与进程树清理；
+- 回合失败或取消不提交对话历史；已发生的文件或 Shell 副作用不会被伪装成已回滚；
+- 默认写入仅含元数据的本地审计 JSONL，保留 30 天、总量上限 20 MiB；不记录 prompt、正文、路径、diff、工具输入输出或原始 reasoning；
+- 项目 `.env` 不会被自动加载；Shell 只继承启动 Syzzz 时已有的进程环境；
+- 当前离线测试套件包含 114 项测试，覆盖 Phase 1/1.1 安全回归，以及 Phase 2/2.1 Runtime、Provider、CLI、终端输入与审计契约。
 
 ## 当前不具备的能力
 
 以下内容尚未实现，不应视为当前版本能力：
 
-- 流式模型输出；
+- Anthropic 真流式；
 - 会话保存、恢复和跨进程记忆；
-- 上下文 token 预算和自动压缩；
-- Provider 请求超时、分类错误和有限重试；
-- Shell 沙箱和基于命令语义的细粒度风险判定；
-- 永久写入配置文件的权限模式（当前权限仅会话有效）；
-- 工作区外路径的逐次授权；
+- 上下文 token 预算、自动压缩和 repo map；
+- 费用估算与完整 Provider capability 数据库；
+- Shell 沙箱、命令语义分类器和凭证隔离；
+- 永久权限模式或工作区外路径逐次授权；
 - 通用 Patch、文件锁、事务日志、备份和自动回滚；
-- 持久化执行审计与事件流；
 - Glob、Grep、Diagnostics 和 Git 专用工具；
-- MCP、Hooks、插件和子 Agent；
-- Web、Electron 或 VS Code 图形界面；
+- TUI、后台任务、并行工具调用或自动审批模型；
+- 真正的 `@` 文件/上下文选择器与 `$` Skill 选择器；
+- MCP、Hooks、插件、子 Agent 或图形界面；
 - 从环境变量自动解析不同 Provider 的 API Key。
 
 ## 环境要求
@@ -130,9 +131,13 @@ syzzz chat
 交互模式中：
 
 - 输入消息并按 Enter 发送；
-- 输入 `exit` 退出；
+- 输入 `/` 立即浏览命令，支持输入过滤、方向键、Enter、Tab、Esc 与最多 8 行滚动；
+- `/stream on|off` 切换正文实时展示并保存到用户配置；
+- `/model <model>` 在当前 Provider 的 `models` 列表中切换并保存；
 - 输入 `/permissions` 查看当前会话权限模式；
 - 输入 `/permissions safe|acceptEdits|fullAccess` 切换模式（仅当前进程有效）；
+- `/help` 显示注册表中的命令；`/?` 是别名；
+- `/exit`、`/quit` 或普通 `exit` 退出；以 `//` 开头可向模型发送字面量 Slash 消息；
 - 启用 `fullAccess` 时只有单独输入 `y` 或 `Y` 才会生效；`yes`、空行、EOF 和其他输入均取消；
 - `Write`/`Edit` 审批中输入 `y` 仅允许本次，输入 `a` 允许本会话后续编辑，其他输入默认拒绝；
 - `Shell` 审批仍为逐次 `[y/N]`，不能通过普通审批升级到 `fullAccess`；
@@ -141,42 +146,66 @@ syzzz chat
 
 ### 4. 发送单次消息
 
+默认文本输出：
+
 ```bash
 syzzz chat -m "请解释 package.json 中的依赖"
 ```
 
+可仅为当前进程关闭逐段展示，在回合完成后一次性打印正文：
+
+```bash
+syzzz chat -m "请解释 package.json 中的依赖" --stream off
+```
+
+机器可读事件输出：
+
+```bash
+syzzz chat -m "检查当前项目" --output-format stream-json
+```
+
+`stream-json` 的 stdout 只包含一行一个 `AgentEvent`，不含 ANSI、spinner、Provider 启动提示、工具结果正文或工具 metadata。它始终实时输出，不能与 `--stream` 同时使用。诊断信息写入 stderr。退出码固定为成功 `0`、失败 `1`、取消 `130`。非交互调用没有审批输入通道，需要审批的工具会 fail closed。
+
 ## CLI 命令
 
 ```text
-syzzz                              启动交互式对话
-syzzz chat                         启动交互式对话
-syzzz chat -m "<message>"           发送一条消息并退出
-syzzz init                         初始化用户配置
-syzzz config list                  查看当前供应商配置摘要
-syzzz config set apiKey <value>    设置当前供应商的 API Key
-syzzz switch                       交互选择已配置的供应商和模型
-syzzz --help                       查看帮助
-syzzz --version                    查看版本
+syzzz                                           启动交互式对话
+syzzz chat                                      启动交互式对话
+syzzz chat -m "<message>"                       发送一条消息并退出
+syzzz chat -m "<message>" --output-format text  按 UI 配置显示文本
+syzzz chat -m "<message>" --stream on|off        覆盖当前进程的正文展示方式
+syzzz chat -m "<message>" --output-format stream-json
+                                                输出 NDJSON AgentEvent
+syzzz init                                      初始化用户配置
+syzzz config list                               查看当前 Provider 配置摘要
+syzzz config set apiKey <value>                 设置当前 Provider 的 API Key
+syzzz switch                                    选择已配置的 Provider 和模型
+syzzz --help                                    查看帮助
+syzzz --version                                 查看版本
 ```
 
 `syzzz config list` 只显示 API Key 是否已设置，不会打印完整密钥。
 
 ## Provider 配置
 
-配置文件是运行时供应商和模型列表的唯一数据源。默认配置只包含 DeepSeek：
+配置文件 `~/.syzzz-code/config.json` 是运行时 Provider、模型、UI 和审计设置的唯一数据源。旧配置没有 `audit` 或 `ui` 字段时会自动采用安全默认值。
 
 ```json
 {
   "currentProvider": "deepseek",
+  "audit": {
+    "retentionDays": 30,
+    "maxBytes": 20971520
+  },
+  "ui": {
+    "streamOutput": true
+  },
   "providers": {
     "deepseek": {
       "name": "Deepseek",
       "type": "openai-compatible",
       "model": "deepseek-chat",
-      "models": [
-        "deepseek-chat",
-        "deepseek-reasoner"
-      ],
+      "models": ["deepseek-chat", "deepseek-reasoner"],
       "env": {
         "BASE_URL": "https://api.deepseek.com",
         "API_KEY": ""
@@ -188,120 +217,61 @@ syzzz --version                    查看版本
 
 ### 配置字段
 
-- `currentProvider`：当前供应商 ID，必须存在于 `providers` 中；
-- `name`：CLI 中显示的供应商名称；
-- `type`：API 协议，目前只接受 `anthropic` 或 `openai-compatible`；
-- `model`：该供应商当前选中的模型；
-- `models`：允许通过 `syzzz switch` 选择的模型列表；
-- `BASE_URL`：API 基地址，而不是完整的 `/chat/completions` 地址；
-- `API_KEY`：供应商密钥，当前以明文保存在配置文件中。
+- `currentProvider`：当前 Provider ID，必须存在于 `providers`；
+- `name`：CLI 和事件中显示的 Provider 名称；
+- `type`：只接受 `anthropic` 或 `openai-compatible`；
+- `model`：当前模型，必须包含在同一 Provider 的 `models` 数组；
+- `BASE_URL`：API 基地址，不是完整的 `/chat/completions` 地址；
+- `API_KEY`：当前以明文保存在用户配置文件中；
+- `audit.retentionDays`：审计保留天数，默认 `30`；设为 `0` 可停止后续审计；
+- `audit.maxBytes`：启动清理后的审计总量上限，默认 `20971520` 字节；
+- `ui.streamOutput`：终端正文是否实时展示，默认 `true`；不改变 Provider 或事件流本身。
 
-Provider 配置只从上述用户配置文件读取。项目工作区中的 `.env` 不会被 Syzzz 自动解析或注入；`Shell` 仍会继承启动 Syzzz 的正常进程环境，因此本阶段不宣称实现凭证隔离。
+可在 `providers` 中配置多个协议端点，再通过 `syzzz switch` 选择。Provider 配置不会从工作区 `.env` 自动补全；Shell 仍继承启动进程环境，因此当前版本不宣称凭证隔离。
 
-配置校验要求 `model` 必须包含在同一供应商的 `models` 数组中。例如，以下配置是无效的：
-
-```json
-{
-  "model": "model-a",
-  "models": ["model-b"]
-}
-```
-
-此类错误会阻止聊天和 `switch` 命令启动，必须先手工修正配置文件。
-
-### 配置多个供应商
-
-下面的示例同时配置一个 OpenAI-compatible 服务和一个 Anthropic 服务。模型名称与 Base URL 仅为结构示例，请以实际供应商文档和账户权限为准：
-
-```json
-{
-  "currentProvider": "custom-openai",
-  "providers": {
-    "custom-openai": {
-      "name": "Custom OpenAI-compatible",
-      "type": "openai-compatible",
-      "model": "model-a",
-      "models": [
-        "model-a",
-        "model-b"
-      ],
-      "env": {
-        "BASE_URL": "https://api.example.com/v1",
-        "API_KEY": "YOUR_API_KEY"
-      }
-    },
-    "anthropic": {
-      "name": "Anthropic",
-      "type": "anthropic",
-      "model": "YOUR_ANTHROPIC_MODEL",
-      "models": [
-        "YOUR_ANTHROPIC_MODEL"
-      ],
-      "env": {
-        "BASE_URL": "https://api.anthropic.com",
-        "API_KEY": "YOUR_API_KEY"
-      }
-    }
-  }
-}
-```
-
-保存后运行：
-
-```bash
-syzzz switch
-```
-
-CLI 会先列出配置文件中的供应商，再列出所选供应商的 `models`。选择结果会写回配置文件并在后续会话中继续使用。
+审计文件位于 `~/.syzzz-code/audit/YYYY/MM/DD/<sessionId>.jsonl`。写入或清理失败不会中断 Agent，当前进程只在第一次失败时向 stderr 警告。
 
 ## 架构概览
 
 ```text
-CLI Layer
-  src/index.ts
-  src/interactive.ts
-        |
-        v
-Query Engine
-  src/engine.ts
-  - 对话历史
-  - 工具循环
-  - 回合提交
-        |
-        +---------------------+
-        |                     |
-        v                     v
-Provider Layer            Tool Layer
-  AnthropicProvider         Shell
-  OpenAICompatibleProvider  Read
-  ProviderFactory           Write
-                             Edit
+CLI / NDJSON Consumer
+  index + interactive + command registry + terminal input + renderer
+                    |
+                    v
+Agent Runtime
+  QueryEngine.runTurn() -> AgentEvent
+  - working conversation history
+  - serial tool loop and approval policy
+  - unique terminal event and rollback boundary
+          |                         |
+          v                         v
+Provider Runner                 Tool Runtime
+  timeout / retry / usage         Read / Write / Edit
+  error classification            ListDirectory / Shell
+          |
+          v
+Protocol Adapters
+  OpenAI-compatible streaming
+  Anthropic non-streaming
+
+AgentEvent -> CLI renderer / stream-json / metadata-only audit
 ```
+
+### Runtime 与事件
+
+[`QueryEngine`](src/engine.ts) 保留稳定导入入口，实际事件化实现位于 [`src/runtime-engine.ts`](src/runtime-engine.ts)。`runTurn()` 发出唯一终态事件后返回 `TurnResult`；兼容 `chat()` 消费同一事件流，并在失败或取消时继续抛出异常。
+
+Provider 响应完整结束后才会提交 Assistant 消息并执行工具。失败或取消不提交本轮历史；消费者提前关闭 generator 时会关闭嵌套 Provider/工具 generator、取消内部等待并释放处理锁。
 
 ### Provider 层
 
-[`AIProvider`](src/providers/base.ts) 定义统一的消息、工具调用、工具结果和响应接口：
+[`AIProvider`](src/providers/base.ts) 保留 `chat()`，并允许实现可选 `chatStream()`。[`Provider Runner`](src/providers/runner.ts) 是 timeout、有限重试、usage 与 attempt 事件的唯一所有者；两个 SDK 自身均关闭自动重试。
 
-- [`AnthropicProvider`](src/providers/anthropic.ts) 负责 Anthropic Messages API 的消息与 `tool_use` 转换；
-- [`OpenAICompatibleProvider`](src/providers/openai-compatible.ts) 负责 OpenAI Chat Completions 的 message、function tools 和 `tool_calls` 转换；
-- [`createProvider`](src/providers/factory.ts) 根据配置中的 `type` 创建协议适配器。
+OpenAI-compatible 适配器聚合碎片化正文、tool-call name/arguments、usage、request ID 和 reported model。原始 reasoning 只在 Provider 内部计数或为工具链回放；reasoning-only `stop` 的禁用 thinking 恢复与普通重试共享 3 次 attempt 和 180 秒预算。
 
-Provider 按 API 协议划分，而不是为每个供应商品牌重复实现一套客户端。DeepSeek、OpenAI-compatible 中转服务以及其他兼容端点可以复用同一个适配器。
+普通终端会将 reasoning-only 和 `stream_options` 的 0ms 兼容恢复显示为瞬时状态，不持久输出内部错误码；`stream-json` 仍保留完整事件，footer 仍计入实际重试次数。
 
-对于会在工具调用消息中返回 `reasoning_content` 的兼容端点，适配器只在工具链内部保存并回放该字段，不会把它作为最终文本展示。若端点明确以 `stop` 结束、没有正文或工具调用、但仅返回了该推理字段，适配器会对同一模型进行一次 `thinking: disabled` 恢复请求；这不是通用网络重试，也不会自动执行或重放工具。
-
-### Query Engine
-
-[`QueryEngine`](src/engine.ts) 不依赖具体 SDK，主要负责：
-
-1. 维护当前进程内的对话消息；
-2. 调用当前 Provider；
-3. 接收结构化工具调用；
-4. 执行工具并保存对应的 `toolCallId`；
-5. 把工具结果发回 Provider；
-6. 在模型不再请求工具时返回最终文本。
-
-每轮对话先在工作副本中执行，只有完整成功后才提交到正式历史。需要注意，这只能回滚对话历史，不能回滚已经发生的文件修改或 Shell 副作用。
+Anthropic 当前明确声明 `streaming: false`，继续走非流式 `chat()`，但仍获得统一错误、重试、usage 和事件语义。
 
 ## 权限模式
 
@@ -341,39 +311,27 @@ Provider 按 API 协议划分，而不是为每个供应商品牌重复实现一
 
 ## 测试
 
-安装依赖后运行：
+安装依赖后运行完整套件：
 
 ```bash
 npm test
 ```
 
-该命令会先执行 TypeScript 构建，再运行 `tests/*.test.mjs`。
+该命令先构建 TypeScript，再运行 `tests/*.test.mjs`。当前套件包含 114 项离线测试，主要覆盖：
 
-当前正式测试套件包含 57 项离线测试：
+- Phase 1/1.1 的配置、权限、路径、Read 上限、原子 Write/Edit 和 Shell 生命周期；
+- `AgentEvent` 顺序、ID/sequence、唯一终态、历史提交与 generator 提前关闭；
+- 审批允许、会话编辑、拒绝、非法选择、缺少 handler 和取消；
+- OpenAI 文本/reasoning/tool-call 碎片聚合、usage、request ID、reported model；
+- Anthropic 非流式兼容事件；
+- ProviderError 分类、硬超时、用户取消、Retry-After、预算、jitter 和禁止副作用重放；
+- `stream-json` NDJSON、敏感结果剥离、footer 与退出码；
+- Slash 注册、动态候选、未知命令、`//` 转义、模型切换和配置持久化；
+- TTY 菜单导航、历史、粘贴、EOF、中文宽度、窗口缩放与异步候选过期；
+- 审计 allowlist、内容脱敏、保留期、大小上限、当前文件保护和失败降级；
+- 配置导入不会加载工作区 `.env`。
 
-- 配置校验与 Base URL 规范化；
-- CLI 命令注册；
-- Provider 和模型切换持久化；
-- 连续交互消息只处理一次；
-- `/permissions` 不进入聊天且可切换模式，`fullAccess` 严格确认及 `Ctrl+C` 取消；
-- QueryEngine 工具调用历史；
-- 权限模式矩阵（safe / acceptEdits / fullAccess）；
-- 工具 Zod 输入校验、结构化审批选择、非法选择与缺少 handler 时的 fail-closed 行为；
-- 工作区越界、敏感路径、symlink/junction 逃逸和 Windows 特殊路径；
-- ListDirectory 列表与越界拦截；
-- Read 的 1 MiB 边界、普通文件约束和严格 UTF-8 校验；
-- Write/Edit diff、唯一匹配、审批后冲突、mode 保留、原子替换和临时文件清理；
-- Shell 成功、非零退出、超时、取消、输出超限和子进程树清理；
-- 配置模块不会自动加载工作区 `.env`；
-- 交互审批输入不会泄漏为下一条聊天消息；
-- Provider 失败后的消息历史回滚；
-- 并发消息保护；
-- 工具调用轮次上限；
-- OpenAI-compatible 消息与 function tools 转换；
-- OpenAI-compatible 工具链推理字段回放与单次空响应恢复；
-- Anthropic 消息与工具定义转换。
-
-这些测试不会连接真实 AI 服务，因此不能单独证明每个第三方供应商、模型或中转服务都能正常工作。真实 Provider 验证仍需要有效凭据、网络和供应商侧模型权限。
+离线测试不连接真实 AI 服务，不能单独证明每个第三方端点都兼容。真实 DeepSeek/OpenCode 流式、只读工具链、无效 Key 分类和独立 Node 消费 NDJSON 已通过；Phase 2.1 冻结验收仍需完成 Slash 菜单、实际模型切换、审批和取消的人工检查。
 
 ## 开发
 
@@ -410,7 +368,13 @@ npm pack --dry-run --json
 src/
 |-- index.ts
 |-- interactive.ts
+|-- interactive-commands.ts
+|-- terminal-input.ts
+|-- cli-renderer.ts
 |-- engine.ts
+|-- runtime-engine.ts
+|-- events.ts
+|-- audit.ts
 |-- config.ts
 |-- types.ts
 |-- permissions/
@@ -420,7 +384,9 @@ src/
 |   |-- base.ts
 |   |-- factory.ts
 |   |-- anthropic.ts
-|   `-- openai-compatible.ts
+|   |-- openai-compatible.ts
+|   |-- errors.ts
+|   `-- runner.ts
 `-- tools/
     |-- index.ts
     |-- runtime.ts
@@ -430,12 +396,12 @@ src/
     `-- abort.ts
 
 tests/
-|-- cli.test.mjs
-|-- config.test.mjs
-|-- engine.test.mjs
-|-- provider-protocol.test.mjs
-|-- tools.test.mjs
-`-- shell-runner.test.mjs
+|-- cli.test.mjs / terminal-input.test.mjs
+|-- interactive-commands.test.mjs / cli-renderer.test.mjs
+|-- engine.test.mjs / runtime-events.test.mjs
+|-- provider-*.test.mjs / openai-stream.test.mjs
+|-- tools.test.mjs / shell-runner.test.mjs
+`-- audit.test.mjs / config.test.mjs
 ```
 
 ## 安全限制
@@ -447,7 +413,7 @@ tests/
 3. 模型读取到的文件内容和工具结果可能被发送给远程 Provider；
 4. API Key 当前明文保存在用户配置文件中；
 5. 审批依赖用户审查命令和 diff，不能自动消除提示注入或恶意命令风险；
-6. Windows `taskkill` 和 POSIX 进程组终止是尽力而为，不能等同于容器或沙箱；
+6. Windows PowerShell/Toolhelp 进程树终止和 POSIX 进程组终止都是尽力清理，不能等同于容器或沙箱；
 7. 失败回合不会提交消息历史，但已经发生的外部副作用不会自动撤销；
 8. Shell 继承启动进程环境，当前没有凭证过滤、命令 allowlist 或网络隔离。
 
@@ -461,17 +427,14 @@ tests/
 
 ## 后续方向
 
-Phase 1 Tool Runtime 与 Phase 1.1 最终稳定化已经落地，自动化验收与真实 Provider dogfood 均已通过，Phase 1.1 现已冻结。下一项开发直接进入事件化 Runtime 与 Provider 可靠性建设：
+Phase 1/1.1 与 Phase 2/2.1 均已冻结。Phase 2 完成了事件化 Runtime、Provider 可靠性、CLI NDJSON 和元数据审计；Phase 2.1 完成了交互发现、展示流开关、当前 Provider 模型切换和终端 UX 收尾。此后除 P0 安全或数据破坏问题外，不再回到 Phase 2 增加能力。
 
-1. 事件化运行时、流式输出和持久化执行审计；
-2. Provider 分类错误、请求超时、有限重试和 usage 展示；
-3. 上下文预算、会话压缩和代码仓库映射；
-4. 更多专用代码工具（Glob/Grep 等）、可靠 Patch 和修改验证；
-5. 会话持久化与 ask/plan/code 模式；
-6. 在上述基础稳定后接入 MCP、Hooks 和受限子 Agent。
+下一阶段直接进入 Phase 3：代码库上下文与可靠编辑闭环，包括 Glob/Grep、Range Read、Patch/Diagnostics、Context Manager、compaction 和 repo map。会话恢复、MCP、Hooks 与子 Agent 继续留在更后阶段。
 
 ## 项目状态
 
-当前包版本仍为 `1.0.0`，远程 `main` 的 Phase 1.1 基线为 `da6858d`。本轮最终稳定化已通过 57 项离线测试、生产依赖审计、npm 包内容检查和真实 Provider dogfood，状态为 **Frozen**。此后除 P0 安全或数据破坏问题外，不再回到 Phase 1 增加能力。当前版本仍属实验阶段，不代表生产安全级或完整的自动化编程 Agent。
+包版本仍为 `1.0.0`，未发布 npm 包、未创建 Tag。Phase 1.1 的本地冻结提交为 `8e275c3`，远程 `origin/main` 仍为 `da6858d`；Phase 2 位于 `codex/phase2-runtime` 分支。
 
-历史规划和旧测试资料保存在 [`archive/pre-v1.0.0`](archive/pre-v1.0.0)，仅用于记录项目演进，不应作为当前功能、测试或安全说明。
+当前 Phase 2.1 状态为 **Frozen**：TypeScript 构建、完整 114 项自动化测试、真实 Provider、真实 PowerShell、无效 Key 分类、独立 NDJSON 消费、生产依赖审计和 npm 包内容检查均有通过记录。未逐项留档的 TTY 按键组合保留为非阻塞 smoke test，不影响进入 Phase 3。
+
+当前版本仍属实验阶段，不代表 Shell 已被沙箱化，也不代表完整的自动化编程 Agent。历史资料保存在 [`archive/pre-v1.0.0`](archive/pre-v1.0.0)，不作为当前功能或安全说明。

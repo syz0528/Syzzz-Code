@@ -23,11 +23,31 @@ export interface ProviderConfigItem {
   };
 }
 
+export interface AuditConfig {
+  retentionDays: number;
+  maxBytes: number;
+}
+
+export interface UiConfig {
+  streamOutput: boolean;
+}
+
+export const DEFAULT_AUDIT_CONFIG: Readonly<AuditConfig> = Object.freeze({
+  retentionDays: 30,
+  maxBytes: 20 * 1024 * 1024
+});
+
+export const DEFAULT_UI_CONFIG: Readonly<UiConfig> = Object.freeze({
+  streamOutput: true
+});
+
 export interface Config {
   currentProvider: string;
   providers: {
     [key: string]: ProviderConfigItem;
   };
+  audit: AuditConfig;
+  ui: UiConfig;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -55,6 +75,44 @@ function validateBaseURL(value: unknown, fieldPath: string): string {
   }
 
   return baseURL.replace(/\/$/, '');
+}
+
+function validateAuditConfig(value: unknown): AuditConfig {
+  if (value === undefined) {
+    return { ...DEFAULT_AUDIT_CONFIG };
+  }
+  if (!isRecord(value)) {
+    throw new Error('audit must be an object');
+  }
+
+  const retentionDays = value.retentionDays;
+  if (!Number.isInteger(retentionDays) || (retentionDays as number) < 0) {
+    throw new Error('audit.retentionDays must be a non-negative integer');
+  }
+
+  const maxBytes = value.maxBytes;
+  if (!Number.isInteger(maxBytes) || (maxBytes as number) <= 0) {
+    throw new Error('audit.maxBytes must be a positive integer');
+  }
+
+  return {
+    retentionDays: retentionDays as number,
+    maxBytes: maxBytes as number
+  };
+}
+
+function validateUiConfig(value: unknown): UiConfig {
+  if (value === undefined) {
+    return { ...DEFAULT_UI_CONFIG };
+  }
+  if (!isRecord(value)) {
+    throw new Error('ui must be an object');
+  }
+  if (typeof value.streamOutput !== 'boolean') {
+    throw new Error('ui.streamOutput must be a boolean');
+  }
+
+  return { streamOutput: value.streamOutput };
 }
 
 export function validateConfig(value: unknown): Config {
@@ -110,11 +168,18 @@ export function validateConfig(value: unknown): Config {
     throw new Error(`currentProvider "${currentProvider}" does not exist in providers`);
   }
 
-  return { currentProvider, providers };
+  return {
+    currentProvider,
+    providers,
+    audit: validateAuditConfig(value.audit),
+    ui: validateUiConfig(value.ui)
+  };
 }
 
 const DEFAULT_CONFIG: Config = {
   currentProvider: 'deepseek',
+  audit: { ...DEFAULT_AUDIT_CONFIG },
+  ui: { ...DEFAULT_UI_CONFIG },
   providers: {
     deepseek: {
       name: 'Deepseek',

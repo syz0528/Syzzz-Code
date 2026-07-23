@@ -28,6 +28,7 @@
     "diff": "^9.0.0",
     "openai": "^6.45.0",
     "ora": "^8.0.1",
+    "string-width": "^8.2.2",
     "zod": "^4.4.3"
   },
   "devDependencies": {

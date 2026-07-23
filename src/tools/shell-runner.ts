@@ -3,7 +3,67 @@ import { spawn } from 'node:child_process';
 const DEFAULT_TIMEOUT_MS = 30_000;
 const DEFAULT_MAX_STREAM_BYTES = 40 * 1024;
 const DEFAULT_TERMINATION_GRACE_MS = 1_000;
-const TERMINATION_DEADLINE_MS = 5_000;
+const TERMINATION_DEADLINE_MS = 4_000;
+const WINDOWS_PROCESS_SNAPSHOT_SOURCE = String.raw`
+using System;
+using System.Collections.Generic;
+using System.ComponentModel;
+using System.Runtime.InteropServices;
+
+public static class SyzzzProcessSnapshot {
+  private const uint SnapshotProcesses = 0x00000002;
+
+  [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Auto)]
+  private struct ProcessEntry {
+    public uint Size;
+    public uint Usage;
+    public uint ProcessId;
+    public IntPtr DefaultHeapId;
+    public uint ModuleId;
+    public uint Threads;
+    public uint ParentProcessId;
+    public int BasePriority;
+    public uint Flags;
+
+    [MarshalAs(UnmanagedType.ByValTStr, SizeConst = 260)]
+    public string ExecutableFile;
+  }
+
+  [DllImport("kernel32.dll", SetLastError = true)]
+  private static extern IntPtr CreateToolhelp32Snapshot(uint flags, uint processId);
+
+  [DllImport("kernel32.dll", SetLastError = true, CharSet = CharSet.Auto)]
+  private static extern bool Process32First(IntPtr snapshot, ref ProcessEntry entry);
+
+  [DllImport("kernel32.dll", SetLastError = true, CharSet = CharSet.Auto)]
+  private static extern bool Process32Next(IntPtr snapshot, ref ProcessEntry entry);
+
+  [DllImport("kernel32.dll")]
+  private static extern bool CloseHandle(IntPtr handle);
+
+  public static int[][] GetPairs() {
+    var pairs = new List<int[]>();
+    var snapshot = CreateToolhelp32Snapshot(SnapshotProcesses, 0);
+    if (snapshot == new IntPtr(-1)) {
+      throw new Win32Exception(Marshal.GetLastWin32Error());
+    }
+
+    try {
+      var entry = new ProcessEntry();
+      entry.Size = (uint)Marshal.SizeOf(entry);
+      if (Process32First(snapshot, ref entry)) {
+        do {
+          pairs.Add(new[] { (int)entry.ProcessId, (int)entry.ParentProcessId });
+        } while (Process32Next(snapshot, ref entry));
+      }
+    } finally {
+      CloseHandle(snapshot);
+    }
+
+    return pairs.ToArray();
+  }
+}
+`;
 
 export type ShellCompletionReason =
   | 'exited'
@@ -20,7 +80,7 @@ export interface ShellInvocation {
 
 export interface ProcessTerminationResult {
   attempted: boolean;
-  strategy: 'posix-process-group' | 'windows-taskkill';
+  strategy: 'posix-process-group' | 'windows-toolhelp';
   succeeded: boolean;
   forced: boolean;
   error?: string;
@@ -186,55 +246,102 @@ async function terminateWindowsProcessTree(
 ): Promise<ProcessTerminationResult> {
   const result: ProcessTerminationResult = {
     attempted: true,
-    strategy: 'windows-taskkill',
+    strategy: 'windows-toolhelp',
     succeeded: false,
     forced: true
   };
 
+  try {
+    process.kill(processId, 'SIGKILL');
+  } catch (error) {
+    const errorCode = error && typeof error === 'object' && 'code' in error
+      ? String(error.code)
+      : undefined;
+    if (errorCode !== 'ESRCH') {
+      result.error = error instanceof Error ? error.message : String(error);
+    }
+  }
+
+  const snapshotSource = Buffer.from(
+    WINDOWS_PROCESS_SNAPSHOT_SOURCE,
+    'utf8'
+  ).toString('base64');
+  const script = [
+    `$rootPid = ${processId}`,
+    `$source = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('${snapshotSource}'))`,
+    'Add-Type -TypeDefinition $source',
+    '$all = [SyzzzProcessSnapshot]::GetPairs()',
+    '$targets = New-Object System.Collections.Generic.List[int]',
+    '$targets.Add($rootPid)',
+    'for ($index = 0; $index -lt $targets.Count; $index++) {',
+    '  $parentPid = $targets[$index]',
+    '  foreach ($candidate in $all) {',
+    '    $candidatePid = [int]$candidate[0]',
+    '    if ([int]$candidate[1] -eq $parentPid -and -not $targets.Contains($candidatePid)) {',
+    '      $targets.Add($candidatePid)',
+    '    }',
+    '  }',
+    '}',
+    'for ($index = $targets.Count - 1; $index -ge 0; $index--) {',
+    '  Stop-Process -Id $targets[$index] -Force -ErrorAction SilentlyContinue',
+    '}',
+    '$remaining = @()',
+    'for ($attempt = 0; $attempt -lt 20; $attempt++) {',
+    '  $remaining = @($targets | Where-Object { Get-Process -Id $_ -ErrorAction SilentlyContinue })',
+    '  if ($remaining.Count -eq 0) { exit 0 }',
+    '  Start-Sleep -Milliseconds 50',
+    '}',
+    'Write-Error ("Processes remained after termination: " + ($remaining -join ","))',
+    'exit 1'
+  ].join('; ');
   return new Promise(resolve => {
-    const taskkillProcess = spawn(
-      'taskkill.exe',
-      ['/PID', String(processId), '/T', '/F'],
+    const powershellProcess = spawn(
+      'powershell.exe',
+      ['-NoLogo', '-NoProfile', '-NonInteractive', '-Command', script],
       {
         shell: false,
         windowsHide: true,
-        stdio: ['ignore', 'ignore', 'pipe']
+        stdio: ['ignore', 'pipe', 'pipe']
       }
     );
-
-    let errorOutput = '';
-    let isResolved = false;
-
+    let output = '';
+    let settled = false;
     const finish = (terminationResult: ProcessTerminationResult): void => {
-      if (isResolved) {
+      if (settled) {
         return;
       }
-      isResolved = true;
+      settled = true;
       clearTimeout(deadlineTimer);
       resolve(terminationResult);
     };
-
     const deadlineTimer = setTimeout(() => {
-      taskkillProcess.kill();
+      powershellProcess.kill('SIGKILL');
       finish({
         ...result,
-        error: 'taskkill did not finish before its deadline'
+        error: 'PowerShell process-tree termination exceeded its deadline'
       });
     }, TERMINATION_DEADLINE_MS);
 
-    taskkillProcess.stderr?.on('data', (chunk: Buffer) => {
-      errorOutput += chunk.toString('utf8');
+    powershellProcess.stdout?.on('data', (chunk: Buffer) => {
+      output += chunk.toString('utf8');
     });
-    taskkillProcess.on('error', error => {
+    powershellProcess.stderr?.on('data', (chunk: Buffer) => {
+      output += chunk.toString('utf8');
+    });
+    powershellProcess.on('error', error => {
       finish({ ...result, error: error.message });
     });
-    taskkillProcess.on('close', exitCode => {
+    powershellProcess.on('exit', exitCode => {
+      const succeeded = exitCode === 0;
       finish({
         ...result,
-        succeeded: exitCode === 0,
-        ...(exitCode === 0
+        succeeded,
+        ...(succeeded
           ? {}
-          : { error: errorOutput.trim() || `taskkill exited with code ${exitCode}` })
+          : {
+              error: output.trim() || result.error ||
+                `PowerShell process-tree termination exited with code ${exitCode ?? 'unknown'}`
+            })
       });
     });
   });

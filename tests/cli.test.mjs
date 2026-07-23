@@ -25,6 +25,32 @@ test('CLI help exposes the interactive switch command', () => {
   assert.match(result.stdout, /switch/);
   assert.match(result.stdout, /chat/);
   assert.match(result.stdout, /config/);
+
+  const chatHelp = spawnSync(process.execPath, [cliPath, 'chat', '--help'], {
+    cwd: projectDirectory,
+    encoding: 'utf-8'
+  });
+  assert.equal(chatHelp.status, 0, chatHelp.stderr);
+  assert.match(chatHelp.stdout, /--stream <mode>/);
+});
+
+test('stream-json rejects the human display stream override', () => {
+  const result = spawnSync(process.execPath, [
+    cliPath,
+    'chat',
+    '--message',
+    'hello',
+    '--output-format',
+    'stream-json',
+    '--stream',
+    'off'
+  ], {
+    cwd: projectDirectory,
+    encoding: 'utf-8'
+  });
+
+  assert.equal(result.status, 1);
+  assert.match(result.stderr, /--stream cannot be used with --output-format stream-json/);
 });
 
 test('switch selects configured values and persists them', () => {
@@ -78,6 +104,59 @@ test('switch selects configured values and persists them', () => {
     const savedConfig = JSON.parse(readFileSync(configPath, 'utf-8'));
     assert.equal(savedConfig.currentProvider, 'beta');
     assert.equal(savedConfig.providers.beta.model, 'beta-2');
+  } finally {
+    rmSync(testHome, { recursive: true, force: true });
+  }
+});
+
+test('interactive stream and model commands persist user configuration', () => {
+  const testHome = mkdtempSync(join(tmpdir(), 'syzzz-cli-session-'));
+  const configDirectory = join(testHome, '.syzzz-code');
+  const configPath = join(configDirectory, 'config.json');
+
+  try {
+    mkdirSync(configDirectory);
+    writeFileSync(configPath, JSON.stringify({
+      currentProvider: 'local',
+      providers: {
+        local: {
+          name: 'Local',
+          type: 'openai-compatible',
+          model: 'model-a',
+          models: ['model-a', 'model-b'],
+          env: {
+            BASE_URL: 'https://example.invalid/v1',
+            API_KEY: 'test-key'
+          }
+        }
+      },
+      audit: {
+        retentionDays: 0,
+        maxBytes: 4096
+      },
+      ui: {
+        streamOutput: true
+      }
+    }));
+
+    const result = spawnSync(process.execPath, [cliPath], {
+      cwd: projectDirectory,
+      encoding: 'utf-8',
+      input: '/stream off\n/model model-b\n/exit\n',
+      timeout: 5_000,
+      env: {
+        ...process.env,
+        HOME: testHome,
+        USERPROFILE: testHome
+      }
+    });
+
+    assert.equal(result.status, 0, result.stderr || result.error?.message);
+    assert.match(result.stdout, /Stream display set to off/);
+    assert.match(result.stdout, /Model switched to model-b/);
+    const savedConfig = JSON.parse(readFileSync(configPath, 'utf-8'));
+    assert.equal(savedConfig.ui.streamOutput, false);
+    assert.equal(savedConfig.providers.local.model, 'model-b');
   } finally {
     rmSync(testHome, { recursive: true, force: true });
   }
@@ -205,6 +284,69 @@ test('interactive /permissions does not become a chat message and can switch mod
   assert.match(result.stdout, /Full Access not enabled/);
   assert.match(result.stdout, /MODE:fullAccess/);
   assert.match(result.stdout, /FINAL:fullAccess/);
+});
+
+test('interactive slash commands control display and the current provider model', () => {
+  const script = `
+    import { runInteractiveSession } from './dist/interactive.js';
+
+    const engine = {
+      model: 'model-a',
+      getProviderInfo() {
+        return {
+          name: 'Test Provider',
+          type: 'test',
+          model: this.model,
+          capabilities: { streaming: true, reasoningToggle: false }
+        };
+      },
+      setModel(model) {
+        this.model = model;
+        console.log('MODEL:' + model);
+      },
+      async chat(message) {
+        console.log('HANDLED:' + message);
+        return 'reply:' + message;
+      }
+    };
+
+    await runInteractiveSession(engine, {
+      streamOutput: true,
+      availableModels: ['model-a', 'model-b'],
+      persistStreamOutput(enabled) {
+        console.log('STREAM_SAVED:' + enabled);
+      },
+      persistModel(model) {
+        console.log('MODEL_SAVED:' + model);
+      }
+    });
+    console.log('FINAL_MODEL:' + engine.model);
+  `;
+
+  const result = spawnSync(
+    process.execPath,
+    ['--input-type=module', '--eval', script],
+    {
+      cwd: projectDirectory,
+      encoding: 'utf-8',
+      input: '/help\n/?\n/stream off\n/model model-b\n/model missing\n/stram\n//literal\n/quit\n',
+      timeout: 5_000
+    }
+  );
+
+  assert.equal(result.status, 0, result.stderr || result.error?.message);
+  assert.match(result.stdout, /Available commands:/);
+  assert.match(result.stdout, /STREAM_SAVED:false/);
+  assert.match(result.stdout, /MODEL:model-b/);
+  assert.match(result.stdout, /MODEL_SAVED:model-b/);
+  assert.match(result.stdout, /FINAL_MODEL:model-b/);
+  assert.match(result.stdout, /Model is not configured/);
+  assert.match(result.stdout, /Unknown command: \/stram/);
+  assert.match(result.stdout, /Did you mean: \/stream/);
+  assert.equal((result.stdout.match(/HANDLED:\/literal/g) ?? []).length, 1);
+  assert.doesNotMatch(result.stdout, /HANDLED:\/help/);
+  assert.doesNotMatch(result.stdout, /HANDLED:\/stream/);
+  assert.doesNotMatch(result.stdout, /HANDLED:\/model/);
 });
 
 test('full access confirmation accepts only y or Y and fails closed for other input', () => {

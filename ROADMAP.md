@@ -1,11 +1,11 @@
 # Syzzz Code 路线图
 
-**制定日期：** 2026-06-16<br>
-**最近更新：** 2026-07-21<br>
-**适用基线：** `1.0.0` / 远程 Phase 1.1 提交 `da6858d`<br>
-**当前入口：** Phase 1.1 最终稳定化已冻结；下一阶段为事件化 Agent Runtime 与 Provider 可靠性
+**制定日期：** 2026-06-16
+**最近更新：** 2026-07-23
+**适用基线：** `1.0.0` / Phase 1.1 本地冻结提交 `8e275c3`
+**当前入口：** Phase 2.1 已冻结，下一项进入 Phase 3 代码库上下文与可靠编辑闭环
 
-> 本文档只描述尚未完成的工作、实施顺序和验收标准。当前已经实现的能力以 [`README.md`](README.md) 和 [`CURRENT_STATUS.md`](CURRENT_STATUS.md) 为准。
+> 路线图描述实施顺序和验收边界。当前代码事实以 [`README.md`](README.md) 和 [`CURRENT_STATUS.md`](CURRENT_STATUS.md) 为准。
 
 ## 1. 产品方向
 
@@ -339,89 +339,88 @@ interface ToolDefinition<Input, Output> {
 
 ## 7. Phase 2：事件化 Agent Runtime 与 Provider 可靠性
 
+**状态：** Phase 2 与 Phase 2.1 已于 2026-07-23 标记为 **Frozen**。
+
 ### 目标
 
-把当前 `chat(): Promise<string>` 演进为可流式、可观察、可取消的 Agent Runtime，同时保持 CLI、Provider 和工具层解耦。
+把 `chat(): Promise<string>` 演进为可流式、可观察、可取消、可供 CLI 与机器消费者复用的 Agent Runtime，同时保持 Phase 1.1 的权限和文件安全边界。
 
-### 7.1 Agent Event Stream
+### 7.1 已实现的 Agent Event Stream
 
-定义统一事件联合类型：
+- [x] `AgentEvent` 使用 `schemaVersion: 1`、session/turn ID、sequence 与 timestamp；
+- [x] 固定 turn、phase、provider、reasoning status、text delta、retry、usage、tool、approval 和终态事件；
+- [x] `runTurn()` 返回 AsyncGenerator，`chat()` 保持兼容；
+- [x] 只允许一个 completed/failed/cancelled 终态；
+- [x] 失败/取消不提交会话历史；提前关闭消费者执行统一清理；
+- [x] 当前 Promise 工具只产生 started/completed，不伪造实时 tool output；
+- [x] 不公开 reasoning delta，只报告开始、结束、耗时和字符数。
 
-- turn started；
-- text delta；
-- reasoning delta（Provider 支持时）；
-- tool requested；
-- approval requested/resolved；
-- tool started/output/completed；
-- usage updated；
-- retry scheduled；
-- turn completed/failed/cancelled。
+### 7.2 已实现的 Provider 可靠性
 
-CLI 只消费事件并负责展示，不再依赖 Engine 内部直接 `console.log`。
+- [x] OpenAI-compatible 真流式与 tool-call 碎片聚合；
+- [x] Anthropic 保持非流式，并明确 `streaming: false`；
+- [x] 最小 capabilities 只包含 streaming 与 reasoning toggle；
+- [x] ProviderError 分类与脱敏公共形状；
+- [x] SDK 自动重试关闭，由 Runner 统一管理 attempt；
+- [x] 120 秒 attempt、3 次上限、180 秒总预算；
+- [x] 指数退避、正负 20% jitter、Retry-After 与 30 秒等待上限；
+- [x] 正文或 tool-call delta 后禁止重试；
+- [x] Provider 忽略 AbortSignal 时仍由 Runner 硬超时；
+- [x] reasoning-only 与 stream_options 兼容恢复共享 attempt 和预算；
+- [x] request ID、reported model、usage 与 finish reason 进入事件。
 
-### 7.2 Provider 能力与错误模型
+### 7.3 已实现的 CLI 与审计
 
-扩展 Provider 接口以表达：
+- [x] interactive 与 `chat -m` 统一消费事件；
+- [x] 正文、spinner、工具、审批和重试状态分离；
+- [x] footer 展示可获得的 token、耗时与 finish reason；
+- [x] `--output-format text|stream-json`；
+- [x] NDJSON stdout 不含 ANSI、启动文本、工具结果正文或 metadata；
+- [x] 退出码固定为 0/1/130；
+- [x] 本地 JSONL 审计默认保留 30 天、上限 20 MiB；
+- [x] 审计只记录元数据和 workspace 短 hash，不记录 prompt、正文、路径、diff、工具输入输出、Shell 输出或 reasoning；
+- [x] 审计失败 fail open，并且每进程只警告一次。
 
-- streaming；
-- `AbortSignal`；
-- context window；
-- maximum output；
-- tool calling；
-- parallel tool calls；
-- reasoning content；
-- structured output。
+### 7.4 Phase 2.1 已实现的交互发现与 UX 收尾
 
-建立 Provider typed errors：
+- [x] `CommandDefinition` 注册表统一名称、别名、描述、参数、动态选项、可用性和执行函数；
+- [x] 首批 `/stream`、`/permissions`、`/model`、`/help`、`/exit`，以及 `/quit`、`/?` 别名；
+- [x] 未知 Slash 本地报错并给出近似候选，`//` 转义为普通消息；
+- [x] 轻量单行 TTY 输入支持 `/` 即时候选、过滤、导航、历史、粘贴、中文宽度、缩放和最多 8 行滚动；
+- [x] 非 TTY/raw mode 不可用时回退逐行模式；
+- [x] 可扩展异步 `SuggestionProvider` 支持 Abort 与过期结果丢弃，本期只注册 `/`；
+- [x] `ui.streamOutput`、`/stream on|off` 和进程级 `chat --stream on|off`；
+- [x] 展示关闭不改变 Provider/Event 实时流，`stream-json` 不受影响且禁止与 `--stream` 混用；
+- [x] 当前 Provider 配置列表内 `/model` 热切换、持久化与 reasoning metadata 清理；
+- [x] interactive/`chat -m` 统一 `HumanEventRenderer`，压缩 Read/List 成功状态并扩展 footer 统计；
+- [x] 0ms 兼容恢复在普通终端只显示瞬时友好状态，机器事件保持完整；
+- [x] 系统提示减少盲目遍历、重复 Shell 查询和仅为格式重跑工具，并约束精确计数与审查范围表述。
 
-- authentication；
-- permission；
-- model not found；
-- rate limit；
-- timeout；
-- network；
-- malformed response；
-- context exceeded；
-- provider internal error。
+### 明确不做
 
-保留 HTTP 状态、request ID、retry-after 和原始 cause。
+- Anthropic 真流式；
+- 完整 capability 数据库或费用估算；
+- TUI、上下文治理、会话恢复、MCP、并行工具、新 Agent 能力；
+- 真正的 `@` 上下文和 `$` Skill 选择器；
+- Shell allowlist、AST、后台任务或自动审批。
 
-### 7.3 有限重试策略
+### Phase 2/2.1 退出条件
 
-只对明确可重试的错误执行有限重试：
-
-- 尊重 `Retry-After`；
-- 指数退避与随机抖动；
-- 设定最大次数和总时间预算；
-- 工具副作用不得被 Provider 重试重复执行；
-- CLI 清楚显示重试原因和次数。
-
-### 7.4 可观测性
-
-每轮记录：
-
-- turn ID 和 tool execution ID；
-- Provider 与 configured model；
-- API reported model（可获得时）；
-- input/output/total tokens；
-- Provider 和工具耗时；
-- finish reason；
-- 重试次数；
-- 最终状态。
-
-日志必须对 API Key、Authorization header 和疑似凭据进行脱敏。
-
-### Phase 2 退出条件
-
-- 文本能够流式输出；
-- Ctrl+C 可以取消当前 Provider 请求和工具执行；
-- CLI 不再因 spinner 与工具日志产生混乱输出；
-- 401、404、429、超时和网络错误有明确类别；
-- usage 与 finish reason 不再被 Engine 丢弃；
-- 每轮执行具有可追踪事件记录；
-- 非交互调用可以选择机器可读的 JSON 事件输出。
+- [x] TypeScript 构建通过；
+- [x] 新增事件、Provider、流式、审计、命令、终端输入与 renderer 自动化测试；当前套件共 114 项；
+- [x] `npm audit --omit=dev` 为 0 vulnerabilities；
+- [x] `npm pack --dry-run --json` 内容符合 allowlist；
+- [x] 真实 `deepseek-v4-flash-free` 纯文本流式通过；
+- [x] 真实 `ListDirectory -> Read -> 最终回答` 工具链通过；
+- [x] 在普通本机终端完成 `npm test` 114/114；
+- [x] 真实 PowerShell 完成 `/stream`、中文流式、Provider 切换、紧凑工具展示和退出交互复核；
+- [x] 权限、模型切换、Slash 菜单、取消和 Shell 进程树具备自动化回归，产品所有者接受剩余非阻塞人工 smoke test；
+- [x] 用独立 Node 消费真实 CLI `stream-json` 并检查敏感内容不存在；
+- [x] 产品所有者批准标记 **Frozen**，直接进入 Phase 3。
 
 ## 8. Phase 3：代码库上下文与可靠编辑闭环
+
+
 
 ### 目标
 
@@ -524,15 +523,14 @@ Agent 只能根据真实工具结果宣称完成，不允许把“建议运行�
 
 ### 9.2 会话命令
 
-优先支持：
+Phase 2.1 已提供 `/model`、`/help`、`/permissions`、`/stream` 与 `/exit` 的注册式基础。Phase 4 在同一注册表上继续增加：
 
 - `/status`：Provider、模型、模式、权限和上下文；
-- `/model`：当前会话切换模型；
 - `/clear`：清空当前历史；
 - `/compact`：主动压缩上下文；
 - `/cost`：显示 token 和可用成本信息；
 - `/save`、`/resume`：保存与恢复会话；
-- `/help`：显示会话内命令。
+- `/provider`：切换 Provider；是否接入在线模型发现另行评估。
 
 ### 9.3 会话持久化
 
@@ -770,35 +768,35 @@ Hooks 不能绕过 Tool Policy，也不能默认访问密钥。
 
 ## 14. 最近行动清单
 
-### 当前文档基线
+### 已完成
 
-- [x] 完成 `README.md` 本地重写；
-- [x] 完成 `CURRENT_STATUS.md` 本地重写；
-- [x] 完成 `ROADMAP.md` 本地编写；
-- [x] 用户审阅三份文档；
-- [x] 根据反馈修订；
-- [x] 提交并推送文档；
-- [ ] 创建和推送 `v1.0.0` Tag。
+- [x] 冻结 Phase 1.1 安全 Tool Runtime；
+- [x] 建立 AgentEvent 与 `runTurn()`；
+- [x] 实现 OpenAI-compatible 真流式和 Anthropic 非流式兼容；
+- [x] 实现 ProviderError、硬 timeout、有限重试和 usage；
+- [x] 实现 CLI 事件渲染与 stream-json；
+- [x] 实现元数据审计与清理；
+- [x] 完成交互命令注册表、Slash 菜单、流式展示开关与当前 Provider 模型切换；
+- [x] 完成紧凑工具渲染、footer 统计和系统提示收尾；
+- [x] 扩展正式测试套件到 114 项；
+- [x] 完成生产依赖审计和 npm 包内容检查；
+- [x] 完成真实 DeepSeek 纯文本与只读工具 dogfood。
 
-### 下一开发迭代
+### 冻结结果
 
-- [x] 设计 Tool Runtime 类型和模块边界；
-- [x] 选择并验证 Zod 运行时 schema 方案；
-- [x] 修复工具结构化错误语义；
-- [x] 实现路径边界与链接逃逸防护；
-- [x] 实现异步 Shell、timeout 和 cancellation；
-- [x] 实现最小权限审批与写入 diff；
-- [x] 补充真实工具测试；
-- [x] 更新安全与架构文档。
+- [x] 普通 PowerShell 执行 `npm test` 114/114；
+- [x] 真实 PowerShell 完成展示开关、中文流式、Provider 切换和降噪 dogfood；
+- [x] 权限、模型、菜单、取消和 Shell 生命周期回归覆盖通过，剩余人工按键组合被接受为非阻塞观察；
+- [x] 独立消费者验证真实 CLI NDJSON 及脱敏；
+- [x] 提交 Phase 2/2.1 冻结状态。
 
 ### 下一阶段入口
 
-- [ ] 设计 Phase 2 的 Agent Event 联合类型与消费边界；
-- [ ] 定义 Provider typed errors、timeout 和有限重试策略；
-- [ ] 设计 usage、延迟和执行审计数据模型；
-- [ ] 保持 Phase 1 的 37 项安全回归持续通过。
+Phase 2.1 已冻结。Phase 3 优先顺序为 Glob/Grep/Range Read、可靠 Patch/Diagnostics、Context Manager、compaction 与 repo map。
 
 ## 15. 路线图完成标准
+
+
 
 当项目最终达到本路线图所描述的成熟状态时，应具备以下特征：
 

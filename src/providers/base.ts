@@ -44,21 +44,61 @@ export interface ProviderChatRequest {
   signal?: AbortSignal;
 }
 
+export interface ProviderUsage {
+  inputTokens: number;
+  outputTokens: number;
+  totalTokens: number;
+}
+
 export interface ProviderChatResponse {
   message: AssistantMessage;
   finishReason?: string | null;
-  usage?: {
-    inputTokens: number;
-    outputTokens: number;
-    totalTokens: number;
-  };
+  usage?: ProviderUsage;
+  requestId?: string;
+  reportedModel?: string;
+}
+
+export interface ProviderAttemptOptions {
+  signal: AbortSignal;
+  attempt: number;
+  attemptId: string;
+  includeUsage: boolean;
+  disableReasoning: boolean;
+}
+
+export type ProviderDelta =
+  | { type: 'text_delta'; text: string }
+  | { type: 'reasoning_delta'; text: string }
+  | {
+      type: 'tool_call_delta';
+      index: number;
+      id?: string;
+      name?: string;
+      arguments?: string;
+    }
+  | { type: 'usage'; usage: ProviderUsage };
+
+export interface ProviderCapabilities {
+  streaming: boolean;
+  reasoningToggle: boolean;
+}
+
+export interface ProviderInfo {
+  name: string;
+  type: string;
+  model: string;
+  capabilities: ProviderCapabilities;
 }
 
 export interface AIProvider {
   chat(request: ProviderChatRequest): Promise<ProviderChatResponse>;
 
-  getInfo(): {
-    name: string;
-    type: string;
-  };
+  chatStream?(
+    request: ProviderChatRequest,
+    attemptOptions: ProviderAttemptOptions
+  ): AsyncGenerator<ProviderDelta, ProviderChatResponse>;
+
+  getInfo(): ProviderInfo;
+
+  setModel?(model: string): void;
 }

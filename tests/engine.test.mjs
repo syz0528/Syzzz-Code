@@ -844,4 +844,7 @@ test('system prompt includes platform and shell executor details', async () => {
   assert.match(capturedPrompt, /Shell executor: /);
   assert.match(capturedPrompt, /ListDirectory/);
   assert.match(capturedPrompt, /Permission mode: safe/);
+  assert.match(capturedPrompt, /Inspect project structure once/);
+  assert.match(capturedPrompt, /Do not rerun a successful tool/);
+  assert.match(capturedPrompt, /do not call a sampled review complete or exhaustive/);
 });

@@ -1,13 +1,123 @@
 #!/usr/bin/env node
 import { Command } from 'commander';
 import chalk from 'chalk';
+import ora from 'ora';
 import { createInterface } from 'readline/promises';
 import type { Interface as ReadlineInterface } from 'readline/promises';
 import { QueryEngine } from './engine.js';
-import { loadConfig, saveConfig, getCurrentProviderConfig } from './config.js';
+import {
+  consumeAgentTurn,
+  HumanEventRenderer,
+  serializeAgentEvent,
+  turnResultExitCode
+} from './cli-renderer.js';
+import {
+  loadConfig,
+  saveConfig,
+  getCurrentProviderConfig,
+  type Config
+} from './config.js';
 import { runInteractiveSession } from './interactive.js';
+import { OperationAbortedError } from './tools/abort.js';
 
 const program = new Command();
+
+type OutputFormat = 'text' | 'stream-json';
+type StreamDisplayMode = 'on' | 'off';
+
+function parseOutputFormat(value: string): OutputFormat {
+  if (value === 'text' || value === 'stream-json') {
+    return value;
+  }
+  throw new Error('output format must be "text" or "stream-json"');
+}
+
+function parseStreamDisplayMode(value: string): StreamDisplayMode {
+  if (value === 'on' || value === 'off') {
+    return value;
+  }
+  throw new Error('stream display mode must be "on" or "off"');
+}
+
+function createInteractiveOptions(
+  config: Config,
+  streamOutput = config.ui.streamOutput
+) {
+  const providerId = config.currentProvider;
+  const provider = config.providers[providerId];
+
+  return {
+    streamOutput,
+    availableModels: provider.models,
+    persistStreamOutput(enabled: boolean) {
+      const latestConfig = loadConfig();
+      latestConfig.ui.streamOutput = enabled;
+      saveConfig(latestConfig);
+    },
+    persistModel(model: string) {
+      const latestConfig = loadConfig();
+      const latestProvider = latestConfig.providers[providerId];
+      if (!latestProvider) {
+        throw new Error(`Provider ${providerId} no longer exists in configuration`);
+      }
+      if (!latestProvider.models.includes(model)) {
+        throw new Error(`Model ${model} is not configured for provider ${providerId}`);
+      }
+      latestProvider.model = model;
+      saveConfig(latestConfig);
+    }
+  };
+}
+
+
+async function runSingleMessage(
+  engine: QueryEngine,
+  message: string,
+  outputFormat: OutputFormat,
+  streamOutput: boolean
+): Promise<number> {
+  const abortController = new AbortController();
+  const handleInterrupt = () => {
+    abortController.abort(new OperationAbortedError());
+  };
+  process.once('SIGINT', handleInterrupt);
+  let renderer: HumanEventRenderer | undefined;
+
+  try {
+    if (outputFormat === 'text') {
+      const info = engine.getProviderInfo();
+      console.log(chalk.green(`Using ${info.name} (${info.model})`));
+      renderer = new HumanEventRenderer({
+        streamOutput,
+        spinner: ora({ text: 'Thinking...', discardStdin: false }).start()
+      });
+    }
+
+    const result = await consumeAgentTurn(
+      engine.runTurn(message, { signal: abortController.signal }),
+      event => {
+        if (outputFormat === 'stream-json') {
+          process.stdout.write(`${serializeAgentEvent(event)}\n`);
+        } else {
+          renderer?.handle(event);
+        }
+      }
+    );
+
+    if (outputFormat === 'text') {
+      renderer?.finish(result);
+      if (result.status === 'cancelled') {
+        console.error(chalk.yellow('Operation cancelled.'));
+      } else if (result.status === 'failed') {
+        console.error(chalk.red('Chat failed:'), result.error.message);
+      }
+    }
+    return turnResultExitCode(result);
+  } finally {
+    renderer?.stop();
+    process.removeListener('SIGINT', handleInterrupt);
+  }
+}
 
 async function selectFromList(
   inputLines: AsyncIterator<string>,
@@ -40,8 +150,9 @@ program
   .version('1.0.0')
   .action(async () => {
     try {
+      const config = loadConfig();
       const engine = new QueryEngine();
-      await runInteractiveSession(engine);
+      await runInteractiveSession(engine, createInteractiveOptions(config));
     } catch (error) {
       const reason = error instanceof Error ? error.message : String(error);
       console.error(chalk.red('\nFailed to initialize:'), reason + '\n');
@@ -66,6 +177,7 @@ program
       console.log(chalk.white(`Type:        ${current.type}`));
       console.log(chalk.white(`Model:       ${current.model}`));
       console.log(chalk.white(`Base URL:    ${current.env.BASE_URL}`));
+      console.log(chalk.white(`Streaming:   ${config.ui.streamOutput ? 'on' : 'off'}`));
       console.log(chalk.white(`API Key:     ${current.env.API_KEY ? '✓ Set' : '✗ Not set'}\n`));
       return;
     }
@@ -152,17 +264,38 @@ program
   .command('chat')
   .description('Start chat session')
   .option('-m, --message <text>', 'Send a single message')
+  .option('--output-format <format>', 'Output format: text or stream-json', 'text')
+  .option('--stream <mode>', 'Text display streaming: on or off')
   .action(async (options) => {
     try {
+      const outputFormat = parseOutputFormat(options.outputFormat);
+      if (outputFormat === 'stream-json' && options.stream !== undefined) {
+        throw new Error('--stream cannot be used with --output-format stream-json');
+      }
+      const config = loadConfig();
+      const streamOutput = options.stream === undefined
+        ? config.ui.streamOutput
+        : parseStreamDisplayMode(options.stream) === 'on';
       const engine = new QueryEngine();
 
       if (options.message) {
-        const response = await engine.chat(options.message);
-        console.log(chalk.green('\nAssistant:\n') + response + '\n');
+        process.exitCode = await runSingleMessage(
+          engine,
+          options.message,
+          outputFormat,
+          streamOutput
+        );
         return;
       }
 
-      await runInteractiveSession(engine);
+      if (outputFormat !== 'text') {
+        throw new Error('--output-format stream-json requires --message');
+      }
+
+      await runInteractiveSession(
+        engine,
+        createInteractiveOptions(config, streamOutput)
+      );
     } catch (error) {
       const reason = error instanceof Error ? error.message : String(error);
       console.error(chalk.red('\nChat failed:'), reason + '\n');
