@@ -169,7 +169,8 @@ export function toAuditRecord(
         provider: event.provider,
         model: event.model,
         attempt: event.attempt,
-        attemptId: event.attemptId
+        attemptId: event.attemptId,
+        ...(event.purpose ? { purpose: event.purpose } : {})
       };
     case 'provider_request_failed':
       return {
@@ -180,6 +181,7 @@ export function toAuditRecord(
         attemptId: event.attemptId,
         durationMs: event.durationMs,
         willRetry: event.willRetry,
+        ...(event.purpose ? { purpose: event.purpose } : {}),
         error: {
           code: event.error.code,
           ...(event.error.status === undefined ? {} : { status: event.error.status }),
@@ -196,7 +198,8 @@ export function toAuditRecord(
         durationMs: event.durationMs,
         finishReason: event.finishReason,
         requestId: event.requestId,
-        reportedModel: event.reportedModel
+        reportedModel: event.reportedModel,
+        ...(event.purpose ? { purpose: event.purpose } : {})
       };
     case 'retry_scheduled':
       return {
@@ -204,7 +207,8 @@ export function toAuditRecord(
         attempt: event.attempt,
         nextAttempt: event.nextAttempt,
         delayMs: event.delayMs,
-        reason: event.reason
+        reason: event.reason,
+        ...(event.purpose ? { purpose: event.purpose } : {})
       };
     case 'usage_updated':
       return {
@@ -212,7 +216,48 @@ export function toAuditRecord(
         attempt: event.attempt,
         attemptId: event.attemptId,
         usage: event.usage,
-        cumulativeUsage: event.cumulativeUsage
+        cumulativeUsage: event.cumulativeUsage,
+        ...(event.purpose ? { purpose: event.purpose } : {})
+      };
+    case 'context_usage_updated':
+      return {
+        ...base,
+        inputTokens: event.inputTokens,
+        contextWindowTokens: event.contextWindowTokens,
+        triggerTokens: event.triggerTokens,
+        source: event.source
+      };
+    case 'compaction_started':
+      return {
+        ...base,
+        reason: event.reason,
+        mode: event.mode,
+        beforeTokens: event.beforeTokens,
+        contextWindowTokens: event.contextWindowTokens
+      };
+    case 'compaction_completed':
+      return {
+        ...base,
+        reason: event.reason,
+        mode: event.mode,
+        beforeTokens: event.beforeTokens,
+        afterTokens: event.afterTokens,
+        messagesCompacted: event.messagesCompacted,
+        durationMs: event.durationMs
+      };
+    case 'compaction_failed':
+      return {
+        ...base,
+        reason: event.reason,
+        mode: event.mode,
+        durationMs: event.durationMs,
+        recoverable: event.recoverable,
+        error: {
+          code: event.error.code,
+          ...(event.error.provider ? { provider: event.error.provider } : {}),
+          ...(event.error.status === undefined ? {} : { status: event.error.status }),
+          ...(event.error.requestId ? { requestId: event.error.requestId } : {})
+        }
       };
     case 'approval_resolved':
       return {

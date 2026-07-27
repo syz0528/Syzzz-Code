@@ -57,15 +57,20 @@ test('runTurn emits ordered envelopes and one completed terminal event', async (
   assert.equal(result.response, 'Hello from events.');
   assert.deepEqual(events.map(event => event.type), [
     'turn_started',
+    'context_usage_updated',
     'phase_changed',
     'provider_request_started',
     'text_delta',
     'usage_updated',
+    'context_usage_updated',
     'provider_request_completed',
     'phase_changed',
     'turn_completed'
   ]);
-  assert.deepEqual(events.map(event => event.sequence), [1, 2, 3, 4, 5, 6, 7, 8]);
+  assert.deepEqual(
+    events.map(event => event.sequence),
+    [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]
+  );
   assert.ok(events.every(event => event.schemaVersion === 1));
   assert.ok(events.every(event => event.sessionId === 'session-1'));
   assert.ok(events.every(event => event.turnId === 'turn-1'));
@@ -118,6 +123,7 @@ test('closing a generator after provider start releases the processing lock', as
   const turn = engine.runTurn('first');
 
   assert.equal((await turn.next()).value.type, 'turn_started');
+  assert.equal((await turn.next()).value.type, 'context_usage_updated');
   assert.equal((await turn.next()).value.type, 'phase_changed');
   assert.equal((await turn.next()).value.type, 'provider_request_started');
   await turn.return();

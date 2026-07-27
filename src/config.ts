@@ -17,6 +17,7 @@ export interface ProviderConfigItem {
   type: 'anthropic' | 'openai-compatible';
   model: string;
   models: string[];
+  modelContextWindows?: Record<string, number>;
   env: {
     BASE_URL: string;
     API_KEY: string;
@@ -32,6 +33,11 @@ export interface UiConfig {
   streamOutput: boolean;
 }
 
+export interface ContextConfig {
+  autoCompact: boolean;
+  defaultWindowTokens: number;
+}
+
 export const DEFAULT_AUDIT_CONFIG: Readonly<AuditConfig> = Object.freeze({
   retentionDays: 30,
   maxBytes: 20 * 1024 * 1024
@@ -41,6 +47,11 @@ export const DEFAULT_UI_CONFIG: Readonly<UiConfig> = Object.freeze({
   streamOutput: true
 });
 
+export const DEFAULT_CONTEXT_CONFIG: Readonly<ContextConfig> = Object.freeze({
+  autoCompact: true,
+  defaultWindowTokens: 65_536
+});
+
 export interface Config {
   currentProvider: string;
   providers: {
@@ -48,6 +59,7 @@ export interface Config {
   };
   audit: AuditConfig;
   ui: UiConfig;
+  context: ContextConfig;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -115,6 +127,31 @@ function validateUiConfig(value: unknown): UiConfig {
   return { streamOutput: value.streamOutput };
 }
 
+function validateContextConfig(value: unknown): ContextConfig {
+  if (value === undefined) {
+    return { ...DEFAULT_CONTEXT_CONFIG };
+  }
+  if (!isRecord(value)) {
+    throw new Error('context must be an object');
+  }
+  if (typeof value.autoCompact !== 'boolean') {
+    throw new Error('context.autoCompact must be a boolean');
+  }
+  if (
+    !Number.isInteger(value.defaultWindowTokens) ||
+    Number(value.defaultWindowTokens) < 16_384 ||
+    Number(value.defaultWindowTokens) > 2_000_000
+  ) {
+    throw new Error(
+      'context.defaultWindowTokens must be an integer between 16384 and 2000000'
+    );
+  }
+  return {
+    autoCompact: value.autoCompact,
+    defaultWindowTokens: Number(value.defaultWindowTokens)
+  };
+}
+
 export function validateConfig(value: unknown): Config {
   if (!isRecord(value)) {
     throw new Error('configuration root must be an object');
@@ -152,11 +189,39 @@ export function validateConfig(value: unknown): Config {
       throw new Error(`${providerPath}.env must be an object`);
     }
 
+    let modelContextWindows: Record<string, number> | undefined;
+    if (providerValue.modelContextWindows !== undefined) {
+      if (!isRecord(providerValue.modelContextWindows)) {
+        throw new Error(`${providerPath}.modelContextWindows must be an object`);
+      }
+      modelContextWindows = {};
+      for (const [modelId, windowTokens] of Object.entries(
+        providerValue.modelContextWindows
+      )) {
+        if (!models.includes(modelId)) {
+          throw new Error(
+            `${providerPath}.modelContextWindows.${modelId} is not a configured model`
+          );
+        }
+        if (
+          !Number.isInteger(windowTokens) ||
+          Number(windowTokens) < 16_384 ||
+          Number(windowTokens) > 2_000_000
+        ) {
+          throw new Error(
+            `${providerPath}.modelContextWindows.${modelId} must be an integer between 16384 and 2000000`
+          );
+        }
+        modelContextWindows[modelId] = Number(windowTokens);
+      }
+    }
+
     providers[providerId] = {
       name: requireNonEmptyString(providerValue.name, `${providerPath}.name`),
       type,
       model,
       models,
+      ...(modelContextWindows ? { modelContextWindows } : {}),
       env: {
         BASE_URL: validateBaseURL(providerValue.env.BASE_URL, `${providerPath}.env.BASE_URL`),
         API_KEY: typeof providerValue.env.API_KEY === 'string' ? providerValue.env.API_KEY : ''
@@ -172,7 +237,8 @@ export function validateConfig(value: unknown): Config {
     currentProvider,
     providers,
     audit: validateAuditConfig(value.audit),
-    ui: validateUiConfig(value.ui)
+    ui: validateUiConfig(value.ui),
+    context: validateContextConfig(value.context)
   };
 }
 
@@ -180,6 +246,7 @@ const DEFAULT_CONFIG: Config = {
   currentProvider: 'deepseek',
   audit: { ...DEFAULT_AUDIT_CONFIG },
   ui: { ...DEFAULT_UI_CONFIG },
+  context: { ...DEFAULT_CONTEXT_CONFIG },
   providers: {
     deepseek: {
       name: 'Deepseek',

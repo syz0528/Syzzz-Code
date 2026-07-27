@@ -7,6 +7,7 @@ export interface ProviderConfig {
   name: string;
   type: 'anthropic' | 'openai-compatible';
   model: string;
+  modelContextWindows?: Record<string, number>;
   env: {
     BASE_URL: string;
     API_KEY: string;
@@ -14,7 +15,7 @@ export interface ProviderConfig {
 }
 
 export function createProvider(config: ProviderConfig): AIProvider {
-  const { name, type, model, env } = config;
+  const { name, type, model, modelContextWindows, env } = config;
   const { BASE_URL, API_KEY } = env;
 
   if (!API_KEY) {
@@ -22,9 +23,16 @@ export function createProvider(config: ProviderConfig): AIProvider {
   }
 
   if (type === 'anthropic') {
-    return new AnthropicProvider(API_KEY, BASE_URL, model);
+    return new AnthropicProvider(API_KEY, BASE_URL, model, modelContextWindows);
   } else {
     // openai-compatible
-    return new OpenAICompatibleProvider(API_KEY, BASE_URL, model, name);
+    return new OpenAICompatibleProvider(
+      API_KEY,
+      BASE_URL,
+      model,
+      name,
+      undefined,
+      modelContextWindows
+    );
   }
 }

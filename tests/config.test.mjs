@@ -121,6 +121,49 @@ test('UI streaming defaults safely and validates explicit configuration', () => 
   );
 });
 
+test('context configuration defaults safely and validates model overrides', () => {
+  const legacyConfig = validateConfig(createValidConfig());
+  assert.deepEqual(legacyConfig.context, {
+    autoCompact: true,
+    defaultWindowTokens: 65_536
+  });
+
+  const configured = createValidConfig();
+  configured.context = {
+    autoCompact: false,
+    defaultWindowTokens: 128_000
+  };
+  configured.providers.local.modelContextWindows = {
+    'model-a': 64_000,
+    'model-b': 128_000
+  };
+  const validated = validateConfig(configured);
+  assert.deepEqual(validated.context, configured.context);
+  assert.deepEqual(
+    validated.providers.local.modelContextWindows,
+    configured.providers.local.modelContextWindows
+  );
+
+  const unknownModel = createValidConfig();
+  unknownModel.providers.local.modelContextWindows = {
+    'model-c': 64_000
+  };
+  assert.throws(
+    () => validateConfig(unknownModel),
+    /is not a configured model/
+  );
+
+  const invalidWindow = createValidConfig();
+  invalidWindow.context = {
+    autoCompact: true,
+    defaultWindowTokens: 8_000
+  };
+  assert.throws(
+    () => validateConfig(invalidWindow),
+    /context.defaultWindowTokens/
+  );
+});
+
 test('validates audit retention and size bounds', () => {
   const invalidRetention = createValidConfig();
   invalidRetention.audit = {

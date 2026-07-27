@@ -388,6 +388,42 @@ test('distinguishes attempt timeout from user cancellation', async () => {
   );
 });
 
+test('cancellation after request_started observes a late SDK stream rejection', async () => {
+  const controller = new AbortController();
+  let streamStarted = false;
+  const provider = {
+    async chat() {
+      throw new Error('unused');
+    },
+    async *chatStream() {
+      streamStarted = true;
+      await new Promise((resolve, reject) => {
+        queueMicrotask(() => {
+          const error = new Error('Request was aborted.');
+          error.name = 'APIUserAbortError';
+          reject(error);
+        });
+      });
+      yield { type: 'text_delta', text: 'unreachable' };
+      return { message: { role: 'assistant', content: 'unreachable' } };
+    },
+    getInfo() {
+      return info(true);
+    }
+  };
+  const runner = runProviderRequest(
+    provider,
+    { ...request, signal: controller.signal }
+  );
+
+  const started = await runner.next();
+  assert.equal(started.value.type, 'request_started');
+  controller.abort();
+  await assert.rejects(() => runner.next(), /cancel|abort/i);
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(streamStarted, true);
+});
+
 test('maps SDK errors into stable public categories', () => {
   const cases = [
     [{ status: 401 }, 'authentication'],

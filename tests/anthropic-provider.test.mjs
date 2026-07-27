@@ -103,11 +103,17 @@ test('Anthropic model switching updates provider information', () => {
   const provider = new AnthropicProvider(
     'test-key',
     'https://example.invalid',
-    'claude-before'
+    'claude-before',
+    {
+      'claude-before': 100_000,
+      'claude-after': 200_000
+    }
   );
 
+  assert.equal(provider.getInfo().contextWindowTokens, 100_000);
   provider.setModel('claude-after');
   assert.equal(provider.getInfo().model, 'claude-after');
+  assert.equal(provider.getInfo().contextWindowTokens, 200_000);
   assert.equal(provider.getInfo().capabilities.streaming, false);
   assert.throws(() => provider.setModel(''), /non-empty string/);
 });

@@ -106,8 +106,13 @@ test('does not commit a failed turn to conversation history', async () => {
 
 test('rejects a second message while a turn is still processing', async () => {
   let finishRequest;
+  let notifyRequestStarted;
+  const requestStarted = new Promise(resolve => {
+    notifyRequestStarted = resolve;
+  });
   const provider = {
     chat() {
+      notifyRequestStarted();
       return new Promise(resolve => {
         finishRequest = resolve;
       });
@@ -128,6 +133,7 @@ test('rejects a second message while a turn is still processing', async () => {
     () => engine.chat('Second'),
     /Another message is still being processed/
   );
+  await requestStarted;
 
   finishRequest({
     message: {

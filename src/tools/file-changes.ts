@@ -32,9 +32,12 @@ export interface ApprovedFileChange {
   expectedSizeBytes: number | null;
   targetMode: number | null;
   proposedContent: string;
+  displayPath?: string;
+  approvedDiff?: string;
+  changeCount?: number;
 }
 
-function hashContent(content: string): string {
+export function hashContent(content: string): string {
   return createHash('sha256').update(content, 'utf8').digest('hex');
 }
 
@@ -190,7 +193,16 @@ export function parseApprovedFileChange(value: unknown): ApprovedFileChange | nu
     expectedContentHash: candidate.expectedContentHash,
     expectedSizeBytes: candidate.expectedSizeBytes as number | null,
     targetMode: candidate.targetMode as number | null,
-    proposedContent: candidate.proposedContent
+    proposedContent: candidate.proposedContent,
+    ...(typeof candidate.displayPath === 'string'
+      ? { displayPath: candidate.displayPath }
+      : {}),
+    ...(typeof candidate.approvedDiff === 'string'
+      ? { approvedDiff: candidate.approvedDiff }
+      : {}),
+    ...(typeof candidate.changeCount === 'number'
+      ? { changeCount: candidate.changeCount }
+      : {})
   };
 }
 

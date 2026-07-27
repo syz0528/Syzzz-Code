@@ -116,7 +116,7 @@ async function findNearestExistingAncestor(candidatePath: string): Promise<strin
   }
 }
 
-function isSensitiveRelativePath(relativePath: string): boolean {
+export function isSensitiveRelativePath(relativePath: string): boolean {
   const pathSegments = relativePath
     .split(/[\\/]+/)
     .filter(Boolean)

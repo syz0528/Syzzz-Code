@@ -1,193 +1,192 @@
 # Syzzz Code 当前项目状态
 
-**更新时间：** 2026-07-23
-**当前分支：** `codex/phase2-runtime`
-**当前阶段：** Phase 2.1 已冻结，准备进入 Phase 3
-**Phase 1.1 本地冻结提交：** `8e275c3`
-**远程 `origin/main`：** `da6858d`
-**包版本：** `1.0.0`（未发布、未创建 Tag）
+**更新时间：** 2026-07-27
+**当前分支：** `codex/phase3-context`
+**实现基线：** `1bcc967`（已冻结的 Phase 2.1）
+**当前阶段：** Phase 3 已完成验收，状态为 **Frozen**
 
-> 本文档记录当前工作树的真实状态。2026-07-23，产品所有者基于完整自动化、真实 Provider、真实 PowerShell 与机器输出验收结果，批准将 Phase 2.1 标记为 Frozen。
+> 本文档记录当前工作树的真实能力、验证结果和残余风险。Phase 3 仍在工作树中，尚未调整 `1.0.0` 版本号、发布 npm 包或创建 Tag。
 
 ## 1. 当前结论
 
-Phase 1/1.1 的 Tool Runtime 与安全边界已经冻结。当前分支已完成 Phase 2 的事件化 Agent Runtime、OpenAI-compatible 真流式、Provider 可靠性、NDJSON 与元数据审计，也完成了 Phase 2.1 的 Slash 发现、展示流开关、当前 Provider 模型切换、工具输出降噪和轻量终端输入。
+Phase 3 的“代码库上下文与可靠编辑闭环”已经完成，包含三个部分：
 
-当前状态定义为 **Frozen**。代码构建和完整 114 项自动化测试通过；生产依赖审计、npm 包内容检查、真实 Provider、中文流式、只读工具链、兼容恢复、无效 Key 分类、紧凑工具展示和独立 NDJSON 消费均有通过记录。此后除 P0 安全或数据破坏问题外，不再回到 Phase 2 增加能力。
+1. Phase 3.0：Glob/Grep、Read Range、可靠 Patch、GitStatus/GitDiff；
+2. Phase 3.1：Context Manager、自动压缩、上下文事件、失败写入回执；
+3. Phase 3.2：TS/JS RepoMap、TypeScript Diagnostics、受限 Worker。
 
-本阶段没有增加新的 Agent 工具、TUI、上下文治理、会话恢复、MCP、并行工具或自动审批。
+当前完整测试为 **158/158**。生产依赖审计为 **0 vulnerabilities**，npm dry-run 包保持 `dist`、`README.md` 与 npm 固定元数据白名单，真实 `deepseek-v4-flash-free` 已完成新工具、CRLF 编辑、自动压缩、模型缩窗和压缩取消验证。冻结后的克制型 Context Hardening 补丁已关闭小窗口工具结果、摘要输入和压缩后置条件三个明确边界。
 
-## 2. Phase 2 已实现内容
+Phase 1/1.1 与 Phase 2/2.1 的权限、路径、事件、Provider、流式、CLI 和审计契约继续保留，没有引入 TUI、会话恢复、MCP、并行工具或子 Agent。
 
-### 2.1 事件化 Runtime
+## 2. Phase 3.0：搜索、读取与可靠编辑
 
-- 新增版本化 `AgentEvent` 判别联合类型；
-- 所有事件包含 `schemaVersion: 1`、`sessionId`、`turnId`、单调递增 `sequence` 和 ISO 时间戳；
-- 固定事件类型包括 turn、phase、provider、reasoning 状态、text delta、retry、usage、tool、approval 与唯一终态；
-- `runTurn(message, options)` 返回 `AsyncGenerator<AgentEvent, TurnResult>`；
-- `chat(message, options)` 只消费同一事件流，保持原有 Promise 契约；
-- 成功回合在 `turn_completed` 终态边界提交完整工作历史；
-- 失败或取消不提交消息历史，但已经发生的外部副作用仍通过工具 outcome 审计；
-- 消费者提前关闭 generator 时会关闭嵌套 Provider/工具 generator、取消内部等待并释放处理锁；
-- 多工具调用继续串行执行，Phase 1.1 的权限模式、审批快照和 10 轮工具上限不变。
+### 2.1 Glob 与 Grep
 
-### 2.2 Provider Runner
+- 使用随包提供的 `@vscode/ripgrep` 二进制，固定参数直接 `spawn`，不经过 Shell；
+- 遵循 ignore 文件，不跟随 symlink，强制排除 `.git`、`.ssh`、真实 `.env`、凭证与私钥路径；
+- `Glob` 默认 200、最大 1000，提供 offset/limit 和明确 truncation；
+- `Grep` 支持正则/字面量、大小写、上下文、glob 与 `content | files | count`；
+- 正文默认 200、最大 2000，文件/计数默认 500、最大 10000；
+- 单行最多 1000 字符、总输出 40 KiB、搜索超时 20 秒。
 
-- 两个 SDK 均设置 `maxRetries: 0`，Runner 是唯一重试所有者；
-- 单次 attempt 最长 120 秒，每次 Provider 调用最多 3 次，总预算 180 秒；
-- Runner 自身使用可中断等待，即使 Provider 忽略 `AbortSignal`，硬超时仍能结束调用；
-- 只重试 rate limit、timeout、network、500/502/503/504；
-- 退避为 500ms 起步、指数增长、正负 20% jitter，单次最多 10 秒；
-- 尊重 `Retry-After`，但不等待超过 30 秒或剩余总预算；
-- 一旦已发出正文 delta 或收到任何 tool-call delta 就不再重试；
-- 用户 Abort 优先于 timeout/retry，并映射为 `turn_cancelled`；
-- ProviderError 对外只暴露分类、状态码、request ID 和安全文案，内部保留 cause。
+### 2.2 Read Range
 
-错误分类已覆盖 authentication、permission、model_not_found、not_found、rate_limit、timeout、network、context_exceeded、malformed_response、unsupported_feature、provider_internal 和 unknown。
+- 输入为 `{ path, offset?, limit? }`，行号从 1 开始；
+- 默认 500 行、最大 2000 行；
+- 返回总行数、换行格式、SHA-256 版本和下一页位置；
+- 无显式范围仍受 1 MiB 限制；显式范围最多扫描 8 MiB；
+- 通过文件句柄检查普通文件，严格验证 UTF-8，并在读取后复核 stat；
+- 模型可见输出限制为 40 KiB，超限提供 continuation。
 
-### 2.3 Provider 协议
+### 2.3 Patch 与现有编辑工具
 
-- OpenAI-compatible 使用 `stream: true` 与 `stream_options.include_usage`；
-- 按 tool-call index 聚合碎片化 id、name 和 arguments，流完成后才解析 JSON；
-- 端点显式拒绝 `stream_options` 时仅允许一次不带该参数的兼容恢复；
-- `reasoning_content` 不进入正文、NDJSON 或审计，只产生 started/completed、耗时和字符数；
-- 工具链需要时才在 Provider 内部回放 reasoning；
-- reasoning-only `stop` 的禁用 thinking 恢复与通用重试共享 attempt 和总预算；
-- Provider 响应可携带 request ID、reported model、usage 和 finish reason；
-- Anthropic 明确声明 `streaming: false`，继续走非流式 `chat()`，但使用统一事件、错误、重试和 usage 语义。
+- `Patch` 接受 `expectedHash` 和最多 20 个 `{ oldText, newText }`；
+- 每个 oldText 必须在原文件中唯一，多个操作不得重叠；
+- 只支持精确匹配与一致的 CRLF/LF 适配，不做模糊缩进、引号或语义匹配；
+- `Edit` 可选 `expectedHash`；
+- `Write`、`Edit`、`Patch` 成功结果均返回新 hash、变更统计和有界 diff；
+- 三者继续复用审批快照、同目录 `wx` 临时文件、flush、mode 保留、最终 hash 复核和原子 rename。
 
-### 2.4 CLI 与机器输出
+### 2.4 GitStatus 与 GitDiff
 
-- interactive 与 `chat -m` 都消费 `runTurn()`；
-- 首个正文 delta 前显示 Thinking/reasoning 状态，正文开始后停止 spinner；
-- 工具、审批和重试使用独立状态行，不与正文直接混排；
-- 完成 footer 显示可获得的 input/output tokens、耗时和 finish reason；
-- `chat -m` 支持 `--output-format text|stream-json`，默认 text；
-- `stream-json` stdout 只输出逐行 `AgentEvent` JSON，不含 ANSI、spinner、Provider 启动文本、工具结果正文或 metadata；
-- 退出码固定为成功 0、失败 1、取消 130；
-- 普通审批仍通过 Promise callback 决策，事件只负责展示、机器输出和审计。
+- 只读查看工作区或暂存区，不接受任意 revision；
+- 关闭 ext-diff 和 textconv；
+- 先枚举并过滤敏感路径，再生成 diff；
+- 状态和 diff 始终有数量、参数长度、时间与 40 KiB 输出边界。
 
-### 2.5 本地元数据审计
+## 3. Phase 3.1：Context Manager
 
-- 默认路径为 `~/.syzzz-code/audit/YYYY/MM/DD/<sessionId>.jsonl`；
-- `audit.retentionDays` 默认 30，设为 0 时停止后续审计；
-- `audit.maxBytes` 默认 20 MiB；
-- 启动时尽力删除过期文件，再按 mtime 清理非当前会话文件；
-- workspace 只记录规范化路径的 16 字符 SHA-256 标识；
-- 只记录 turn/provider/retry/usage/approval 结果/tool outcome/终态元数据；
-- 不记录 prompt、text delta、文件路径、diff、工具输入输出、Shell 输出或原始 reasoning；
-- 审计失败不会中断 Agent，当前进程只警告一次。
+### 3.1 窗口与估算
 
-### 2.6 Phase 1.1 安全契约保持不变
+- 配置新增 `context.autoCompact`，默认 `true`；
+- `context.defaultWindowTokens` 默认 `65536`；
+- Provider 可通过 `modelContextWindows` 为单个模型提供窗口覆盖；
+- 解析顺序为模型覆盖、Provider 信息、64K 默认值；
+- Provider 报告的 input tokens 用作已发生请求的权威值；
+- 下一次请求前缺少权威值时，采用保守的 UTF-8 字节数除以 2 估算，并计入 system prompt 与工具 schema。
 
-- 权限模式仍为 `safe | acceptEdits | fullAccess`；
-- Write/Edit 审批支持本次允许、本会话允许编辑、拒绝；Shell 只支持本次允许或拒绝；
-- `fullAccess` 只能通过权限命令并单独输入 `y`/`Y` 启用；
-- Read 只接受 1 MiB 以内普通 UTF-8 文件；
-- 文件工具保留 lexical/realpath/symlink/junction/敏感路径/Windows 特殊路径检查；
-- Write/Edit 保留 hash 快照、冲突检测、同目录临时文件、flush、mode 和原子替换；
-- Shell 仍不是沙箱，继续继承 Syzzz 启动时的正常进程环境。
+### 3.2 自动压缩
 
-### 2.7 Phase 2.1 交互发现与终端 UX
+- 触发阈值为 `min(window * 85%, window - 8192)`；
+- 压缩目标为窗口的 50%，单次 Provider 请求最多执行 3 轮压缩；
+- 当前用户问题始终保留；
+- Assistant tool calls 与随后全部 Tool Results 作为不可拆分原子组；
+- 单个工具结果保留 40 KiB 绝对上限，并根据下一次请求的剩余窗口动态收缩；
+- 最新工具组默认保留；只有该组本身使下一次请求无法低于安全阈值时，才允许完整整组紧急压缩；
+- 已有摘要会与更旧消息一起重新汇总；
+- 摘要使用当前 Provider/模型，但不提供工具，也不输出摘要正文；摘要转录按当前窗口预算约束，并设 256 KiB 绝对上限；
+- 空摘要、无法缩减、工具调用或协议异常均视为失败；
+- 瞬时 Provider 错误最多 2 次 attempt，连续失败 3 次后打开会话级熔断；
+- 只有上下文已低于安全阈值、仅继续追求 50% 目标时，后续压缩失败才可恢复；否则返回 `context_compaction_failed`；
+- 无安全可压缩组、三轮后仍达到阈值或有界摘要请求仍超预算时 fail closed，不继续调用 Provider；
+- `context_exceeded` 且尚未输出正文或 tool-call delta 时，只允许一次强制压缩恢复。
 
-- 建立声明式 `CommandDefinition` 注册表，首批主命令为 `/stream`、`/permissions`、`/model`、`/help`、`/exit`；别名为 `/quit`、`/?`；
-- 未知 Slash 命令只在本地报错并给出近似候选，`//` 转义后才作为普通消息发送；
-- TTY 下输入 `/` 即时显示最多 8 行候选，支持过滤、Up/Down、Enter、Tab、Esc、历史、粘贴、中文宽度和窗口缩放；
-- 非 TTY 或 raw mode 不可用时回退逐行模式，完整 Slash 命令仍可执行；
-- `SuggestionProvider` 支持异步候选、`AbortSignal` 与过期结果丢弃，本期只注册 `/`；
-- `/stream on|off` 持久化 `ui.streamOutput`；`chat --stream on|off` 仅覆盖当前进程，且不影响 Provider/Event 流；
-- `/model` 只允许当前 Provider 的配置模型；切换期间保留通用历史并清理 Assistant 私有 reasoning metadata；
-- interactive 与 `chat -m` 共用 `HumanEventRenderer`；Read/List 成功瞬时展示，Write/Edit/Shell 成功保留一行，异常始终保留；
-- footer 增加工具调用、失败与重试计数；`stream-json` 保持完整实时事件，不受 UI 展示配置影响；
-- reasoning-only 与 `stream_options` 的 0ms 兼容恢复在普通终端只显示瞬时友好状态，不再持久输出内部错误码；NDJSON 与审计语义不变；
-- 系统提示减少无目的遍历、重复 Shell 查询和仅为格式重跑成功工具的行为，并要求核实精确计数、准确描述抽样与穷尽审查的边界。
+### 3.3 事件、取消和历史
 
-## 3. 自动化测试状态
+- 新增 `context_usage_updated`、`compaction_started/completed/failed`；
+- Provider、Retry、Usage 事件可标记 `purpose: turn | compaction`；
+- 审计只记录 token 数、消息数、耗时和脱敏错误，不记录摘要；
+- CLI 压缩状态为瞬时显示，footer 统计压缩次数；
+- 压缩期间取消会关闭嵌套 Provider stream，产生唯一 `turn_cancelled`；
+- 失败或取消的 turn 不提交摘要或当前用户消息；
+- 写文件成功后若回合失败，下一 turn 会收到内存级重新读取回执；
+- 回执不跨进程持久化，跨进程恢复留在 Phase 4。
 
-当前测试套件共有 114 项：
+### 3.4 真实取消缺陷及修复
 
-| 文件 | 数量 | 主要范围 |
-|---|---:|---|
-| `tests/cli.test.mjs` | 11 | CLI、Slash、配置持久化、权限输入、Ctrl+C |
-| `tests/config.test.mjs` | 8 | 配置、UI/audit 默认值、`.env` 隔离 |
-| `tests/engine.test.mjs` | 17 | 工具循环、审批、权限、取消 |
-| `tests/provider-protocol.test.mjs` | 8 | 两类协议转换与兼容恢复 |
-| `tests/shell-runner.test.mjs` | 8 | Shell 生命周期与进程树 |
-| `tests/tools.test.mjs` | 11 | 路径、Read、原子 Write/Edit |
-| `tests/runtime-events.test.mjs` | 9 | 事件顺序、终态、历史、关闭、模型切换 |
-| `tests/provider-runner.test.mjs` | 14 | error、timeout、retry、预算 |
-| `tests/openai-stream.test.mjs` | 5 | 流式碎片聚合、模型与 DeepSeek V4 capability |
-| `tests/anthropic-provider.test.mjs` | 2 | 非流式统一语义、模型切换 |
-| `tests/audit.test.mjs` | 4 | allowlist、脱敏、清理、降级 |
-| `tests/cli-renderer.test.mjs` | 6 | NDJSON、footer、紧凑工具状态、流式显示 |
-| `tests/interactive-commands.test.mjs` | 4 | 命令注册、别名、动态候选、未知命令建议 |
-| `tests/terminal-input.test.mjs` | 7 | TTY 菜单、历史、粘贴、中文宽度、异步候选 |
+真实 Provider 缩窗取消首次验证时，OpenAI SDK 在 `request_started` 后返回了晚到的 `APIUserAbortError`。原因是操作 Promise 已创建，而 `waitForOperation()` 发现 signal 已取消后直接返回，未观察该 Promise 的最终拒绝。
 
-当前环境已完成：
+现已在提前取消分支显式观察晚到 rejection，并增加“`request_started` 后取消 + SDK 延迟拒绝”的回归。真实复测结果为：
 
-- `npm run build`：通过；
-- `npm test`：114/114 通过；
-- Windows 后代进程清理定向压力复测：20/20 通过；
-- `npm audit --omit=dev`：0 vulnerabilities；
-- `npm pack --dry-run --json`：通过，包内只含 `dist`、`README.md` 和 npm 必需的 `package.json`；
-- `git diff --check`：通过，只有既有 archive/行尾提示。
+- 当前 turn 返回 `cancelled`；
+- 唯一终态为 `turn_cancelled`；
+- 已提交历史保持不变；
+- 下一 turn 以 `model_switch` 原因完成压缩；
+- 最终产生 `compaction_completed` 与 `turn_completed`；
+- 进程不再出现未处理 rejection。
 
-Windows Shell 清理曾受 `taskkill /T` 超时、辅助进程残留和系统“不支持该请求”影响。现先用 Node 原生终止根 shell，再由带 4 秒硬截止的 PowerShell 辅助进程通过 Windows Toolhelp API 快照父子 PID，从叶到根执行 `Stop-Process -Force`，并短轮询确认目标 PID 全部消失。该路径不依赖 WMI/CIM；后代延迟写入与 PID 存活断言保持不变，最终版本 20 次定向压力复测已全部通过。
+## 4. Phase 3.2：TS/JS 分析
 
-## 4. 真实 Provider 验证
+### 4.1 RepoMap
 
-2026-07-22 使用用户配置中现存的 `deepseek-v4-flash-free`，在不改写当前 Provider 选择、不输出 API Key、关闭测试审计的条件下完成：
+- 接受目录或单个 TS/JS 焦点文件，不自动注入每个 prompt；
+- 提取相对 import/export 图与顶层函数、类、接口、类型和变量签名；
+- 按显式焦点文件、查询相关度、Git 修改状态和图邻接排序；
+- 默认最多 50 个文件、最大 100 个文件、输出 40 KiB；
+- 使用 mtime/size 当前进程缓存，不创建磁盘索引；
+- 严格 UTF-8，读取前后复核 stat，单文件分析上限 2 MiB。
 
-1. 纯文本流式：完成，49 个 `text_delta`，finish reason 为 `stop`，usage 为 282 input / 448 output / 730 total，reported model 正确；
-2. reasoning 可观测性：只输出 started/completed 和 1772 字符计数，未输出原始推理；
-3. 只读工具链：`ListDirectory -> Read -> 最终回答` 完成，两次工具 outcome 均为 success，最终正文与文件内容一致；
-4. 工具执行发生在完整 tool-call 聚合之后，三个 Provider 回合均正常完成。
+### 4.2 Diagnostics
 
-因此，用户此前遇到的 `Provider returned an empty response (finish reason: stop)` 已不再阻塞当前流式 Runtime 主链路。真实 Provider 仍可能因模型决策质量、提示编码或第三方端点差异产生行为偏航，这与协议层空响应错误应分开判断。
+- 使用 TypeScript Compiler API 的 `noEmit` 诊断；
+- 支持源文件、目录和 `tsconfig.json`；
+- 单文件诊断自动查找最近的 `tsconfig.json`，加载安全候选依赖，但只报告目标文件；
+- 不执行 npm scripts、TypeScript plugins、ESLint、测试或构建；
+- 分析 Worker 支持 Abort，超时 60 秒，旧生代内存上限 512 MiB；
+- 最多返回 200 项与 40 KiB；
+- ignore 与敏感源文件不会进入候选，也不会出现在诊断结果中。
 
-同日使用 OpenCode `deepseek-v4-flash` 复核中文流式输出：20 个正文增量可无损拼接为完整中文回答。交互终端曾因对已停止的 ora spinner 重复调用 `stop()` 而将光标移回行首、覆盖先前增量；现已改为只停止仍在运行的 spinner，并增加对应回归测试。
+## 5. 自动化验证
 
-同一 OpenCode 端点已验证接受 `thinking: { type: "disabled" }` 且不再返回 reasoning delta。适配器现在同时依据 Provider 名称和明确的 `deepseek-v4-*` 模型 ID 判断 capability，避免 OpenCode 等中立网关名称使 reasoning-only 恢复被错误关闭。
+2026-07-27 Context Hardening 后最终执行结果：
 
-2026-07-23 的真实 PowerShell 复核进一步确认：
+- `npm test`：**158/158**；
+- `npm run test:context`：**27/27**；
+- `npm run smoke:context`：真实 `deepseek-v4-flash-free` 通过；
+- `npm audit --omit=dev`：**0 vulnerabilities**；
+- `npm pack --dry-run --json`：成功，包含 `dist`、`README.md`、`package.json`，不包含 `src`、`tests`、`archive` 或本地事件文件；
+- `git diff --check`：无空白错误，仅报告 Windows 工作树的 LF/CRLF 转换提示；
+- 中型 TS 固定仓库完成 `Glob -> Grep -> RepoMap -> Read -> Patch -> GitDiff -> Diagnostics -> tsc` 全链路；
+- Windows Shell 进程树清理回归继续通过。
 
-1. `/stream off` 缓冲正文、`/stream on` 恢复实时展示，中文增量无乱码；
-2. 一次只读项目分析完成 5 次 ListDirectory 和 16 次 Read，成功状态未刷屏，footer 正确显示 `tools 21`；
-3. 真实 CLI 的 NDJSON 经独立 Node 消费者解析 10 个连续事件，首事件为 `turn_started`、唯一终态为 `turn_completed`，未发现 API Key、system prompt、原始 reasoning、工具输入或 diff 字段；
-4. 使用隔离无效 Key 的真实请求被 Provider Runner 和公共失败事件一致归类为 `authentication`，只发起 1 次 attempt 且未重试；
-5. reasoning-only 恢复能够自动成功；普通终端现只显示瞬时响应模式调整状态，完整诊断仍保留在机器事件中。
+新增或扩展的重点覆盖包括：
 
-## 5. Phase 2.1 冻结决定
+- 搜索分页、精确满额、ignore、敏感路径、Windows 路径与 symlink/junction；
+- Read 1 MiB/8 MiB 边界、长行、UTF-8、CRLF、hash 与并发变化；
+- Patch 多操作、重叠、多匹配、旧 hash、审批后冲突与临时文件清理；
+- 85% 触发、50% 目标、工具组原子性、旧摘要再汇总、两次摘要尝试、三次失败熔断、缩窗和强制恢复；
+- 16K 窗口动态工具结果预算、256 KiB 摘要硬上限、有界摘要请求、最新工具组紧急压缩和三轮后 fail-closed；
+- 压缩中取消、历史回滚、写入后中断回执、事件顺序与审计隐私；
+- RepoMap 目录/单文件焦点、图与缓存、Diagnostics 隔离、Worker 主动取消、重启和宿主 Node 参数隔离；
+- ASCII-safe `stream-json` 在 Windows PowerShell 5.1 下连续 2000 条中文事件全部成功解析。
 
-2026-07-23，产品所有者确认当前自动化与真实终端结果足以冻结 Phase 2.1。冻结依据包括：
+## 6. 真实 Provider Dogfood
 
-- 114/114 自动化测试、生产依赖审计、npm 包 allowlist 和 diff 检查通过；
-- DeepSeek/OpenCode 中文流式、reasoning-only 恢复和只读工具链通过；
-- `/stream on|off`、Provider 切换、紧凑工具输出和双 `Ctrl+C` 退出经过真实 PowerShell 复核；
-- 独立 Node 消费真实 NDJSON、敏感字段检查和无效 Key authentication 分类通过；
-- 权限输入、模型热切换、TTY 菜单、审批取消与 Shell 进程树具有自动化回归覆盖。
+使用当前配置的 `deepseek-v4-flash-free` 和 OpenCode 端点完成：
 
-Slash 菜单的全部按键组合、同一 Provider 多模型实切以及 sampling/审批/Shell 三处取消仍可作为日常非阻塞 smoke test 继续观察，但不再阻止冻结。只有发现 P0 安全、数据破坏或明确交互阻塞问题时才重新打开 Phase 2。
+1. **架构分析：** 模型依次调用 `RepoMap`、`Diagnostics`，两个 outcome 均为 success，NDJSON sequence 单调，唯一终态为 `turn_completed`；
+2. **单文件诊断：** 首次暴露默认编译选项假阳性；修复后自动采用根 `tsconfig.json`，关联 36 个文件，诊断总数为 0；
+3. **CRLF 修改：** 在临时工作区完成 `Read -> Patch`，目标值正确更新，CRLF 保留，临时文件数为 0；
+4. **自动压缩：** 先以 100K 窗口建立合法历史，再缩至 16K；真实摘要调用将估算输入从 12,905 降至 1,062，唯一标记保留，产生 `compaction_started/completed` 并最终 `turn_completed`；
+5. **缩窗取消：** 模拟窗口从 100K 缩至 16K，在 compaction Provider 请求开始时取消，历史回滚；下一 turn 成功完成 `model_switch` 压缩；
+6. **机器输出：** 真实中文回复产生 18 条 ASCII-safe NDJSON 事件，Windows PowerShell 5.1 全部经 `ConvertFrom-Json` 成功解析，sequence 单调且唯一终态为 `turn_completed`。
 
-## 6. 已知限制与风险
+Dogfood 未改动仓库业务文件，临时工作区在验证后清理。
 
-### P0/P1
+## 7. 已知边界
 
-- Shell 不是 OS sandbox，获批命令可能修改工作区外状态；
-- Write/Edit 最终复核到 rename 之间仍有极小 TOCTOU 窗口；
-- API Key 仍明文存储在用户配置中；
-- 会话历史仍随进程内对话无限增长，没有 token 预算或 compaction；
-- 审计是本地元数据追踪，不是防篡改事务日志，也不能回滚副作用。
+- Shell 仍不是安全沙箱，继承启动进程环境，也没有命令 allowlist 或凭证隔离；
+- 最终路径/hash 复核到 rename 之间仍存在很小的 TOCTOU 窗口；
+- token 估算不是 tokenizer，只有 Provider usage 是已发生请求的权威值；
+- 自动压缩摘要可能丢失低相关细节；极端超大原子组的摘要输入会确定性保留首尾并省略中段；当前没有 `/compact`、`/status` 或摘要查看命令；
+- RepoMap 不是持久化索引、LSP 或全仓引用数据库，仅支持 TS/JS 轻量分析；
+- Diagnostics Worker 的资源限制不是 OS sandbox；
+- 写入后失败回执仅存在当前进程内；
+- Anthropic 仍为非流式兼容路径；
+- 不同 OpenAI-compatible 端点仍可能在 tool schema、usage 或 reasoning 行为上存在差异。
 
-### 有意留到后续阶段
+## 8. 冻结决定
 
-- Anthropic 真流式；
-- Glob/Grep/Range Read/Patch/Diagnostics；
-- Context Manager、repo map 与 compaction；
-- 会话保存恢复、ask/plan/code 模式和稳定 TUI；
-- MCP、Hooks、插件、子 Agent、并行工具与后台任务。
-- 真正的 `@` 文件/上下文选择器和 `$` Skill 选择器；当前只有可扩展候选接口。
+Phase 3 已满足自动化、发布卫生和真实 Provider 验收条件，状态标记为 **Frozen**。此后除 P0 安全、数据破坏、取消崩溃或明确上下文错误外，不再在 Phase 3 扩展能力。
 
-## 7. 下一步决策
+下一阶段进入 Phase 4。`/compact`、`/status`、会话持久化、完整 TUI、MCP、并行工具、子 Agent 和跨语言语义分析不回填到 Phase 3。
 
-Phase 2.1 已冻结。下一项工作直接进入 Phase 3 的代码库上下文与可靠编辑闭环，优先处理 Glob/Grep/Range Read、Context Manager、compaction、可靠 Patch/Diagnostics 与修改验证，不再继续扩展 Phase 2 的终端或 Provider 能力。
+## 9. Git 状态
+
+- 当前分支：`codex/phase3-context`；
+- 基线：`1bcc967`；
+- 远程 Phase 2.1：`origin/codex/phase2-runtime` 指向 `1bcc967`；
+- `main` 为 `8e275c3`，`origin/main` 为 `da6858d`；
+- 包版本仍为 `1.0.0`，未发布 npm 包、未创建 Tag；
+- `archive/pre-v1.0.0/scripts/*` 的既有行尾工作树变化和未跟踪 `phase2-events.jsonl` 不属于 Phase 3，不纳入本阶段变更。

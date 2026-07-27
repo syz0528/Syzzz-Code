@@ -3,7 +3,7 @@
 **制定日期：** 2026-06-16
 **最近更新：** 2026-07-23
 **适用基线：** `1.0.0` / Phase 1.1 本地冻结提交 `8e275c3`
-**当前入口：** Phase 2.1 已冻结，下一项进入 Phase 3 代码库上下文与可靠编辑闭环
+**当前入口：** Phase 3 已冻结，下一项进入 Phase 4 会话、模式与终端产品体验
 
 > 路线图描述实施顺序和验收边界。当前代码事实以 [`README.md`](README.md) 和 [`CURRENT_STATUS.md`](CURRENT_STATUS.md) 为准。
 
@@ -420,7 +420,7 @@ interface ToolDefinition<Input, Output> {
 
 ## 8. Phase 3：代码库上下文与可靠编辑闭环
 
-
+**状态：** 2026-07-24 完成自动化、发布卫生与真实 Provider 验收并标记为 **Frozen**；2026-07-27 完成克制型 Context Hardening。
 
 ### 目标
 
@@ -428,82 +428,88 @@ interface ToolDefinition<Input, Output> {
 
 ### 8.1 专用代码工具
 
-优先新增：
+已完成：
 
-1. Glob：按文件模式发现候选文件；
-2. Grep：按内容和正则搜索；
-3. Read Range：按行范围读取文件；
-4. Patch：上下文感知的局部修改；
-5. Diagnostics：读取 TypeScript、lint 或 IDE 诊断；
-6. Git Status/Diff：只读查看工作区变化。
+1. [x] Glob：使用随包 ripgrep 按文件模式发现候选文件；
+2. [x] Grep：有界正则/字面量搜索、上下文、分页与多种输出模式；
+3. [x] Read Range：按行范围读取并返回 hash、换行格式与 continuation；
+4. [x] Patch：基于 expectedHash 的唯一、非重叠精确修改；
+5. [x] Diagnostics：受限 Worker 中的 TypeScript Compiler API `noEmit`；
+6. [x] GitStatus/GitDiff：只读查看工作区和暂存区变化；
+7. [x] RepoMap：支持目录或单文件焦点的 TS/JS import 图、顶层符号与相关度排序。
 
 这些工具必须复用 Phase 1 的权限、路径和审计机制。
 
 ### 8.2 可靠 Patch
 
-- 修改前要求文件版本或内容 hash；
-- 上下文必须唯一匹配；
-- 多匹配时拒绝并要求更多上下文；
-- 复用 Phase 1.1 的同目录临时文件和原子替换；
-- 检测用户或其他进程的并发修改；
-- 修改后生成 diff；
-- 支持用户拒绝和后续撤销策略。
+- [x] 修改前要求文件版本或内容 hash；
+- [x] 上下文必须唯一匹配；
+- [x] 多匹配时拒绝并要求更多上下文；
+- [x] 复用 Phase 1.1 的同目录临时文件和原子替换；
+- [x] 检测用户或其他进程的并发修改；
+- [x] 修改后生成 diff 与新 hash；
+- [x] 支持用户拒绝；撤销、文件锁与事务日志继续留在后续阶段。
 
 ### 8.3 Context Manager
 
-管理：
+已完成：
 
-- 模型上下文窗口；
-- 当前 turn token 预算；
-- 对话历史；
-- 工具结果；
-- 已读取文件；
-- repo map；
-- compaction summary；
-- Provider 切换后的兼容性。
+- [x] 模型 context window 与单模型配置覆盖；
+- [x] 当前 turn 预算估算与 Provider usage 事件；
+- [x] 85% 自动压缩阈值与 50% 目标；
+- [x] 对话历史、当前用户和工具组原子性；
+- [x] 40 KiB 工具结果硬上限，并按当前模型窗口剩余预算动态收缩；Shell 错误保留头尾；
+- [x] 摘要输入受当前安全阈值与 256 KiB 双重约束；
+- [x] 最新工具组仅在阻塞下一次安全请求时进行原子级紧急压缩；
+- [x] 无可压缩组、三轮后仍超阈值或必要摘要失败时 fail closed；
+- [x] compaction summary 的旧摘要再汇总、两次尝试、三次失败熔断、取消和隐私边界；
+- [x] Provider 模型切换后的窗口重新评估；
+- [x] `context_exceeded` 单次强制压缩恢复；
+- [x] 写入成功后回合中断的内存级重新读取回执。
 
-工具结果不再只按字符截断，应按 token 预算和内容类型处理。命令错误通常需要保留尾部，代码定义通常需要保留相关范围。
+当前没有手动 `/compact`、`/status`、摘要查看或跨进程回执；这些能力不回填 Phase 3。
 
 ### 8.4 Repo Map
 
-第一阶段优先为 TypeScript/JavaScript 项目实现：
+TypeScript/JavaScript 第一版已实现：
 
-- 文件列表；
-- import/export 关系；
-- 类型、类、函数和方法签名；
-- 符号引用关系；
-- Git 状态；
-- 当前任务相关度排序。
+- [x] ignore 与敏感路径过滤后的文件候选；
+- [x] 相对 import/export 关系；
+- [x] 顶层类型、类、函数和变量签名；
+- [x] Git 修改状态；
+- [x] 查询相关度与一跳图邻接排序；
+- [x] mtime/size 当前进程缓存；
+- [x] 最多 100 个文件和 40 KiB 输出。
 
-候选实现：
+实现采用 TypeScript Compiler API。真正的全仓引用数据库、方法级语义索引、LSP、持久化索引与跨语言 Tree-sitter 未实现。
 
-- TypeScript Compiler API；
-- ts-morph；
-- 跨语言阶段再评估 Tree-sitter。
-
-Repo map 必须受独立 token 预算约束，不把整个仓库直接塞入 prompt。
+RepoMap 按需调用，不自动注入每个 prompt。
 
 ### 8.5 修改验证
 
-代码任务完成前，根据项目类型选择最小必要检查：
+系统提示要求代码任务完成前，根据项目类型选择最小必要检查：
 
-- type check；
-- targeted tests；
-- lint；
-- build；
-- Git diff 检查。
+- [x] TypeScript `Diagnostics`；
+- [x] GitDiff；
+- [x] 通过现有 Shell 审批执行 targeted tests、lint 或 build；
+- [x] 只能依据真实 Tool Result 声明通过、失败或未运行。
 
-Agent 只能根据真实工具结果宣称完成，不允许把“建议运行”写成“已经通过”。
+固定中型 TS 仓库已完成 `Glob -> Grep -> RepoMap -> Read -> Patch -> GitDiff -> Diagnostics -> tsc` 回归。
 
 ### Phase 3 退出条件
 
-- Agent 能先搜索再读取相关文件；
-- 中型仓库上下文不会无限增长；
-- 长会话可以自动 compact；
-- 文件编辑能检测多匹配和并发变化；
-- 每次代码改动都有 diff；
-- 任务完成报告包含实际执行的验证命令和结果；
-- 建立固定样例仓库的 coding-task 回归测试。
+- [x] Agent 能先搜索再读取相关文件；
+- [x] 中型仓库上下文有窗口预算与有界工具结果；
+- [x] 长会话可以自动 compact；
+- [x] 文件编辑能检测多匹配、旧 hash 和并发变化；
+- [x] 写入结果包含 diff 与新版本；
+- [x] 任务完成报告只能包含实际执行的验证和结果；
+- [x] 建立固定中型 TS 仓库 coding-task 回归；
+- [x] `npm test` 158/158，Context Manager 专项 27/27；
+- [x] `npm audit --omit=dev` 为 0 vulnerabilities；
+- [x] npm pack allowlist 与 `git diff --check` 通过；
+- [x] 真实 Provider 完成 RepoMap/Diagnostics、CRLF Patch、自动压缩、模型缩窗与压缩取消；
+- [x] 标记 **Frozen**，下一项进入 Phase 4。
 
 ## 9. Phase 4：会话、模式与终端产品体验
 
@@ -792,7 +798,7 @@ Hooks 不能绕过 Tool Policy，也不能默认访问密钥。
 
 ### 下一阶段入口
 
-Phase 2.1 已冻结。Phase 3 优先顺序为 Glob/Grep/Range Read、可靠 Patch/Diagnostics、Context Manager、compaction 与 repo map。
+Phase 3 已冻结。下一阶段进入 Phase 4，会话持久化、工作模式与终端产品体验继续建立在现有 Runtime、Context Manager 和工具边界上。
 
 ## 15. 路线图完成标准
 

@@ -154,6 +154,9 @@ function normalizeProviderInfo(provider: AIProvider): ProviderInfo {
     name: rawInfo.name,
     type: rawInfo.type,
     model: rawInfo.model ?? 'unknown',
+    ...(rawInfo.contextWindowTokens === undefined
+      ? {}
+      : { contextWindowTokens: rawInfo.contextWindowTokens }),
     capabilities: rawInfo.capabilities ?? {
       streaming: typeof provider.chatStream === 'function',
       reasoningToggle: false
@@ -202,6 +205,9 @@ function waitForOperation<T>(
   signal: AbortSignal
 ): Promise<T> {
   if (signal.aborted) {
+    // The operation has already been created by the caller. Observe its
+    // eventual rejection so an SDK abort cannot escape as an unhandled promise.
+    void Promise.resolve(operation).catch(() => {});
     return Promise.reject(
       signal.reason instanceof Error ? signal.reason : new OperationAbortedError()
     );

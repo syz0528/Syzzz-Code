@@ -80,14 +80,21 @@ export function convertToolsToAnthropic(tools: ProviderTool[]): Array<Record<str
 export class AnthropicProvider implements AIProvider {
   private client: Anthropic;
   private model: string;
+  private readonly modelContextWindows: Readonly<Record<string, number>>;
 
-  constructor(apiKey: string, baseURL: string, model: string) {
+  constructor(
+    apiKey: string,
+    baseURL: string,
+    model: string,
+    modelContextWindows: Readonly<Record<string, number>> = {}
+  ) {
     this.client = new Anthropic({
       apiKey,
       baseURL,
       maxRetries: 0
     });
     this.model = model;
+    this.modelContextWindows = modelContextWindows;
   }
 
   async chat(request: ProviderChatRequest): Promise<ProviderChatResponse> {
@@ -164,6 +171,9 @@ export class AnthropicProvider implements AIProvider {
       name: 'Anthropic Claude',
       type: 'anthropic',
       model: this.model,
+      ...(this.modelContextWindows[this.model] === undefined
+        ? {}
+        : { contextWindowTokens: this.modelContextWindows[this.model] }),
       capabilities: {
         streaming: false,
         reasoningToggle: false

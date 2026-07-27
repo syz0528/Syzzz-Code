@@ -44,13 +44,20 @@ test('runtime model switching updates OpenAI-compatible capabilities', () => {
     'test-key',
     'https://example.invalid/v1',
     'generic-model',
-    'OpenCode'
+    'OpenCode',
+    undefined,
+    {
+      'generic-model': 65_536,
+      'deepseek-v4-flash': 128_000
+    }
   );
 
   assert.equal(provider.getInfo().model, 'generic-model');
+  assert.equal(provider.getInfo().contextWindowTokens, 65_536);
   assert.equal(provider.getInfo().capabilities.reasoningToggle, false);
   provider.setModel('deepseek-v4-flash');
   assert.equal(provider.getInfo().model, 'deepseek-v4-flash');
+  assert.equal(provider.getInfo().contextWindowTokens, 128_000);
   assert.equal(provider.getInfo().capabilities.reasoningToggle, true);
   assert.throws(() => provider.setModel('   '), /non-empty string/);
 });

@@ -72,6 +72,35 @@ test('audit records only allowlisted metadata', () => {
     status: 401,
     requestId: 'req-1'
   });
+
+  const compaction = toAuditRecord(envelope('compaction_completed', {
+    reason: 'threshold',
+    mode: 'history',
+    beforeTokens: 60_000,
+    afterTokens: 20_000,
+    messagesCompacted: 12,
+    durationMs: 50,
+    summary: 'PRIVATE COMPACTION SUMMARY'
+  }), 'workspace-hash');
+  assert.deepEqual(compaction, {
+    schemaVersion: 1,
+    sessionId: 'session-audit',
+    turnId: 'turn-audit',
+    sequence: 1,
+    timestamp: '2026-07-22T00:00:00.000Z',
+    type: 'compaction_completed',
+    workspaceId: 'workspace-hash',
+    reason: 'threshold',
+    mode: 'history',
+    beforeTokens: 60_000,
+    afterTokens: 20_000,
+    messagesCompacted: 12,
+    durationMs: 50
+  });
+  assert.equal(
+    JSON.stringify(compaction).includes('PRIVATE COMPACTION SUMMARY'),
+    false
+  );
 });
 
 test('local audit logger writes JSONL without raw content', async () => {

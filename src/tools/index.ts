@@ -2,23 +2,29 @@ import { readdir } from 'node:fs/promises';
 import { join, relative } from 'node:path';
 import { z } from 'zod';
 import type { ToolDefinition, ToolResult } from '../types.js';
+import { diagnosticsTool, repoMapTool } from './analysis-tools.js';
 import { isAbortError, OperationAbortedError, throwIfAborted } from './abort.js';
 import {
   applyApprovedFileChange,
   createApprovedFileChange,
   createFileDiff,
+  hashContent,
   parseApprovedFileChange,
-  readBoundedUtf8File,
   readOptionalFileSnapshot
 } from './file-changes.js';
+import { gitDiffTool, gitStatusTool } from './git-tools.js';
+import { limitUtf8Head } from './output-limits.js';
+import { patchTool } from './patch-tool.js';
+import { readRangeTool } from './read-range.js';
 import { defineTool } from './runtime.js';
+import { globTool, grepTool } from './search-tools.js';
 import { runShellCommand, type ShellRunResult } from './shell-runner.js';
 import { resolveWorkspacePath } from './workspace.js';
 
 const MAX_PATH_CHARACTERS = 4_096;
 const MAX_FILE_CONTENT_CHARACTERS = 2_000_000;
 const MAX_FILE_CHANGE_BYTES = 8 * 1024 * 1024;
-const MAX_READ_FILE_BYTES = 1024 * 1024;
+const MAX_DIFF_BYTES = 40 * 1024;
 const MAX_SHELL_COMMAND_CHARACTERS = 20_000;
 const MAX_SHELL_TIMEOUT_MS = 120_000;
 const MAX_LIST_DIRECTORY_ENTRIES = 500;
@@ -215,41 +221,7 @@ export const listDirectoryTool = defineTool({
   }
 });
 
-const readInputSchema = z.object({
-  path: pathSchema.describe('A path inside the current workspace')
-}).strict();
-
-export const readTool = defineTool({
-  name: 'Read',
-  description: 'Read a UTF-8 text file inside the current workspace.',
-  inputSchema: readInputSchema,
-  risk: 'read',
-  approval: 'never',
-  async execute(input, context) {
-    try {
-      throwIfAborted(context.signal);
-      const targetPath = await resolveWorkspacePath(
-        input.path,
-        context.workspaceRoot,
-        'read'
-      );
-      const file = await readBoundedUtf8File(
-        targetPath,
-        MAX_READ_FILE_BYTES,
-        context.signal
-      );
-      return {
-        content: file.content,
-        metadata: {
-          sizeBytes: file.sizeBytes,
-          limitBytes: MAX_READ_FILE_BYTES
-        }
-      };
-    } catch (error) {
-      return createToolError('Read', error);
-    }
-  }
-});
+export const readTool = readRangeTool;
 
 const writeInputSchema = z.object({
   path: pathSchema.describe('A path inside the current workspace'),
@@ -276,15 +248,27 @@ export const writeTool = defineTool({
       context.signal
     );
     const currentContent = currentFile?.content ?? null;
-    const approvedChange = createApprovedFileChange(
+    const displayPath = relative(context.workspaceRoot, targetPath)
+      .replaceAll('\\', '/') || input.path;
+    const limitedDiff = limitUtf8Head(
+      createFileDiff(displayPath, currentContent, input.contents),
+      MAX_DIFF_BYTES,
+      '\n\n[Diff truncated]'
+    );
+    const approvedChange = {
+      ...createApprovedFileChange(
       targetPath,
       currentFile,
       input.contents
-    );
+      ),
+      displayPath,
+      approvedDiff: limitedDiff.text,
+      changeCount: 1
+    };
 
     return {
-      description: `${currentContent === null ? 'Create' : 'Replace'} ${relative(context.workspaceRoot, targetPath)}`,
-      preview: createFileDiff(input.path, currentContent, input.contents),
+      description: `${currentContent === null ? 'Create' : 'Replace'} ${displayPath}`,
+      preview: limitedDiff.text,
       executionData: approvedChange
     };
   },
@@ -319,8 +303,22 @@ export const writeTool = defineTool({
           isError: true
         };
       }
+      const newHash = hashContent(approvedChange.proposedContent);
+      const displayPath = approvedChange.displayPath ??
+        relative(context.workspaceRoot, approvedChange.targetPath).replaceAll('\\', '/');
+      const limited = limitUtf8Head([
+        `Successfully wrote to ${displayPath}`,
+        `Version: sha256:${newHash}`,
+        '',
+        approvedChange.approvedDiff ?? '(diff unavailable)'
+      ].join('\n'), MAX_DIFF_BYTES);
       return {
-        content: `Successfully wrote to ${relative(context.workspaceRoot, approvedChange.targetPath)}`
+        content: limited.text,
+        metadata: {
+          versionHash: newHash,
+          changeCount: 1,
+          diffTruncated: limited.truncated
+        }
       };
     } catch (error) {
       return createToolError('Write', error);
@@ -336,7 +334,15 @@ const editInputSchema = z.object({
     .describe('The exact text to replace; it must occur exactly once'),
   new_string: z.string()
     .max(MAX_FILE_CONTENT_CHARACTERS, 'new_string is too large')
-    .describe('The replacement text')
+    .describe('The replacement text'),
+  expectedHash: z.string()
+    .trim()
+    .regex(
+      /^(?:sha256:)?[a-fA-F0-9]{64}$/,
+      'expectedHash must be a SHA-256 hash returned by Read'
+    )
+    .optional()
+    .describe('Optional SHA-256 version returned by Read')
 }).strict();
 
 export const editTool = defineTool({
@@ -360,6 +366,16 @@ export const editTool = defineTool({
       throw new Error(`Cannot edit a file that does not exist: ${input.path}`);
     }
     const currentContent = currentFile.content;
+    if (
+      input.expectedHash &&
+      hashContent(currentContent) !== input.expectedHash
+        .toLowerCase()
+        .replace(/^sha256:/, '')
+    ) {
+      throw new Error(
+        `The file changed after it was read; read ${input.path} again before editing`
+      );
+    }
 
     const occurrenceCount = countOccurrences(currentContent, input.old_string);
     if (occurrenceCount !== 1) {
@@ -369,14 +385,26 @@ export const editTool = defineTool({
     }
 
     const proposedContent = currentContent.replace(input.old_string, input.new_string);
+    const displayPath = relative(context.workspaceRoot, targetPath)
+      .replaceAll('\\', '/') || input.path;
+    const limitedDiff = limitUtf8Head(
+      createFileDiff(displayPath, currentContent, proposedContent),
+      MAX_DIFF_BYTES,
+      '\n\n[Diff truncated]'
+    );
     return {
-      description: `Edit ${relative(context.workspaceRoot, targetPath)}`,
-      preview: createFileDiff(input.path, currentContent, proposedContent),
-      executionData: createApprovedFileChange(
-        targetPath,
-        currentFile,
-        proposedContent
-      )
+      description: `Edit ${displayPath}`,
+      preview: limitedDiff.text,
+      executionData: {
+        ...createApprovedFileChange(
+          targetPath,
+          currentFile,
+          proposedContent
+        ),
+        displayPath,
+        approvedDiff: limitedDiff.text,
+        changeCount: 1
+      }
     };
   },
   async execute(_input, context) {
@@ -411,8 +439,22 @@ export const editTool = defineTool({
         };
       }
 
+      const newHash = hashContent(approvedChange.proposedContent);
+      const displayPath = approvedChange.displayPath ??
+        relative(context.workspaceRoot, approvedChange.targetPath).replaceAll('\\', '/');
+      const limited = limitUtf8Head([
+        `Successfully edited ${displayPath}`,
+        `Version: sha256:${newHash}`,
+        '',
+        approvedChange.approvedDiff ?? '(diff unavailable)'
+      ].join('\n'), MAX_DIFF_BYTES);
       return {
-        content: `Successfully edited ${relative(context.workspaceRoot, approvedChange.targetPath)}`
+        content: limited.text,
+        metadata: {
+          versionHash: newHash,
+          changeCount: 1,
+          diffTruncated: limited.truncated
+        }
       };
     } catch (error) {
       return createToolError('Edit', error);
@@ -421,9 +463,26 @@ export const editTool = defineTool({
 });
 
 export const allTools: ToolDefinition[] = [
+  globTool,
+  grepTool,
+  repoMapTool,
   listDirectoryTool,
-  readTool,
+  readRangeTool,
+  diagnosticsTool,
+  patchTool,
   editTool,
   writeTool,
+  gitStatusTool,
+  gitDiffTool,
   shellTool
 ];
+
+export {
+  diagnosticsTool,
+  gitDiffTool,
+  gitStatusTool,
+  globTool,
+  grepTool,
+  patchTool,
+  repoMapTool
+};

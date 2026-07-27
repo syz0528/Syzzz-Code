@@ -7,6 +7,7 @@ export interface ToolCall {
 export interface UserMessage {
   role: 'user';
   content: string;
+  kind?: 'compaction-summary';
 }
 
 export interface AssistantMessage {
@@ -87,6 +88,7 @@ export interface ProviderInfo {
   name: string;
   type: string;
   model: string;
+  contextWindowTokens?: number;
   capabilities: ProviderCapabilities;
 }
 

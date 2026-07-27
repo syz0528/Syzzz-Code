@@ -182,7 +182,9 @@ test('read tool bounds allocation and only accepts regular files', async () => {
       createContext(workspaceRoot)
     );
     assert.equal(atLimit.isError, undefined);
-    assert.equal(Buffer.byteLength(atLimit.content), limitBytes);
+    assert.ok(Buffer.byteLength(atLimit.content) <= 40 * 1024);
+    assert.match(atLimit.content, /Version: sha256:[a-f0-9]{64}/);
+    assert.equal(atLimit.metadata.longLinesTruncated, 1);
     assert.equal(atLimit.metadata.sizeBytes, limitBytes);
 
     const tooLarge = await readTool.execute(

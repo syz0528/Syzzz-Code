@@ -18,6 +18,7 @@ export interface AgentEventEnvelope {
 
 export type AgentPhase =
   | 'provider'
+  | 'compaction'
   | 'approval'
   | 'tool'
   | 'completed';
@@ -38,6 +39,7 @@ export interface ProviderRequestStartedEvent extends AgentEventEnvelope {
   model: string;
   attempt: number;
   attemptId: string;
+  purpose?: ProviderPurpose;
 }
 
 export interface ProviderRequestFailedEvent extends AgentEventEnvelope {
@@ -49,6 +51,7 @@ export interface ProviderRequestFailedEvent extends AgentEventEnvelope {
   durationMs: number;
   willRetry: boolean;
   error: PublicProviderError;
+  purpose?: ProviderPurpose;
 }
 
 export interface ProviderRequestCompletedEvent extends AgentEventEnvelope {
@@ -61,6 +64,7 @@ export interface ProviderRequestCompletedEvent extends AgentEventEnvelope {
   finishReason?: string | null;
   requestId?: string;
   reportedModel?: string;
+  purpose?: ProviderPurpose;
 }
 
 export interface ReasoningStatusEvent extends AgentEventEnvelope {
@@ -85,6 +89,7 @@ export interface RetryScheduledEvent extends AgentEventEnvelope {
   nextAttempt: number;
   delayMs: number;
   reason: ProviderErrorCode;
+  purpose?: ProviderPurpose;
 }
 
 export interface UsageUpdatedEvent extends AgentEventEnvelope {
@@ -93,6 +98,49 @@ export interface UsageUpdatedEvent extends AgentEventEnvelope {
   attemptId: string;
   usage: ProviderUsage;
   cumulativeUsage: ProviderUsage;
+  purpose?: ProviderPurpose;
+}
+
+export type ProviderPurpose = 'turn' | 'compaction';
+
+export interface ContextUsageUpdatedEvent extends AgentEventEnvelope {
+  type: 'context_usage_updated';
+  inputTokens: number;
+  contextWindowTokens: number;
+  triggerTokens: number;
+  source: 'estimated' | 'reported';
+}
+
+export type CompactionReason =
+  | 'threshold'
+  | 'context_exceeded'
+  | 'model_switch';
+
+export interface CompactionStartedEvent extends AgentEventEnvelope {
+  type: 'compaction_started';
+  reason: CompactionReason;
+  mode: 'history' | 'intra-turn';
+  beforeTokens: number;
+  contextWindowTokens: number;
+}
+
+export interface CompactionCompletedEvent extends AgentEventEnvelope {
+  type: 'compaction_completed';
+  reason: CompactionReason;
+  mode: 'history' | 'intra-turn';
+  beforeTokens: number;
+  afterTokens: number;
+  messagesCompacted: number;
+  durationMs: number;
+}
+
+export interface CompactionFailedEvent extends AgentEventEnvelope {
+  type: 'compaction_failed';
+  reason: CompactionReason;
+  mode?: 'history' | 'intra-turn';
+  durationMs: number;
+  recoverable: boolean;
+  error: AgentErrorDetails;
 }
 
 export interface ToolRequestedEvent extends AgentEventEnvelope {
@@ -172,6 +220,10 @@ export type AgentEvent =
   | TextDeltaEvent
   | RetryScheduledEvent
   | UsageUpdatedEvent
+  | ContextUsageUpdatedEvent
+  | CompactionStartedEvent
+  | CompactionCompletedEvent
+  | CompactionFailedEvent
   | ToolRequestedEvent
   | ApprovalRequestedEvent
   | ApprovalResolvedEvent
@@ -194,6 +246,11 @@ export type TurnResult =
       durationMs: number;
       finishReason?: string | null;
       usage?: ProviderUsage;
+      context?: {
+        compactions: number;
+        inputTokens: number;
+        contextWindowTokens: number;
+      };
     }
   | {
       status: 'failed';

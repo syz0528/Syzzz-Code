@@ -22,6 +22,10 @@ function event(type, payload = {}) {
   };
 }
 
+function stripAnsi(value) {
+  return value.replace(/\u001B\[[0-?]*[ -/]*[@-~]/g, '');
+}
+
 test('stream-json removes tool results and metadata', () => {
   const rawEvent = event('tool_completed', {
     toolCallId: 'tool-1',
@@ -68,6 +72,18 @@ test('stream-json emits valid NDJSON events', () => {
   assert.equal(parsed[0].delayMs, 0);
   assert.equal(parsed[1].delta, 'hello');
   assert.equal(parsed[2].type, 'turn_completed');
+});
+
+test('stream-json is ASCII-safe and round-trips Unicode text', () => {
+  const rawEvent = event('text_delta', {
+    attempt: 1,
+    attemptId: 'unicode',
+    delta: '中文标点：你好 😊'
+  });
+  const serialized = serializeAgentEvent(rawEvent);
+
+  assert.doesNotMatch(serialized, /[^\x20-\x7e]/);
+  assert.equal(JSON.parse(serialized).delta, rawEvent.delta);
 });
 
 test('streaming text stops an active spinner only once', () => {
@@ -213,7 +229,7 @@ test('human renderer buffers text and keeps only useful status lines', () => {
     finishReason: 'stop'
   });
 
-  const rendered = chunks.join('');
+  const rendered = stripAnsi(chunks.join(''));
   assert.match(rendered, /Assistant:\n/);
   assert.match(rendered, /buffered response/);
   assert.doesNotMatch(rendered, /Read success/);
