@@ -5,12 +5,14 @@ import {
   mkdirSync,
   mkdtempSync,
   readFileSync,
+  readdirSync,
   rmSync,
   writeFileSync
 } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { SessionStore } from '../dist/session-store.js';
 
 const projectDirectory = dirname(dirname(fileURLToPath(import.meta.url)));
 const cliPath = join(projectDirectory, 'dist', 'index.js');
@@ -32,6 +34,41 @@ test('CLI help exposes the interactive switch command', () => {
   });
   assert.equal(chatHelp.status, 0, chatHelp.stderr);
   assert.match(chatHelp.stdout, /--stream <mode>/);
+  assert.match(chatHelp.stdout, /--mode <mode>/);
+});
+
+test('interactive work-mode commands stay local and can submit a message', () => {
+  const script = `
+    import { runInteractiveSession } from './dist/interactive.js';
+
+    let mode = 'code';
+    const engine = {
+      getMode() { return mode; },
+      setMode(next) { mode = next; },
+      async chat(message) {
+        console.log('HANDLED:' + mode + ':' + message);
+        return 'ok';
+      }
+    };
+
+    await runInteractiveSession(engine);
+  `;
+
+  const result = spawnSync(
+    process.execPath,
+    ['--input-type=module', '--eval', script],
+    {
+      cwd: projectDirectory,
+      encoding: 'utf-8',
+      input: '/plan inspect this\n/code implement it\nexit\n',
+      timeout: 5_000
+    }
+  );
+
+  assert.equal(result.status, 0, result.stderr || result.error?.message);
+  assert.match(result.stdout, /HANDLED:plan:inspect this/);
+  assert.match(result.stdout, /HANDLED:code:implement it/);
+  assert.doesNotMatch(result.stdout, /HANDLED:.*\/plan/);
 });
 
 test('stream-json rejects the human display stream override', () => {
@@ -476,6 +513,352 @@ test('Ctrl+C cancels full access confirmation without exiting or changing mode',
   assert.match(outcome.transcript, /Permission command cancelled/);
   assert.match(outcome.transcript, /Goodbye!/);
   assert.doesNotMatch(outcome.transcript, /HANDLED:/);
+});
+
+test('config secret input uses stdin without exposing the value in output', () => {
+  const testHome = mkdtempSync(join(tmpdir(), 'syzzz-cli-secret-'));
+  const configDirectory = join(testHome, '.syzzz-code');
+  const configPath = join(configDirectory, 'config.json');
+  const secret = 'secret-value-that-must-not-be-printed';
+  try {
+    mkdirSync(configDirectory);
+    writeFileSync(configPath, JSON.stringify({
+      schemaVersion: 1,
+      currentProvider: 'local',
+      providers: {
+        local: {
+          name: 'Local',
+          type: 'openai-compatible',
+          model: 'model-a',
+          models: ['model-a'],
+          env: {
+            BASE_URL: 'https://example.invalid/v1',
+            API_KEY: ''
+          }
+        }
+      },
+      audit: { retentionDays: 0, maxBytes: 4096 },
+      ui: { streamOutput: true },
+      context: { autoCompact: true, defaultWindowTokens: 65_536 },
+      sessions: { autoSave: true }
+    }));
+    const environment = {
+      ...process.env,
+      HOME: testHome,
+      USERPROFILE: testHome
+    };
+    const result = spawnSync(
+      process.execPath,
+      [cliPath, 'config', 'set', 'apiKey', '--stdin'],
+      {
+        cwd: projectDirectory,
+        encoding: 'utf8',
+        input: `${secret}\n`,
+        env: environment
+      }
+    );
+    assert.equal(result.status, 0, result.stderr);
+    assert.doesNotMatch(result.stdout + result.stderr, new RegExp(secret));
+    assert.equal(
+      JSON.parse(readFileSync(configPath, 'utf8')).providers.local.env.API_KEY,
+      secret
+    );
+
+    const rejected = spawnSync(
+      process.execPath,
+      [cliPath, 'config', 'set', 'apiKey', 'visible-secret'],
+      {
+        cwd: projectDirectory,
+        encoding: 'utf8',
+        env: environment
+      }
+    );
+    assert.equal(rejected.status, 1);
+    assert.match(rejected.stderr, /not accepted as command-line values/);
+
+    const environmentSecret = 'environment-secret-not-for-output';
+    const fromEnvironment = spawnSync(
+      process.execPath,
+      [
+        cliPath,
+        'config',
+        'set',
+        'apiKey',
+        '--from-env',
+        'SYZZZ_EXTERNAL_API_KEY'
+      ],
+      {
+        cwd: projectDirectory,
+        encoding: 'utf8',
+        env: {
+          ...environment,
+          SYZZZ_EXTERNAL_API_KEY: environmentSecret
+        }
+      }
+    );
+    assert.equal(fromEnvironment.status, 0, fromEnvironment.stderr);
+    const environmentConfig = JSON.parse(readFileSync(configPath, 'utf8'));
+    assert.equal(environmentConfig.providers.local.env.API_KEY, '');
+    assert.equal(
+      environmentConfig.providers.local.env.API_KEY_ENV,
+      'SYZZZ_EXTERNAL_API_KEY'
+    );
+
+    const doctor = spawnSync(process.execPath, [cliPath, 'doctor'], {
+      cwd: projectDirectory,
+      encoding: 'utf8',
+      env: {
+        ...environment,
+        SYZZZ_EXTERNAL_API_KEY: environmentSecret
+      }
+    });
+    assert.equal(doctor.status, 0, doctor.stderr);
+    assert.doesNotMatch(doctor.stdout + doctor.stderr, new RegExp(secret));
+    assert.doesNotMatch(
+      doctor.stdout + doctor.stderr,
+      new RegExp(environmentSecret)
+    );
+  } finally {
+    rmSync(testHome, { recursive: true, force: true });
+  }
+});
+
+test('doctor migrates legacy config but refuses to overwrite future schemas', () => {
+  const testHome = mkdtempSync(join(tmpdir(), 'syzzz-doctor-config-'));
+  const configDirectory = join(testHome, '.syzzz-code');
+  const configPath = join(configDirectory, 'config.json');
+  const storedSecret = 'legacy-secret-not-for-output';
+  const environment = {
+    ...process.env,
+    HOME: testHome,
+    USERPROFILE: testHome
+  };
+  try {
+    mkdirSync(configDirectory);
+    writeFileSync(configPath, JSON.stringify({
+      currentProvider: 'custom',
+      providers: {
+        custom: {
+          name: 'Custom',
+          type: 'openai-compatible',
+          model: 'model-a',
+          models: ['model-a'],
+          env: {
+            BASE_URL: 'https://example.invalid/v1',
+            API_KEY: storedSecret
+          }
+        }
+      }
+    }));
+
+    const migrated = spawnSync(
+      process.execPath,
+      [cliPath, 'doctor', '--repair-config', '--yes'],
+      {
+        cwd: projectDirectory,
+        encoding: 'utf8',
+        env: environment
+      }
+    );
+    assert.equal(migrated.status, 0, migrated.stderr);
+    assert.match(migrated.stdout, /migrated to schema v1/);
+    assert.doesNotMatch(
+      migrated.stdout + migrated.stderr,
+      new RegExp(storedSecret)
+    );
+    const migratedConfig = JSON.parse(readFileSync(configPath, 'utf8'));
+    assert.equal(migratedConfig.schemaVersion, 1);
+    assert.equal(migratedConfig.currentProvider, 'custom');
+    assert.equal(
+      migratedConfig.providers.custom.env.API_KEY,
+      storedSecret
+    );
+
+    const futureConfig = JSON.stringify({
+      schemaVersion: 2,
+      privateValue: 'future-private-value'
+    });
+    writeFileSync(configPath, futureConfig);
+    const future = spawnSync(
+      process.execPath,
+      [cliPath, 'doctor', '--repair-config', '--yes'],
+      {
+        cwd: projectDirectory,
+        encoding: 'utf8',
+        env: environment
+      }
+    );
+    assert.equal(future.status, 1);
+    assert.match(future.stderr, /upgrade Syzzz Code/i);
+    assert.equal(readFileSync(configPath, 'utf8'), futureConfig);
+    assert.doesNotMatch(
+      future.stdout + future.stderr,
+      /future-private-value/
+    );
+
+    const corruptValue = '{"private":"corrupt-private-value",';
+    writeFileSync(configPath, corruptValue);
+    const repaired = spawnSync(
+      process.execPath,
+      [cliPath, 'doctor', '--repair-config', '--yes'],
+      {
+        cwd: projectDirectory,
+        encoding: 'utf8',
+        env: environment
+      }
+    );
+    assert.ok([0, 1].includes(repaired.status), repaired.stderr);
+    assert.match(repaired.stdout, /Configuration reset/);
+    assert.doesNotMatch(
+      repaired.stdout + repaired.stderr,
+      /corrupt-private-value/
+    );
+    assert.equal(JSON.parse(readFileSync(configPath, 'utf8')).schemaVersion, 1);
+    const invalidBackup = readdirSync(configDirectory).find(
+      name => name.endsWith('.invalid.bak')
+    );
+    assert.ok(invalidBackup);
+    assert.equal(
+      readFileSync(join(configDirectory, invalidBackup), 'utf8'),
+      corruptValue
+    );
+  } finally {
+    rmSync(testHome, { recursive: true, force: true });
+  }
+});
+
+test('CLI resumes a saved workspace session with mode restored and safe permissions', async () => {
+  const testHome = mkdtempSync(join(tmpdir(), 'syzzz-cli-resume-'));
+  const configDirectory = join(testHome, '.syzzz-code');
+  const configPath = join(configDirectory, 'config.json');
+  const sessionId = 'cccccccc-cccc-4ccc-8ccc-cccccccccccc';
+  try {
+    mkdirSync(configDirectory);
+    writeFileSync(configPath, JSON.stringify({
+      schemaVersion: 1,
+      currentProvider: 'local',
+      providers: {
+        local: {
+          name: 'Local',
+          type: 'openai-compatible',
+          model: 'model-a',
+          models: ['model-a'],
+          env: {
+            BASE_URL: 'https://example.invalid/v1',
+            API_KEY: 'test-key'
+          }
+        }
+      },
+      audit: { retentionDays: 0, maxBytes: 4096 },
+      ui: { streamOutput: true },
+      context: { autoCompact: true, defaultWindowTokens: 65_536 },
+      sessions: { autoSave: true }
+    }));
+    const store = await SessionStore.create({
+      workspaceRoot: projectDirectory,
+      baseDirectory: join(configDirectory, 'sessions')
+    });
+    const lease = await store.acquire(sessionId);
+    await store.save({
+      schemaVersion: 1,
+      revision: 1,
+      sessionId,
+      title: 'Saved planning session',
+      createdAt: '2026-07-28T00:00:00.000Z',
+      updatedAt: '2026-07-28T01:00:00.000Z',
+      workspace: {
+        id: store.workspaceId,
+        root: store.workspaceRoot
+      },
+      provider: { id: 'local', model: 'model-a' },
+      mode: 'plan',
+      engineState: {
+        schemaVersion: 1,
+        messages: [
+          { role: 'user', content: 'Plan the feature' },
+          { role: 'assistant', content: 'Saved plan' }
+        ],
+        pendingFileChangeReceipts: [],
+        compactionCount: 0,
+        totalUsage: { inputTokens: 12, outputTokens: 6, totalTokens: 18 }
+      },
+      usage: {
+        turns: 1,
+        inputTokens: 12,
+        outputTokens: 6,
+        totalTokens: 18
+      },
+      auditSessionId: sessionId
+    }, lease);
+    await lease.release();
+
+    const environment = {
+      ...process.env,
+      HOME: testHome,
+      USERPROFILE: testHome
+    };
+    const resumed = spawnSync(
+      process.execPath,
+      [cliPath, '--resume', sessionId.slice(0, 12)],
+      {
+        cwd: projectDirectory,
+        encoding: 'utf8',
+        input: '/status\n/exit\n',
+        timeout: 5_000,
+        env: environment
+      }
+    );
+    assert.equal(resumed.status, 0, resumed.stderr || resumed.error?.message);
+    assert.match(resumed.stdout, /Saved planning session/);
+    assert.match(resumed.stdout, /Work mode:\s+plan/);
+    assert.match(resumed.stdout, /Permissions:\s+safe/);
+    assert.match(resumed.stdout, /You \[plan\|safe\]/);
+
+    const continued = spawnSync(
+      process.execPath,
+      [cliPath, '--continue'],
+      {
+        cwd: projectDirectory,
+        encoding: 'utf8',
+        input: '/status\n/exit\n',
+        timeout: 5_000,
+        env: environment
+      }
+    );
+    assert.equal(
+      continued.status,
+      0,
+      continued.stderr || continued.error?.message
+    );
+    assert.match(continued.stdout, /Saved planning session/);
+    assert.match(continued.stdout, /You \[plan\|safe\]/);
+
+    const listed = spawnSync(
+      process.execPath,
+      [cliPath, 'sessions', 'list'],
+      {
+        cwd: projectDirectory,
+        encoding: 'utf8',
+        env: environment
+      }
+    );
+    assert.equal(listed.status, 0, listed.stderr);
+    assert.match(listed.stdout, /Saved planning session/);
+
+    const deleted = spawnSync(
+      process.execPath,
+      [cliPath, 'sessions', 'delete', sessionId, '--yes'],
+      {
+        cwd: projectDirectory,
+        encoding: 'utf8',
+        env: environment
+      }
+    );
+    assert.equal(deleted.status, 0, deleted.stderr);
+    assert.match(deleted.stdout, /Deleted session/);
+  } finally {
+    rmSync(testHome, { recursive: true, force: true });
+  }
 });
 
 test('permission mode helpers parse aliases', async () => {

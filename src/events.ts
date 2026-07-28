@@ -7,6 +7,7 @@ import type {
   ProviderErrorCode,
   PublicProviderError
 } from './providers/errors.js';
+import type { AgentMode } from './modes.js';
 
 export interface AgentEventEnvelope {
   schemaVersion: 1;
@@ -26,6 +27,7 @@ export type AgentPhase =
 export interface TurnStartedEvent extends AgentEventEnvelope {
   type: 'turn_started';
   provider: ProviderInfo;
+  mode: AgentMode;
 }
 
 export interface PhaseChangedEvent extends AgentEventEnvelope {
@@ -114,7 +116,8 @@ export interface ContextUsageUpdatedEvent extends AgentEventEnvelope {
 export type CompactionReason =
   | 'threshold'
   | 'context_exceeded'
-  | 'model_switch';
+  | 'model_switch'
+  | 'manual';
 
 export interface CompactionStartedEvent extends AgentEventEnvelope {
   type: 'compaction_started';

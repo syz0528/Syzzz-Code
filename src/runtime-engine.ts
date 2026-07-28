@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { LocalAuditLogger, type AgentEventSink } from './audit.js';
-import { loadConfig } from './config.js';
+import { loadConfig, resolveProviderCredential } from './config.js';
 import {
   applyCompactionPlan,
   ContextManager,
@@ -16,6 +16,12 @@ import type {
   ProviderPurpose,
   TurnResult
 } from './events.js';
+import {
+  DEFAULT_AGENT_MODE,
+  isToolAllowedInMode,
+  modeSystemInstructions,
+  type AgentMode
+} from './modes.js';
 import {
   DEFAULT_PERMISSION_MODE,
   type PermissionMode
@@ -147,16 +153,221 @@ interface ContextPreparationResult {
   compactions: number;
 }
 
-interface FileChangeReceipt {
+export interface FileChangeReceipt {
   path: string;
   versionHash?: string;
 }
+
+function portableMessages(
+  messages: readonly ConversationMessage[]
+): ConversationMessage[] {
+  return messages.map(message => {
+    if (message.role !== 'assistant' || message.reasoningContent === undefined) {
+      return message;
+    }
+    const {
+      reasoningContent: _reasoningContent,
+      ...portableMessage
+    } = message;
+    return portableMessage;
+  });
+}
+
+function mergeFileChangeReceipts(
+  ...groups: readonly FileChangeReceipt[][]
+): FileChangeReceipt[] {
+  const receipts = new Map<string, FileChangeReceipt>();
+  for (const group of groups) {
+    for (const receipt of group) {
+      receipts.set(receipt.path, receipt);
+    }
+  }
+  return [...receipts.values()];
+}
+
+function isNonNegativeInteger(value: unknown): value is number {
+  return Number.isSafeInteger(value) && Number(value) >= 0;
+}
+
+function validateEngineState(state: QueryEngineStateV1): void {
+  if (state.schemaVersion !== 1) {
+    throw new Error('Unsupported query engine state version');
+  }
+  if (!Array.isArray(state.messages)) {
+    throw new Error('engine state messages must be an array');
+  }
+  for (const message of state.messages) {
+    if (typeof message !== 'object' || message === null || !('role' in message)) {
+      throw new Error('engine state contains an invalid conversation message');
+    }
+    if (message.role === 'user') {
+      if (
+        typeof message.content !== 'string' ||
+        (
+          message.kind !== undefined &&
+          message.kind !== 'compaction-summary'
+        )
+      ) {
+        throw new Error('engine state contains an invalid user message');
+      }
+      continue;
+    }
+    if (message.role === 'assistant') {
+      if (
+        typeof message.content !== 'string' ||
+        (
+          message.toolCalls !== undefined &&
+          (
+            !Array.isArray(message.toolCalls) ||
+            message.toolCalls.some(toolCall =>
+              typeof toolCall !== 'object' ||
+              toolCall === null ||
+              typeof toolCall.id !== 'string' ||
+              !toolCall.id ||
+              typeof toolCall.name !== 'string' ||
+              !toolCall.name
+            )
+          )
+        )
+      ) {
+        throw new Error('engine state contains an invalid assistant message');
+      }
+      continue;
+    }
+    if (message.role === 'tool') {
+      if (
+        typeof message.toolCallId !== 'string' ||
+        !message.toolCallId ||
+        typeof message.toolName !== 'string' ||
+        !message.toolName ||
+        typeof message.content !== 'string' ||
+        (
+          message.isError !== undefined &&
+          typeof message.isError !== 'boolean'
+        )
+      ) {
+        throw new Error('engine state contains an invalid tool message');
+      }
+      continue;
+    }
+    throw new Error('engine state contains an unknown message role');
+  }
+  if (!Array.isArray(state.pendingFileChangeReceipts)) {
+    throw new Error('engine state file change receipts must be an array');
+  }
+  for (const receipt of state.pendingFileChangeReceipts) {
+    if (
+      typeof receipt !== 'object' ||
+      receipt === null ||
+      typeof receipt.path !== 'string' ||
+      !receipt.path
+    ) {
+      throw new Error('engine state contains an invalid file change receipt');
+    }
+    if (
+      receipt.versionHash !== undefined &&
+      typeof receipt.versionHash !== 'string'
+    ) {
+      throw new Error('engine state contains an invalid file version hash');
+    }
+  }
+  if (!isNonNegativeInteger(state.compactionCount)) {
+    throw new Error('engine state compactionCount must be a non-negative integer');
+  }
+  const usage = state.totalUsage;
+  if (
+    typeof usage !== 'object' ||
+    usage === null ||
+    !isNonNegativeInteger(usage.inputTokens) ||
+    !isNonNegativeInteger(usage.outputTokens) ||
+    !isNonNegativeInteger(usage.totalTokens)
+  ) {
+    throw new Error('engine state contains invalid token usage');
+  }
+  if (
+    state.lastReportedModel !== undefined &&
+    (typeof state.lastReportedModel !== 'string' ||
+      !state.lastReportedModel.trim())
+  ) {
+    throw new Error('engine state contains an invalid reported model');
+  }
+}
+
+export interface QueryEngineStateV1 {
+  schemaVersion: 1;
+  messages: ConversationMessage[];
+  pendingFileChangeReceipts: FileChangeReceipt[];
+  compactionCount: number;
+  totalUsage: ProviderUsage;
+  lastReportedModel?: string;
+}
+
+export interface EngineStatus {
+  sessionId: string;
+  workspaceRoot: string;
+  mode: AgentMode;
+  permissionMode: PermissionMode;
+  provider: ReturnType<typeof getNormalizedProviderInfo>;
+  lastReportedModel?: string;
+  messageCount: number;
+  totalUsage: ProviderUsage;
+  persistence: EnginePersistenceStatus;
+  context: {
+    estimatedInputTokens: number;
+    contextWindowTokens: number;
+    triggerTokens: number;
+    compactions: number;
+    compactionCircuitOpen: boolean;
+  };
+}
+
+export interface EnginePersistenceStatus {
+  state: 'unmanaged' | 'disabled' | 'healthy' | 'degraded';
+  dirty: boolean;
+  lastSavedAt?: string;
+}
+
+export type CompactContextResult =
+  | {
+      status: 'completed';
+      durationMs: number;
+      compactions: number;
+      beforeTokens: number;
+      afterTokens: number;
+      usage?: ProviderUsage;
+    }
+  | {
+      status: 'skipped';
+      durationMs: number;
+      reason: 'empty' | 'nothing_to_compact';
+    }
+  | {
+      status: 'failed';
+      durationMs: number;
+      error: AgentErrorDetails;
+    }
+  | {
+      status: 'cancelled';
+      durationMs: number;
+      reason: string;
+    };
+
+export type EngineCheckpointReason = 'file-side-effect';
+
+export type EngineCheckpointHandler = (
+  reason: EngineCheckpointReason,
+  state: QueryEngineStateV1
+) => void | Promise<void>;
+
+export type EnginePersistenceStatusProvider =
+  () => EnginePersistenceStatus;
 
 export interface QueryEngineOptions {
   provider?: AIProvider;
   tools?: ToolDefinition[];
   workspaceRoot?: string;
   permissionMode?: PermissionMode;
+  mode?: AgentMode;
   providerRunner?: ProviderRunnerOptions;
   sessionId?: string;
   idFactory?: () => string;
@@ -164,6 +375,9 @@ export interface QueryEngineOptions {
   audit?: AgentEventSink | false;
   auditDirectory?: string;
   context?: ContextManagerOptions;
+  checkpoint?: EngineCheckpointHandler;
+  onCheckpointError?: (error: unknown) => void;
+  persistenceStatus?: EnginePersistenceStatusProvider;
 }
 
 export interface ChatOptions {
@@ -178,6 +392,7 @@ export class QueryEngine {
   private workspaceRoot: string;
   private isProcessing = false;
   private permissionMode: PermissionMode;
+  private mode: AgentMode;
   private providerRunnerOptions: ProviderRunnerOptions;
   private sessionId: string;
   private idFactory: () => string;
@@ -187,16 +402,29 @@ export class QueryEngine {
   private pendingCompactionReason?: CompactionReason;
   private pendingFileChangeReceipts: FileChangeReceipt[] = [];
   private activeFileChangeReceipts: FileChangeReceipt[] = [];
+  private totalUsage: ProviderUsage = {
+    inputTokens: 0,
+    outputTokens: 0,
+    totalTokens: 0
+  };
+  private lastReportedModel?: string;
+  private checkpoint?: EngineCheckpointHandler;
+  private onCheckpointError?: (error: unknown) => void;
+  private persistenceStatus?: EnginePersistenceStatusProvider;
 
   constructor(options: QueryEngineOptions = {}) {
     this.tools = options.tools ?? allTools;
     this.workspaceRoot = options.workspaceRoot ?? process.cwd();
     this.permissionMode = options.permissionMode ?? DEFAULT_PERMISSION_MODE;
+    this.mode = options.mode ?? DEFAULT_AGENT_MODE;
     this.providerRunnerOptions = options.providerRunner ?? {};
     this.idFactory = options.idFactory ?? randomUUID;
     this.sessionId = options.sessionId ?? this.idFactory();
     this.now = options.now ?? Date.now;
     this.contextManager = new ContextManager(options.context);
+    this.checkpoint = options.checkpoint;
+    this.onCheckpointError = options.onCheckpointError;
+    this.persistenceStatus = options.persistenceStatus;
 
     if (options.audit !== undefined && options.audit !== false) {
       this.audit = options.audit;
@@ -212,11 +440,11 @@ export class QueryEngine {
     if (!providerConfig) {
       throw new Error('Provider ' + config.currentProvider + ' not found in config');
     }
-    if (!providerConfig.env.API_KEY) {
+    if (!resolveProviderCredential(providerConfig).value) {
       throw new Error(
         'No API key found for provider: ' + providerConfig.name + '\n\n' +
         'Set your API key:\n' +
-        '  syzzz config set apiKey YOUR_KEY\n'
+        '  syzzz config set apiKey\n'
       );
     }
 
@@ -249,6 +477,60 @@ export class QueryEngine {
     this.permissionMode = mode;
   }
 
+  getMode(): AgentMode {
+    return this.mode;
+  }
+
+  setMode(mode: AgentMode): void {
+    if (this.isProcessing) {
+      throw new Error('Cannot switch work modes while a turn is processing');
+    }
+    this.mode = mode;
+  }
+
+  getSessionId(): string {
+    return this.sessionId;
+  }
+
+  getWorkspaceRoot(): string {
+    return this.workspaceRoot;
+  }
+
+  setCheckpointHandler(
+    checkpoint: EngineCheckpointHandler | undefined,
+    onError?: (error: unknown) => void
+  ): void {
+    if (this.isProcessing) {
+      throw new Error('Cannot replace the checkpoint handler during an operation');
+    }
+    this.checkpoint = checkpoint;
+    this.onCheckpointError = onError;
+  }
+
+  setPersistenceStatusProvider(
+    provider: EnginePersistenceStatusProvider | undefined
+  ): void {
+    if (this.isProcessing) {
+      throw new Error(
+        'Cannot replace the persistence status provider during an operation'
+      );
+    }
+    this.persistenceStatus = provider;
+  }
+
+  private async requestCheckpoint(
+    reason: EngineCheckpointReason
+  ): Promise<void> {
+    if (!this.checkpoint) {
+      return;
+    }
+    try {
+      await this.checkpoint(reason, this.exportState());
+    } catch (error) {
+      this.onCheckpointError?.(error);
+    }
+  }
+
   setModel(model: string): void {
     if (this.isProcessing) {
       throw new Error('Cannot switch models while a turn is processing');
@@ -262,17 +544,102 @@ export class QueryEngine {
 
     this.provider.setModel(model);
     this.pendingCompactionReason = 'model_switch';
-    this.messages = this.messages.map(message => {
-      if (message.role !== 'assistant' || !('reasoningContent' in message)) {
-        return message;
-      }
-      const { reasoningContent: _reasoningContent, ...portableMessage } = message;
-      return portableMessage;
-    });
+    this.messages = portableMessages(this.messages);
+  }
+
+  setProvider(provider: AIProvider): void {
+    if (this.isProcessing) {
+      throw new Error('Cannot switch providers while a turn is processing');
+    }
+    this.provider = provider;
+    this.pendingCompactionReason = 'model_switch';
+    this.messages = portableMessages(this.messages);
+    this.lastReportedModel = undefined;
   }
 
   getProviderInfo() {
     return getNormalizedProviderInfo(this.provider);
+  }
+
+  getStatus(): EngineStatus {
+    const providerTools = this.getProviderTools();
+    const measurement = this.contextManager.measure(
+      this.messages,
+      this.getSystemPrompt(),
+      providerTools,
+      this.getProviderInfo()
+    );
+    return {
+      sessionId: this.sessionId,
+      workspaceRoot: this.workspaceRoot,
+      mode: this.mode,
+      permissionMode: this.permissionMode,
+      provider: this.getProviderInfo(),
+      ...(this.lastReportedModel
+        ? { lastReportedModel: this.lastReportedModel }
+        : {}),
+      messageCount: this.messages.length,
+      totalUsage: { ...this.totalUsage },
+      persistence: this.persistenceStatus?.() ?? {
+        state: 'unmanaged',
+        dirty: false
+      },
+      context: {
+        estimatedInputTokens: measurement.estimatedInputTokens,
+        contextWindowTokens: measurement.contextWindowTokens,
+        triggerTokens: measurement.triggerTokens,
+        compactions: this.contextManager.compactions,
+        compactionCircuitOpen: this.contextManager.circuitOpen
+      }
+    };
+  }
+
+  exportState(): QueryEngineStateV1 {
+    return {
+      schemaVersion: 1,
+      messages: structuredClone(portableMessages(this.messages)),
+      pendingFileChangeReceipts: structuredClone(
+        mergeFileChangeReceipts(
+          this.pendingFileChangeReceipts,
+          this.activeFileChangeReceipts
+        )
+      ),
+      compactionCount: this.contextManager.compactions,
+      totalUsage: { ...this.totalUsage },
+      ...(this.lastReportedModel
+        ? { lastReportedModel: this.lastReportedModel }
+        : {})
+    };
+  }
+
+  restoreState(state: QueryEngineStateV1): void {
+    if (this.isProcessing) {
+      throw new Error('Cannot restore engine state while a turn is processing');
+    }
+    validateEngineState(state);
+    this.messages = structuredClone(portableMessages(state.messages));
+    this.pendingFileChangeReceipts = structuredClone(
+      state.pendingFileChangeReceipts
+    );
+    this.activeFileChangeReceipts = [];
+    this.totalUsage = { ...state.totalUsage };
+    this.lastReportedModel = state.lastReportedModel;
+    this.contextManager.restorePersistentState({
+      compactionCount: state.compactionCount
+    });
+    this.pendingCompactionReason = undefined;
+  }
+
+  private getAllowedTools(): ToolDefinition[] {
+    return this.tools.filter(tool => isToolAllowedInMode(this.mode, tool));
+  }
+
+  private getProviderTools(): ProviderTool[] {
+    return this.getAllowedTools().map(tool => ({
+      name: tool.name,
+      description: tool.description,
+      inputSchema: convertToolSchemaToJsonSchema(tool)
+    }));
   }
 
   private async *runProviderWithEvents(
@@ -344,6 +711,9 @@ export class QueryEngine {
             break;
           case 'request_completed':
             finishReason = providerEvent.response.finishReason;
+            if (providerEvent.response.reportedModel) {
+              this.lastReportedModel = providerEvent.response.reportedModel;
+            }
             yield {
               type: 'provider_request_completed',
               provider: providerEvent.provider,
@@ -382,6 +752,7 @@ export class QueryEngine {
             break;
           case 'usage':
             usage = addUsage(usage, providerEvent.usage);
+            this.totalUsage = addUsage(this.totalUsage, providerEvent.usage);
             yield {
               type: 'usage_updated',
               attempt: providerEvent.attempt,
@@ -729,7 +1100,8 @@ export class QueryEngine {
 
       yield event({
         type: 'turn_started',
-        provider: this.getProviderInfo()
+        provider: this.getProviderInfo(),
+        mode: this.mode
       });
 
       if (turnWasAlreadyProcessing) {
@@ -757,11 +1129,7 @@ export class QueryEngine {
         { role: 'user', content: userMessage }
       ];
       const responseParts: string[] = [];
-      const providerTools: ProviderTool[] = this.tools.map(tool => ({
-        name: tool.name,
-        description: tool.description,
-        inputSchema: convertToolSchemaToJsonSchema(tool)
-      }));
+      const providerTools = this.getProviderTools();
       let cumulativeUsage: ProviderUsage | undefined;
       let finalFinishReason: string | null | undefined;
       let latestMeasurement = this.contextManager.measure(
@@ -1006,6 +1374,149 @@ export class QueryEngine {
     }
   }
 
+  async *compactContext(
+    options: Pick<ChatOptions, 'signal'> = {}
+  ): AsyncGenerator<AgentEvent, CompactContextResult> {
+    const externalSignal = options.signal;
+    const operationController = new AbortController();
+    const signal = operationController.signal;
+    const operationId = this.idFactory();
+    const startedAt = this.now();
+    const contextStateAtStart = this.contextManager.exportRuntimeState();
+    let sequence = 0;
+    let ownsProcessingLock = false;
+    let committed = false;
+
+    const event = (data: AgentEventData): AgentEvent => {
+      const nextEvent = {
+        schemaVersion: 1,
+        sessionId: this.sessionId,
+        turnId: operationId,
+        sequence: ++sequence,
+        timestamp: new Date(this.now()).toISOString(),
+        ...data
+      } as AgentEvent;
+      this.audit?.record(nextEvent);
+      return nextEvent;
+    };
+    const handleExternalAbort = () => {
+      operationController.abort(externalSignal?.reason);
+    };
+    externalSignal?.addEventListener('abort', handleExternalAbort, {
+      once: true
+    });
+    if (externalSignal?.aborted) {
+      handleExternalAbort();
+    }
+
+    try {
+      if (this.isProcessing) {
+        return {
+          status: 'failed',
+          durationMs: Math.max(0, this.now() - startedAt),
+          error: {
+            code: 'turn_in_progress',
+            message: 'Another operation is still being processed'
+          }
+        };
+      }
+      this.isProcessing = true;
+      ownsProcessingLock = true;
+      throwIfAborted(signal);
+
+      if (this.messages.length === 0) {
+        return {
+          status: 'skipped',
+          durationMs: Math.max(0, this.now() - startedAt),
+          reason: 'empty'
+        };
+      }
+
+      const providerTools = this.getProviderTools();
+      const systemPrompt = this.getSystemPrompt();
+      const beforeMeasurement = this.contextManager.measure(
+        this.messages,
+        systemPrompt,
+        providerTools,
+        this.getProviderInfo()
+      );
+      const availablePlan = this.contextManager.createPlan(
+        this.messages,
+        beforeMeasurement,
+        { allowLatestIntraTurn: true }
+      );
+      if (!availablePlan) {
+        return {
+          status: 'skipped',
+          durationMs: Math.max(0, this.now() - startedAt),
+          reason: 'nothing_to_compact'
+        };
+      }
+
+      const preparation = this.prepareContextBudget(
+        [...this.messages],
+        systemPrompt,
+        providerTools,
+        signal,
+        'manual',
+        true,
+        undefined
+      );
+      let preparationCompleted = false;
+      try {
+        while (true) {
+          const next = await preparation.next();
+          if (next.done) {
+            preparationCompleted = true;
+            this.messages = next.value.messages;
+            committed = true;
+            return {
+              status: 'completed',
+              durationMs: Math.max(0, this.now() - startedAt),
+              compactions: next.value.compactions,
+              beforeTokens: beforeMeasurement.estimatedInputTokens,
+              afterTokens: next.value.measurement.estimatedInputTokens,
+              ...(next.value.usage ? { usage: next.value.usage } : {})
+            };
+          }
+          yield event(next.value);
+        }
+      } finally {
+        if (!preparationCompleted) {
+          await preparation.return(undefined as never);
+        }
+      }
+    } catch (error) {
+      const durationMs = Math.max(0, this.now() - startedAt);
+      if (signal.aborted || isAbortError(error)) {
+        return {
+          status: 'cancelled',
+          durationMs,
+          reason: 'Operation cancelled by the user'
+        };
+      }
+      return {
+        status: 'failed',
+        durationMs,
+        error: toAgentError(error)
+      };
+    } finally {
+      externalSignal?.removeEventListener('abort', handleExternalAbort);
+      if (!signal.aborted) {
+        operationController.abort(
+          new OperationAbortedError('Compaction consumer closed')
+        );
+      }
+      if (ownsProcessingLock) {
+        this.isProcessing = false;
+      }
+      if (!committed) {
+        this.contextManager.restoreRuntimeState(contextStateAtStart);
+      }
+      await this.audit?.flush();
+    }
+  }
+
   async chat(userMessage: string, options: ChatOptions = {}): Promise<string> {
     const turn = this.runTurn(userMessage, options);
     let result: TurnResult;
@@ -1065,6 +1576,15 @@ export class QueryEngine {
     if (!tool) {
       const content = 'Unknown tool: ' + toolName;
       yield complete('error', content);
+      return toolMessage(content, true);
+    }
+    if (!isToolAllowedInMode(this.mode, tool)) {
+      const content =
+        `Tool execution denied: ${toolName} is unavailable in ${this.mode} mode`;
+      yield complete('denied', content, {
+        reason: 'work-mode-policy',
+        mode: this.mode
+      });
       return toolMessage(content, true);
     }
 
@@ -1189,6 +1709,9 @@ export class QueryEngine {
           validationResult.data,
           toolResult.metadata
         );
+        if (['Write', 'Edit', 'Patch'].includes(toolName)) {
+          await this.requestCheckpoint('file-side-effect');
+        }
       }
       const limited = this.contextManager.limitToolResult(
         toolName,
@@ -1338,10 +1861,13 @@ export class QueryEngine {
       '10. Do not rerun a successful tool only to reformat its output; summarize the existing result instead.',
       '11. Describe inspection scope accurately: verify exact counts, and do not call a sampled review complete or exhaustive.',
       '',
+      ...modeSystemInstructions(this.mode),
+      '',
       'Environment:',
       '- Workspace root: ' + this.workspaceRoot,
       '- Platform: ' + process.platform,
       '- Shell executor: ' + shellExecutor,
+      '- Work mode: ' + this.mode,
       '- Permission mode: ' + this.permissionMode,
       ...shellHints
     ].join('\n');

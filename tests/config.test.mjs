@@ -1,11 +1,19 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import {
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  readdirSync,
+  rmSync,
+  writeFileSync
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { validateConfig } from '../dist/config.js';
+import { resolveProviderCredential } from '../dist/config.js';
 
 const projectDirectory = dirname(dirname(fileURLToPath(import.meta.url)));
 
@@ -194,4 +202,101 @@ test('validates audit retention and size bounds', () => {
     retentionDays: 0,
     maxBytes: 4096
   });
+});
+
+test('rejects Provider URLs that could expose embedded credentials', () => {
+  const embedded = createValidConfig();
+  embedded.providers.local.env.BASE_URL =
+    'https://user:secret@example.com/v1';
+  assert.throws(
+    () => validateConfig(embedded),
+    /must not contain embedded credentials/
+  );
+
+  const query = createValidConfig();
+  query.providers.local.env.BASE_URL =
+    'https://example.com/v1?api_key=secret';
+  assert.throws(
+    () => validateConfig(query),
+    /must not contain a query or fragment/
+  );
+});
+
+test('configuration v1 adds session defaults and rejects future schemas', () => {
+  const legacy = validateConfig(createValidConfig());
+  assert.equal(legacy.schemaVersion, 1);
+  assert.deepEqual(legacy.sessions, { autoSave: true });
+
+  const disabled = createValidConfig();
+  disabled.schemaVersion = 1;
+  disabled.sessions = { autoSave: false };
+  assert.deepEqual(validateConfig(disabled).sessions, { autoSave: false });
+
+  const future = createValidConfig();
+  future.schemaVersion = 99;
+  assert.throws(
+    () => validateConfig(future),
+    /unsupported configuration schemaVersion/
+  );
+});
+
+test('environment credentials take precedence without mutating process.env', () => {
+  const provider = createValidConfig().providers.local;
+  provider.env.API_KEY = 'stored-secret';
+  provider.env.API_KEY_ENV = 'SYZZZ_TEST_API_KEY';
+  const environment = { SYZZZ_TEST_API_KEY: 'environment-secret' };
+
+  assert.deepEqual(resolveProviderCredential(provider, environment), {
+    value: 'environment-secret',
+    source: 'environment',
+    environmentVariable: 'SYZZZ_TEST_API_KEY'
+  });
+  delete environment.SYZZZ_TEST_API_KEY;
+  assert.deepEqual(resolveProviderCredential(provider, environment), {
+    value: 'stored-secret',
+    source: 'stored',
+    environmentVariable: 'SYZZZ_TEST_API_KEY'
+  });
+  provider.env.API_KEY = '   ';
+  assert.deepEqual(resolveProviderCredential(provider, environment), {
+    value: '',
+    source: 'missing',
+    environmentVariable: 'SYZZZ_TEST_API_KEY'
+  });
+});
+
+test('loading a legacy config creates a private migration backup', () => {
+  const testHome = mkdtempSync(join(tmpdir(), 'syzzz-config-migrate-'));
+  const configDirectory = join(testHome, '.syzzz-code');
+  const configPath = join(configDirectory, 'config.json');
+  try {
+    mkdirSync(configDirectory);
+    writeFileSync(configPath, JSON.stringify(createValidConfig()));
+    const configModuleUrl = pathToFileURL(
+      join(projectDirectory, 'dist', 'config.js')
+    ).href;
+    const script =
+      `const m = await import(${JSON.stringify(configModuleUrl)});` +
+      `console.log(JSON.stringify(m.loadConfig()));`;
+    const result = spawnSync(
+      process.execPath,
+      ['--input-type=module', '--eval', script],
+      {
+        cwd: projectDirectory,
+        encoding: 'utf8',
+        env: {
+          ...process.env,
+          HOME: testHome,
+          USERPROFILE: testHome
+        }
+      }
+    );
+    assert.equal(result.status, 0, result.stderr);
+    assert.equal(JSON.parse(result.stdout).schemaVersion, 1);
+    const files = readdirSync(configDirectory);
+    assert.ok(files.some(name => name.endsWith('.pre-v1.bak')));
+    assert.equal(JSON.parse(readFileSync(configPath, 'utf8')).schemaVersion, 1);
+  } finally {
+    rmSync(testHome, { recursive: true, force: true });
+  }
 });

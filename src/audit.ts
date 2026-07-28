@@ -159,7 +159,8 @@ export function toAuditRecord(
       return {
         ...base,
         provider: event.provider.name,
-        model: event.provider.model
+        model: event.provider.model,
+        mode: event.mode
       };
     case 'phase_changed':
       return { ...base, phase: event.phase };

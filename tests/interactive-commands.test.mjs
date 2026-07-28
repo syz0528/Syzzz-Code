@@ -9,6 +9,8 @@ import {
 function command(name, options = {}) {
   return {
     name,
+    category: 'general',
+    priority: 100,
     description: `${name} command`,
     execute() {
       return 'continue';
@@ -27,6 +29,14 @@ test('command registry resolves aliases and rejects duplicate names', () => {
     () => registry.register(command('other', { aliases: ['help'] })),
     /Duplicate command name or alias/
   );
+  assert.throws(
+    () => registry.register(command('bad-category', { category: 'unknown' })),
+    /Invalid command category/
+  );
+  assert.throws(
+    () => registry.register(command('bad-priority', { priority: -1 })),
+    /Invalid command priority/
+  );
 });
 
 test('slash parsing keeps commands local and leaves double slash escaped', () => {
@@ -43,6 +53,8 @@ test('slash suggestions expose commands and dynamic current choices', async () =
   const context = { streamOutput: true };
   const registry = new CommandRegistry();
   registry.register(command('stream', {
+    category: 'runtime',
+    priority: 80,
     argumentHint: '[on|off]',
     choices(current) {
       return [
@@ -51,13 +63,30 @@ test('slash suggestions expose commands and dynamic current choices', async () =
       ];
     }
   }));
-  registry.register(command('help'));
+  registry.register(command('help', {
+    category: 'general',
+    priority: 140
+  }));
+  registry.register(command('plan', {
+    category: 'work',
+    priority: 20
+  }));
+  registry.register(command('ask', {
+    category: 'work',
+    priority: 10
+  }));
   const provider = createSlashSuggestionProvider(registry, () => context);
 
   const rootRequest = provider.match('/', 1);
   assert.ok(rootRequest);
   const root = await provider.suggest(rootRequest, new AbortController().signal);
-  assert.deepEqual(root.map(item => item.id), ['command:help', 'command:stream']);
+  assert.deepEqual(root.map(item => item.id), [
+    'command:ask',
+    'command:plan',
+    'command:stream',
+    'command:help'
+  ]);
+  assert.match(root[0].description, /^Work modes · /);
   assert.equal(root.find(item => item.id === 'command:stream').submitOnAccept, false);
 
   const choiceRequest = provider.match('/stream ', 8);
@@ -79,14 +108,14 @@ test('slash suggestions expose commands and dynamic current choices', async () =
 
 test('disabled commands are hidden and typo candidates stay bounded', () => {
   const registry = new CommandRegistry();
-  registry.register(command('permissions'));
-  registry.register(command('model'));
+  registry.register(command('permissions', { priority: 50 }));
+  registry.register(command('model', { priority: 60 }));
   registry.register(command('hidden', { isEnabled: context => context.enabled }));
 
   assert.equal(registry.resolve('hidden', { enabled: false }), undefined);
   assert.deepEqual(registry.search('', { enabled: false }).map(item => item.name), [
-    'model',
-    'permissions'
+    'permissions',
+    'model'
   ]);
   assert.deepEqual(
     registry.closest('permisisons', { enabled: false }, 1),

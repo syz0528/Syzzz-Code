@@ -84,6 +84,7 @@ test('runTurn emits ordered envelopes and one completed terminal event', async (
     events.find(event => event.type === 'provider_request_completed').requestId,
     'req-success'
   );
+  assert.equal(events[0].mode, 'code');
 });
 
 test('runTurn reports failure as a terminal event and rolls back history', async () => {

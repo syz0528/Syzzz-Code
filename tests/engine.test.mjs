@@ -854,3 +854,111 @@ test('system prompt includes platform and shell executor details', async () => {
   assert.match(capturedPrompt, /Do not rerun a successful tool/);
   assert.match(capturedPrompt, /do not call a sampled review complete or exhaustive/);
 });
+
+test('ask and plan modes expose only read tools and deny forged side effects', async () => {
+  const requests = [];
+  let writeExecutions = 0;
+  let requestCount = 0;
+  const provider = {
+    async chat(request) {
+      requests.push(structuredClone(request));
+      requestCount += 1;
+      if (requestCount === 1) {
+        return {
+          message: {
+            role: 'assistant',
+            content: '',
+            toolCalls: [{
+              id: 'forged-write',
+              name: 'Write',
+              input: { path: 'blocked.txt' }
+            }]
+          }
+        };
+      }
+      return { message: { role: 'assistant', content: 'Stayed read-only.' } };
+    },
+    getInfo() {
+      return { name: 'Fake', type: 'test' };
+    }
+  };
+  const tools = [
+    {
+      name: 'Read',
+      description: 'Read',
+      inputSchema: z.object({ path: z.string() }).strict(),
+      risk: 'read',
+      approval: 'never',
+      async execute() {
+        return { content: 'read' };
+      }
+    },
+    {
+      name: 'Write',
+      description: 'Write',
+      inputSchema: z.object({ path: z.string() }).strict(),
+      risk: 'write',
+      approval: 'never',
+      async execute() {
+        writeExecutions += 1;
+        return { content: 'written' };
+      }
+    }
+  ];
+  const engine = new QueryEngine({
+    provider,
+    tools,
+    mode: 'ask',
+    permissionMode: 'fullAccess',
+    audit: false
+  });
+
+  assert.equal(await engine.chat('Inspect only'), 'Stayed read-only.');
+  assert.deepEqual(requests[0].tools.map(tool => tool.name), ['Read']);
+  assert.equal(writeExecutions, 0);
+  assert.equal(requests[1].messages.at(-1).isError, true);
+  assert.match(requests[1].messages.at(-1).content, /unavailable in ask mode/);
+
+  engine.setMode('plan');
+  assert.equal(engine.getMode(), 'plan');
+  assert.deepEqual(engine.getStatus().mode, 'plan');
+});
+
+test('engine state validation and persistence health fail closed', () => {
+  const provider = {
+    async chat() {
+      return { message: { role: 'assistant', content: 'done' } };
+    },
+    getInfo() {
+      return { name: 'Fake', type: 'test' };
+    }
+  };
+  const engine = new QueryEngine({
+    provider,
+    tools: [],
+    audit: false
+  });
+
+  assert.deepEqual(engine.getStatus().persistence, {
+    state: 'unmanaged',
+    dirty: false
+  });
+  engine.setPersistenceStatusProvider(() => ({
+    state: 'degraded',
+    dirty: true
+  }));
+  assert.deepEqual(engine.getStatus().persistence, {
+    state: 'degraded',
+    dirty: true
+  });
+  assert.throws(
+    () => engine.restoreState({
+      schemaVersion: 1,
+      messages: [{ role: 'unexpected', content: 'invalid' }],
+      pendingFileChangeReceipts: [],
+      compactionCount: 0,
+      totalUsage: { inputTokens: 0, outputTokens: 0, totalTokens: 0 }
+    }),
+    /unknown message role/
+  );
+});

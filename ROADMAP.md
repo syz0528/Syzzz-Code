@@ -1,9 +1,9 @@
 # Syzzz Code 路线图
 
 **制定日期：** 2026-06-16
-**最近更新：** 2026-07-23
-**适用基线：** `1.0.0` / Phase 1.1 本地冻结提交 `8e275c3`
-**当前入口：** Phase 3 已冻结，下一项进入 Phase 4 会话、模式与终端产品体验
+**最近更新：** 2026-07-28
+**适用基线：** `1.0.0` / Phase 3 冻结提交 `029e718`
+**当前入口：** Phase 4 已冻结，下一项进入 Phase 5
 
 > 路线图描述实施顺序和验收边界。当前代码事实以 [`README.md`](README.md) 和 [`CURRENT_STATUS.md`](CURRENT_STATUS.md) 为准。
 
@@ -511,78 +511,100 @@ RepoMap 按需调用，不自动注入每个 prompt。
 - [x] 真实 Provider 完成 RepoMap/Diagnostics、CRLF Patch、自动压缩、模型缩窗与压缩取消；
 - [x] 标记 **Frozen**，下一项进入 Phase 4。
 
-## 9. Phase 4：会话、模式与终端产品体验
+## 9. Phase 4：工作模式、可恢复会话与终端产品化
 
 ### 目标
 
-在运行时和工具系统稳定后，将基础 REPL 升级为可长期使用的终端产品。
+在 Phase 3 可靠编辑和 Context Manager 之上，完成硬约束工作模式、崩溃可恢复会话、状态可见性、配置迁移与密钥输入。继续使用轻量滚动式终端，不迁移完整 TUI。
 
-### 9.1 工作模式
+### 9.1 Phase 4.0：工作模式
 
-实现三种清晰模式：
+已完成：
 
-- `/ask`：只读分析，不允许副作用工具；
-- `/plan`：分析并生成计划，等待用户批准；
-- `/code`：在权限策略下执行已确认任务。
+- [x] `AgentMode = ask | plan | code`；
+- [x] ask/plan 只向 Provider 暴露只读工具；
+- [x] 执行层再次 fail closed，`fullAccess` 不能绕过；
+- [x] `/ask`、`/plan`、`/code` 支持同行消息；
+- [x] plan 完成后保持模式，执行必须显式 `/code`；
+- [x] prompt、`turn_started` 与 `/status` 显示模式；
+- [x] `chat -m --mode ask|plan|code`；
+- [x] 不实现缺乏可靠价格数据的 `/cost`。
 
-模式限制由 Tool Policy 强制执行，不只改变提示词。
+### 9.2 Phase 4.1：会话生命周期
 
-### 9.2 会话命令
+采用原子 JSON 快照，不引入 SQLite：
 
-Phase 2.1 已提供 `/model`、`/help`、`/permissions`、`/stream` 与 `/exit` 的注册式基础。Phase 4 在同一注册表上继续增加：
+```text
+~/.syzzz-code/sessions/<workspaceHash>/<sessionId>/
+  state.json
+  meta.json
+  lock.json
+```
 
-- `/status`：Provider、模型、模式、权限和上下文；
-- `/clear`：清空当前历史；
-- `/compact`：主动压缩上下文；
-- `/cost`：显示 token 和可用成本信息；
-- `/save`、`/resume`：保存与恢复会话；
-- `/provider`：切换 Provider；是否接入在线模型发现另行评估。
+已完成：
 
-### 9.3 会话持久化
+- [x] `state.json` 恢复真相源与可重建 `meta.json`；
+- [x] 64 MiB 状态硬上限、唯一临时文件、flush 和原子 rename；
+- [x] 本地进程锁、死亡/远端超时锁回收、并发恢复拒绝；
+- [x] 删除前取得独占 lease，活动会话不可删除；
+- [x] 默认自动保存，永久保留，默认启动新会话；
+- [x] 回合、模式、模型、Provider、重命名和压缩后的保存；
+- [x] Write/Edit/Patch 成功后的即时副作用检查点；
+- [x] 恢复 mode，permission 强制重置为 `safe`；
+- [x] Provider/model 缺失时回退并清除过期 reported model；
+- [x] reasoning、API Key、审批和 Abort 状态不进入快照；
+- [x] `/new`、`/clear`、`/resume`、`/rename`、`/save`、`/compact`、`/provider`；
+- [x] `--continue`、`--resume` 与 `sessions list|delete|prune`；
+- [x] `sessions.autoSave=false` 和脏会话切换确认；
+- [x] 一次性 `chat -m` 保持无持久化。
 
-最小版本保存：
+`/clear` 最终定义为 `/new` 别名，旧会话继续保留，不执行破坏性历史删除。会话仅恢复当前规范化 workspace，不跨仓库搜索或迁移。
 
-- 会话 ID 和时间；
-- 用户与 Assistant 消息；
-- 工具调用与结果摘要；
-- Provider 和模型；
-- workspace；
-- compaction summary；
-- execution log 引用。
+### 9.3 Phase 4.2：配置、密钥与 doctor
 
-优先评估 JSONL 或 SQLite，不在第一版引入向量数据库。
+已完成：
 
-### 9.4 配置体验
+- [x] `schemaVersion: 1`；
+- [x] legacy v0 先备份再无损迁移；
+- [x] 损坏配置不自动覆盖；
+- [x] 未知未来 schema 拒绝启动，repair 也不能覆盖；
+- [x] TTY 隐藏 API Key 输入；
+- [x] `--stdin` 自动化输入；
+- [x] `--from-env NAME` 只保存环境变量名；
+- [x] 环境变量优先于存储 Key；
+- [x] 拒绝命令行位置参数中的明文 API Key；
+- [x] Provider 工厂不把配置文件 Key 注入进程环境；
+- [x] 完全离线的 `syzzz doctor`；
+- [x] Node、配置、Provider/模型、凭证来源、Endpoint、目录权限、ripgrep、TypeScript Worker、审计与会话检查；
+- [x] Windows ACL 无法自动验证时明确警告，不宣称已安全；
+- [x] Slash 命令具备类别、稳定优先级和分组帮助，常用模式与运行时控制优先展示；
+- [x] Windows Terminal 输入、历史、中文宽度、粘贴、缩放、EOF 和 Ctrl+C 回归继续通过。
 
-增加：
+### 9.4 克制边界
 
-- 安全的隐藏 API Key 输入；
-- Provider 专属环境变量解析；
-- 配置 schema 版本；
-- 旧配置迁移；
-- `syzzz doctor`；
-- configured model 与 API reported model 区分；
-- 无效配置时允许 `switch` 或 doctor 帮助修复。
+本阶段明确不实现：
 
-### 9.5 TUI
-
-Event Stream 稳定后，再评估：
-
-- `@ai-sdk/tui`；
-- Ink；
-- 自研轻量终端渲染。
-
-选择标准包括：Windows 兼容性、输入控制、工具审批、diff 展示、滚动、流式渲染和维护成本。TUI 不应反向控制 Agent 核心。
+- 完整 TUI；
+- 持久输入历史；
+- 成本数据库；
+- Keychain 或磁盘加密；
+- 云同步与跨工作区迁移；
+- 会话 fork/rewind；
+- 在线模型发现；
+- MCP、Hooks、后台任务、并行工具或子 Agent。
 
 ### Phase 4 退出条件
 
-- 用户能够明确识别当前模式和权限；
-- ask/plan 模式不能执行写入或 Shell 副作用；
-- 会话关闭后可以恢复；
-- 上下文、token 和执行状态可查看；
-- API Key 不再必须通过命令行明文参数输入；
-- 损坏或旧版配置有可操作的迁移/修复路径；
-- Windows 终端连续交互具有稳定回归测试。
+- [x] 用户能够明确识别当前模式和权限；
+- [x] ask/plan 不能执行写入或 Shell 副作用；
+- [x] 会话关闭或进程中断后可从最后检查点恢复；
+- [x] 上下文、token、压缩和持久化状态可查看；
+- [x] API Key 不需要通过命令行明文参数输入；
+- [x] 损坏、旧版和未来配置有明确且防数据丢失的路径；
+- [x] 会话锁、快照、恢复和终端交互具有自动化回归；
+- [x] 完成发布卫生检查与内部 Provider/Windows 进程级 dogfood；
+- [x] 完成用户手动验收；
+- [x] 标记 **Frozen**，下一项进入 Phase 5。
 
 ## 10. Phase 5：MCP、Hooks 与受限子 Agent
 

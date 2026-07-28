@@ -11,11 +11,33 @@ export interface CommandChoice {
   current?: boolean;
 }
 
-export type CommandExecutionResult = 'continue' | 'exit';
+export type CommandExecutionResult =
+  | 'continue'
+  | 'exit'
+  | { submitMessage: string };
+
+export const COMMAND_CATEGORIES = [
+  'work',
+  'session',
+  'runtime',
+  'general'
+] as const;
+
+export type CommandCategory = (typeof COMMAND_CATEGORIES)[number];
+
+export const COMMAND_CATEGORY_LABELS: Record<CommandCategory, string> = {
+  work: 'Work modes',
+  session: 'Session',
+  runtime: 'Runtime',
+  general: 'General'
+};
 
 export interface CommandDefinition<Context> {
   name: string;
   aliases?: readonly string[];
+  category: CommandCategory;
+  /** Lower values appear first when match quality is otherwise equal. */
+  priority: number;
   description: string;
   argumentHint?: string;
   isEnabled?: (context: Context) => boolean;
@@ -86,6 +108,12 @@ export class CommandRegistry<Context> {
     if (!/^[a-z][a-z0-9-]*$/.test(canonicalName)) {
       throw new Error(`Invalid command name: ${command.name}`);
     }
+    if (!COMMAND_CATEGORIES.includes(command.category)) {
+      throw new Error(`Invalid command category: ${command.category}`);
+    }
+    if (!Number.isSafeInteger(command.priority) || command.priority < 0) {
+      throw new Error(`Invalid command priority: ${command.priority}`);
+    }
 
     const commandNames = [canonicalName, ...(command.aliases ?? []).map(normalizeName)];
     for (const name of commandNames) {
@@ -114,13 +142,16 @@ export class CommandRegistry<Context> {
   search(query: string, context: Context): readonly CommandDefinition<Context>[] {
     const normalizedQuery = normalizeName(query);
     return this.list(context)
-      .map(command => ({
+      .map((command, registrationIndex) => ({
         command,
-        score: commandScore(command as CommandDefinition<unknown>, normalizedQuery)
+        score: commandScore(command as CommandDefinition<unknown>, normalizedQuery),
+        registrationIndex
       }))
       .filter(result => Number.isFinite(result.score))
       .sort((left, right) =>
-        left.score - right.score || left.command.name.localeCompare(right.command.name)
+        left.score - right.score ||
+        left.command.priority - right.command.priority ||
+        left.registrationIndex - right.registrationIndex
       )
       .map(result => result.command);
   }
@@ -182,7 +213,8 @@ export function createSlashSuggestionProvider<Context>(
           return {
             id: `command:${command.name}`,
             label: `/${command.name}${command.argumentHint ? ` ${command.argumentHint}` : ''}`,
-            description: command.description,
+            description:
+              `${COMMAND_CATEGORY_LABELS[command.category]} · ${command.description}`,
             insertText: `/${command.name}${hasChoices ? ' ' : ''}`,
             replaceStart: 0,
             replaceEnd: request.query.length + 1,

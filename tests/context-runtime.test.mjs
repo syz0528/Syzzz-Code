@@ -117,6 +117,121 @@ test('auto compaction summarizes old history without exposing summary text', asy
   ));
 });
 
+test('manual compaction emits manual events and commits only the reduced history', async () => {
+  let normalCalls = 0;
+  let summaryCalls = 0;
+  const provider = {
+    async chat(request) {
+      if (request.systemPrompt.includes('Compress the supplied conversation')) {
+        summaryCalls += 1;
+        return {
+          message: {
+            role: 'assistant',
+            content: 'A compact summary of the earlier large response.'
+          }
+        };
+      }
+      normalCalls += 1;
+      return {
+        message: {
+          role: 'assistant',
+          content: 'Large answer '.repeat(500)
+        }
+      };
+    },
+    getInfo() {
+      return providerInfo(2_500);
+    }
+  };
+  const engine = new QueryEngine({
+    provider,
+    tools: [],
+    audit: false,
+    context: smallContextOptions()
+  });
+
+  await engine.chat('seed manual compaction');
+  const before = engine.getMessages();
+  const { events, result } = await collectTurn(engine.compactContext());
+
+  assert.equal(result.status, 'completed');
+  assert.equal(result.compactions, 1);
+  assert.equal(summaryCalls, 1);
+  assert.ok(result.afterTokens < result.beforeTokens);
+  assert.ok(events.some(event =>
+    event.type === 'compaction_started' && event.reason === 'manual'
+  ));
+  assert.ok(events.some(event =>
+    event.type === 'compaction_completed' && event.reason === 'manual'
+  ));
+  assert.notDeepEqual(engine.getMessages(), before);
+  assert.ok(engine.getMessages().some(message =>
+    message.role === 'user' && message.kind === 'compaction-summary'
+  ));
+});
+
+test('cancelling manual compaction rolls back partial multi-pass state', async () => {
+  let summaryCalls = 0;
+  const provider = {
+    async chat() {
+      summaryCalls += 1;
+      return {
+        message: {
+          role: 'assistant',
+          content: 'summary '.repeat(180)
+        }
+      };
+    },
+    getInfo() {
+      return providerInfo(2_500);
+    }
+  };
+  const engine = new QueryEngine({
+    provider,
+    tools: [],
+    audit: false,
+    context: smallContextOptions()
+  });
+  const messages = [];
+  for (let index = 0; index < 10; index += 1) {
+    messages.push({
+      role: 'user',
+      content: `user-${index}`.padEnd(100, ' ')
+    });
+    messages.push({
+      role: 'assistant',
+      content: `answer-${index}`.padEnd(1_000, ' ')
+    });
+  }
+  engine.restoreState({
+    schemaVersion: 1,
+    messages,
+    pendingFileChangeReceipts: [],
+    compactionCount: 0,
+    totalUsage: { inputTokens: 0, outputTokens: 0, totalTokens: 0 }
+  });
+  const before = engine.exportState();
+  const controller = new AbortController();
+  const operation = engine.compactContext({ signal: controller.signal });
+  let result;
+  while (true) {
+    const next = await operation.next();
+    if (next.done) {
+      result = next.value;
+      break;
+    }
+    if (next.value.type === 'compaction_completed') {
+      controller.abort();
+    }
+  }
+
+  assert.equal(result.status, 'cancelled');
+  assert.equal(summaryCalls, 1);
+  assert.deepEqual(engine.getMessages(), before.messages);
+  assert.equal(engine.getStatus().context.compactions, 0);
+  assert.equal(engine.getStatus().context.compactionCircuitOpen, false);
+});
+
 test('compaction retries one transient summary failure inside its two-attempt budget', async () => {
   let normalCalls = 0;
   let summaryAttempts = 0;

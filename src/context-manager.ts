@@ -29,6 +29,15 @@ export interface ContextManagerOptions {
   maxConsecutiveFailures?: number;
 }
 
+export interface ContextManagerPersistentState {
+  compactionCount: number;
+}
+
+export interface ContextManagerRuntimeState
+  extends ContextManagerPersistentState {
+  consecutiveFailures: number;
+}
+
 interface ResolvedContextManagerOptions {
   autoCompact: boolean;
   defaultWindowTokens: number;
@@ -286,6 +295,41 @@ export class ContextManager {
 
   get compactions(): number {
     return this.compactionCount;
+  }
+
+  exportPersistentState(): ContextManagerPersistentState {
+    return { compactionCount: this.compactionCount };
+  }
+
+  exportRuntimeState(): ContextManagerRuntimeState {
+    return {
+      compactionCount: this.compactionCount,
+      consecutiveFailures: this.consecutiveFailures
+    };
+  }
+
+  restorePersistentState(state: ContextManagerPersistentState): void {
+    if (
+      !Number.isSafeInteger(state.compactionCount) ||
+      state.compactionCount < 0
+    ) {
+      throw new Error('context compactionCount must be a non-negative integer');
+    }
+    this.compactionCount = state.compactionCount;
+    this.consecutiveFailures = 0;
+  }
+
+  restoreRuntimeState(state: ContextManagerRuntimeState): void {
+    if (
+      !Number.isSafeInteger(state.compactionCount) ||
+      state.compactionCount < 0 ||
+      !Number.isSafeInteger(state.consecutiveFailures) ||
+      state.consecutiveFailures < 0
+    ) {
+      throw new Error('context runtime state must contain non-negative integers');
+    }
+    this.compactionCount = state.compactionCount;
+    this.consecutiveFailures = state.consecutiveFailures;
   }
 
   get maxToolResultBytes(): number {
