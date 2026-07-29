@@ -220,7 +220,7 @@ syzzz hooks doctor
 
 ## 5. 人工验收
 
-自动化通过后，在临时工作区完成以下 Phase 5.1 dogfood；通过前只能标记 `Validated`，不能标记 Frozen。
+以下 Phase 5.1 dogfood 已于 2026-07-29 在临时工作区全部完成，结果为 **11/11 通过**。Phase 5 已标记为 `Frozen`；该清单继续作为后续发布前的扩展回归协议。
 
 1. **未信任边界**
 
@@ -282,3 +282,10 @@ syzzz hooks doctor
 ```text
 syzzz mcp remove phase5-fixture
 ```
+
+### 冻结记录
+
+- 真实 Provider 与 Windows Terminal 完成 Trust V2、MCP 策略/重连、Hook、Explore/Review、取消和恢复验收。
+- 公开 Streamable HTTP MCP 完成协议 `2025-11-25` 握手、11 个只读工具发现，以及地理编码和天气预报调用。
+- 自动化、人工验收与远程 smoke test 均未发现需要重新打开 Phase 5 的 P0 安全、数据破坏或确定性协议问题。
+- Phase 5.0 Core 检查点为 `000bcaa`，Phase 5.1 实现验证基线为 `85b2558`；版本号仍为 `1.0.0`，未创建 Tag 或发布 npm 包。

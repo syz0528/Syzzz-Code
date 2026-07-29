@@ -2,8 +2,8 @@
 
 **制定日期：** 2026-06-16
 **最近更新：** 2026-07-29
-**适用基线：** `1.0.0` / Phase 4 冻结提交 `3d2b8e6`
-**当前入口：** Phase 5.1 已完成实现与自动化验证，状态为 **Validated**，等待人工扩展 dogfood
+**适用基线：** `1.0.0` / Phase 5.1 实现验证提交 `85b2558`
+**当前入口：** Phase 5 与 Phase 5.1 已于 2026-07-29 标记为 **Frozen**，下一阶段进入 Phase 6
 
 > 路线图描述实施顺序和验收边界。当前代码事实以 [`README.md`](README.md) 和 [`CURRENT_STATUS.md`](CURRENT_STATUS.md) 为准。
 
@@ -608,7 +608,7 @@ RepoMap 按需调用，不自动注入每个 prompt。
 
 ## 10. Phase 5：可信扩展运行时、MCP Broker 与受限委派
 
-**状态：** Phase 5.0 Core 已建立非冻结检查点；Phase 5.1 加固实现与自动化验证完成，状态为 **Validated**，等待人工 dogfood，尚未 Frozen。
+**状态：** Phase 5.0 Core 检查点与 Phase 5.1 加固均已完成；253 项自动化测试、11 项人工 dogfood 和真实远程 MCP 验证通过，已于 2026-07-29 标记为 **Frozen**。
 
 ### 目标
 
@@ -665,6 +665,7 @@ RepoMap 按需调用，不自动注入每个 prompt。
 - [x] Subagent 工具调用、Provider 请求、软硬时间和 token 预算；
 - [x] `partial`、`stopReason`、Provider 调用数和报告截断事件语义；
 - [x] Phase 5.0 Core 非冻结检查点 `000bcaa`。
+- [x] Phase 5.1 实现验证基线 `85b2558`。
 
 ### 10.5 克制边界
 
@@ -686,8 +687,9 @@ RepoMap 按需调用，不自动注入每个 prompt。
 - [x] NDJSON、审计和会话隐私边界有自动化回归；
 - [x] README、CURRENT_STATUS、SECURITY 与扩展指南同步；
 - [x] 生产依赖审计、npm 包 allowlist、diff-check 与离线 doctor 通过；
-- [ ] 使用真实终端与 Provider 完成 Phase 5.1 dogfood；
-- [ ] 人工验收通过后标记 **Frozen** 并推送分支。
+- [x] 使用真实终端与 Provider 完成 Phase 5.1 的 11 项 dogfood；
+- [x] 使用公开 Streamable HTTP MCP 完成真实握手、发现与只读调用；
+- [x] 人工验收通过并标记 **Frozen**。
 
 ## 11. Phase 6：持续评测、发布与工程治理
 
@@ -841,20 +843,22 @@ RepoMap 按需调用，不自动注入每个 prompt。
 - [x] 完成 Trust V2、MCP 策略与连接生命周期加固；
 - [x] 完成扩展状态、生命周期 Hook 与 Subagent 预算闭环；
 - [x] 扩展自动化套件到 253 项；
-- [x] 新增 SECURITY 与扩展使用文档。
+- [x] 新增 SECURITY 与扩展使用文档；
+- [x] 完成 11 项真实终端 dogfood 与公开远程 MCP smoke test；
+- [x] 标记 Phase 5 Frozen。
 
-### 当前验收
+### 冻结验收
 
 - [x] 全量自动化回归通过；
 - [x] 官方 v2 stdio 与本地 Streamable HTTP 传输回归通过；
 - [x] 环境、NDJSON、审计和管理输出脱敏回归通过；
-- [ ] 完成真实 DeepSeek 的 Trust V2、MCP 策略/重连、Hook 和 Subagent 预算 dogfood；
-- [ ] 完成用户人工验收；
-- [ ] 标记 Phase 5 Frozen 并推送 `codex/phase5-extensions`。
+- [x] 完成真实 DeepSeek 的 Trust V2、MCP 策略/重连、Hook 和 Subagent 预算 dogfood；
+- [x] 完成用户人工验收；
+- [x] 标记 Phase 5 Frozen。
 
 ### 下一阶段入口
 
-Phase 5.1 人工验收通过并统一冻结 Phase 5 后进入 Phase 6，重点转向持续评测、跨平台 CI、发布和工程治理，不在 Phase 5 继续扩展生态能力。
+Phase 5 已冻结。Phase 6 重点转向持续评测、跨平台 CI、发布和工程治理，不在 Phase 5 继续扩展生态能力。
 
 ## 15. 路线图完成标准
 

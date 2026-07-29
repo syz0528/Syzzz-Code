@@ -8,7 +8,9 @@
 
 **Phase 5.0 Core 检查点：** `000bcaa`
 
-**当前阶段：** Phase 5.1 已完成实现与自动化验证，状态为 **Validated，等待人工 dogfood**
+**Phase 5.1 实现验证基线：** `85b2558`
+
+**当前阶段：** Phase 5 与 Phase 5.1 已于 2026-07-29 完成人工验收并标记为 **Frozen**
 
 ## 1. 当前结论
 
@@ -22,7 +24,7 @@ Phase 5.1 在此基础上补齐扩展配置复审、MCP 本地收紧策略与断
 
 完整自动化测试为 **253/253**。Phase 1 至 Phase 4 的路径、权限、事件、Provider、终端、上下文、可靠编辑和会话恢复契约继续通过。
 
-Phase 5.1 尚未标记 Frozen。必须先完成真实 Provider、真实终端、项目 trust 复审、MCP 策略与断线重连、Hook 和 Subagent 预算人工验收。
+11 项真实终端 dogfood 已全部通过，覆盖项目 trust 复审、MCP 策略与断线重连、Hook、Subagent 预算、取消清理、隐私恢复和撤销信任。公开 Streamable HTTP MCP 的真实握手、工具发现与只读天气调用也已通过，Phase 5 的扩展信任和传输闭环达到冻结条件。
 
 ## 2. 扩展信任
 
@@ -176,6 +178,14 @@ subagents.enabled = true
 - Subagent：工具白名单、深度/数量/轮次/工具数/Provider 请求/软硬 token/软收束/上下文/报告上限、partial、usage、父取消、失败后无重复调查和无 transcript 持久化
 - 扩展配置：用户/项目覆盖、Trust V2 摘要稳定性、V1 复审、变化立即失效、确认期 TOCTOU、损坏 fail closed 和管理输出脱敏
 
+人工冻结验收：
+
+- Phase 5.1 清单：**11/11**
+- 真实 Provider 与 Windows Terminal：Trust V2、策略、Hook、Explore/Review、恢复与取消均通过
+- 真实远程 Streamable HTTP：协商 MCP `2025-11-25`，发现 11 个只读工具，地理编码与天气预报调用成功
+- 风险闭环：未受信项目扩展不启动，配置变化进入 `review-required`，`disabled` 与 Hook deny 均不能被 `fullAccess` 绕过
+- 隐私闭环：NDJSON、审计与会话恢复未泄露认证头、Hook payload 或 Subagent transcript
+
 最终发布卫生已通过：
 
 - `npm audit --omit=dev`：`0 vulnerabilities`
@@ -199,19 +209,14 @@ subagents.enabled = true
 - 当前分支：`codex/phase5-extensions`
 - Phase 4 冻结提交：`3d2b8e6`
 - Phase 5.0 Core 非冻结检查点：`000bcaa`
+- Phase 5.1 实现验证基线：`85b2558`
+- Phase 5 与 Phase 5.1：2026-07-29 标记 Frozen
 - 版本号保持 `1.0.0`
 - 未发布 npm 包，未创建 Tag
 - 既有 archive 行尾状态、`phase3-manual.ts` 和 `phase2-events.jsonl` 不属于 Phase 5，不纳入本阶段提交
 
 ## 10. 冻结条件
 
-Phase 5.1 代码和自动化验证已经达到 **Validated**。下一步按照 [扩展使用指南](docs/EXTENSIONS.md) 完成以下人工 dogfood：
+Phase 5.1 实现、253 项自动化测试、发布卫生、11 项人工 dogfood 与真实远程 MCP smoke test 均已通过。Phase 5.1 和 Phase 5 统一标记为 **Frozen**。
 
-- 项目配置变化后立即进入 `review-required`，只有重新 `/trust` 才恢复；
-- MCP `disabled` 与 `execute` 策略符合发现、模式和审批边界；
-- stdio Server 异常退出后不重放当前调用，下一次独立操作惰性重连；
-- 压缩与 Subagent Hook 收到有界元数据且不收到摘要、任务、报告或 transcript；
-- Explore/Review 在软硬预算处返回可解释的 `partial` 或明确停止原因；
-- NDJSON、审计与会话恢复不泄露 Secret、Hook payload 或 Subagent transcript。
-
-只有人工验收通过后，才把 Phase 5.1 和 Phase 5 统一标记为 **Frozen** 并推送分支。
+此后除 P0 安全、数据破坏或确定性扩展协议回归外，不再重新打开 Phase 5 增加能力。OAuth、MCP Resources/Prompts/Sampling、写入型或并行 Subagent、Skills 与完整 TUI 继续留在后续独立阶段评估；下一阶段进入 Phase 6。

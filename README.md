@@ -2,7 +2,7 @@
 
 Syzzz Code 是一个使用 TypeScript 构建的实验性命令行 AI 编程 Agent。它提供统一的 Provider 接口、事件化 Agent Runtime、受约束的代码库工具、可靠编辑、上下文压缩、可恢复的本地会话，以及受信任边界约束的 MCP、Hooks 和只读 Subagent。
 
-当前实现已完成 Phase 5.1 的代码与自动化验证，状态为 **Validated**，正在等待人工扩展 dogfood。项目目标是成为一个安全边界清晰、可观察、可恢复，并适合在真实代码库中持续使用的本地编程助手。
+Phase 5 与 Phase 5.1 已于 2026-07-29 完成自动化、人工扩展 dogfood 和真实远程 MCP 验证，状态为 **Frozen**。项目目标是成为一个安全边界清晰、可观察、可恢复，并适合在真实代码库中持续使用的本地编程助手。
 
 > [!WARNING]
 > Syzzz Code 仍处于实验阶段。文件工具受工作区边界、敏感路径和并发 hash 校验保护，但 Shell 不是 OS sandbox。获批或在 `fullAccess` 下自动执行的命令仍可产生工作区外副作用。
@@ -334,6 +334,8 @@ git diff --check
 
 当前自动化套件包含 253 项测试，覆盖 Phase 1 至 Phase 5.1 的路径与权限安全、事件 Runtime、Provider 可靠性、终端交互、代码库上下文、压缩、会话恢复、配置迁移、Trust V2、MCP 传输与策略、Hooks 和只读 Subagent 预算。
 
+Phase 5 冻结验收还完成了 11 项真实终端 dogfood，覆盖未信任边界、Trust V2 复审、MCP 策略与惰性重连、Hook 拒绝与生命周期、取消清理、Subagent 预算、隐私恢复和撤销信任。公开 Streamable HTTP MCP 的真实握手、工具发现及只读天气调用同样通过；该外部服务只用于兼容性验证，不是 Syzzz 的运行依赖。
+
 npm 包使用 allowlist，只包含 `dist`、`README.md`、`SECURITY.md`、`docs` 和 npm 固定元数据，不包含 `src`、`tests`、`archive`、本地配置或历史报告。
 
 ## 已知边界
@@ -353,4 +355,4 @@ npm 包使用 allowlist，只包含 `dist`、`README.md`、`SECURITY.md`、`docs
 
 ## 当前阶段
 
-Phase 4 保持 **Frozen**。Phase 5.0 Core 已建立非冻结检查点，Phase 5.1 已完成实现和自动化验证，当前状态为 **Validated，等待人工 dogfood**；通过人工验收后才会标记 Frozen 并推送分支。版本号保持 `1.0.0`，尚未发布 npm 包或创建 Tag。
+Phase 1 至 Phase 5 均保持 **Frozen**。Phase 5.0 Core 检查点为 `000bcaa`，Phase 5.1 实现验证基线为 `85b2558`；后续除 P0 安全、数据破坏或确定性扩展协议回归外，不再向 Phase 5 增加能力。下一阶段进入 Phase 6 持续评测、跨平台 CI、发布与工程治理。版本号保持 `1.0.0`，尚未发布 npm 包或创建 Tag。
