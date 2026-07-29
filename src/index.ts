@@ -24,6 +24,11 @@ import {
 } from './config.js';
 import { runDoctor } from './doctor.js';
 import { QueryEngine } from './engine.js';
+import { ExtensionRuntime } from './extensions/runtime.js';
+import {
+  manageHooks,
+  manageMcp
+} from './extensions/management.js';
 import {
   runInteractiveSession,
   type InteractiveProviderOption
@@ -40,7 +45,7 @@ import {
   type SessionEngineResult
 } from './session-controller.js';
 import { SessionStore } from './session-store.js';
-import { OperationAbortedError } from './tools/abort.js';
+import { isAbortError, OperationAbortedError } from './tools/abort.js';
 
 const program = new Command();
 
@@ -51,6 +56,10 @@ interface InteractiveStartupOptions {
   continue?: boolean;
   resume?: string;
   streamOutput?: boolean;
+}
+
+function collectOption(value: string, previous: string[]): string[] {
+  return [...previous, value];
 }
 
 function parseOutputFormat(value: string): OutputFormat {
@@ -103,6 +112,23 @@ function usableProvider(
     : undefined;
 }
 
+function providerCredentialEnvironmentNames(config: Config): string[] {
+  return [
+    ...new Set(
+      Object.values(config.providers)
+        .map(provider => provider.env.API_KEY_ENV)
+        .filter((name): name is string => Boolean(name))
+    )
+  ];
+}
+
+function configuredProviderCredentialEnvironmentNames(): string[] {
+  const inspection = inspectConfig();
+  return inspection.status === 'valid'
+    ? providerCredentialEnvironmentNames(inspection.config)
+    : [];
+}
+
 function createConfiguredEngine(
   request: SessionEngineRequest
 ): SessionEngineResult {
@@ -136,6 +162,12 @@ function createConfiguredEngine(
     }
   }
   const provider = createProvider(providerWithModel(selected.provider, model));
+  const extensions = new ExtensionRuntime({
+    workspaceRoot: process.cwd(),
+    subagentsEnabled: config.subagents.enabled,
+    subagentsAvailable: Boolean(provider.fork),
+    forbiddenEnvironmentNames: providerCredentialEnvironmentNames(config)
+  });
   const audit = new LocalAuditLogger({
     config: config.audit,
     sessionId: request.sessionId,
@@ -147,7 +179,8 @@ function createConfiguredEngine(
     mode: request.mode,
     workspaceRoot: process.cwd(),
     context: config.context,
-    audit
+    audit,
+    extensions
   });
   return {
     engine,
@@ -191,6 +224,11 @@ function createInteractiveOptions(
     persistStreamOutput(enabled: boolean) {
       const latest = loadConfig();
       latest.ui.streamOutput = enabled;
+      saveConfig(latest);
+    },
+    persistSubagentsEnabled(enabled: boolean) {
+      const latest = loadConfig();
+      latest.subagents.enabled = enabled;
       saveConfig(latest);
     },
     persistModel(model: string, providerId: string) {
@@ -322,6 +360,7 @@ async function runSingleMessage(
   } finally {
     renderer?.stop();
     process.removeListener('SIGINT', handleInterrupt);
+    await engine.close();
   }
 }
 
@@ -619,6 +658,101 @@ program
     } catch (error) {
       const reason = error instanceof Error ? error.message : String(error);
       console.error(chalk.red('\nSession command failed:'), `${reason}\n`);
+      process.exitCode = 1;
+    }
+  });
+
+program
+  .command('mcp')
+  .description('Manage and diagnose MCP servers')
+  .argument('<action>', 'Action: list, add, remove, enable, disable, doctor')
+  .argument('[name]', 'MCP server name')
+  .argument('[command...]', 'stdio command and arguments after the server name')
+  .option('--scope <scope>', 'Configuration scope: user or project', 'user')
+  .option('--url <url>', 'Configure a Streamable HTTP endpoint')
+  .option(
+    '--header <name=value>',
+    'Add an HTTP header template; repeat for multiple headers',
+    collectOption,
+    []
+  )
+  .option(
+    '--env <name=value>',
+    'Add a stdio environment template; repeat for multiple variables',
+    collectOption,
+    []
+  )
+  .option('--protocol-mode <mode>', 'MCP protocol mode: legacy or modern')
+  .option('--json', 'Emit machine-readable JSON')
+  .action(async (action, name, command, options) => {
+    const abortController = new AbortController();
+    const handleInterrupt = () => {
+      abortController.abort(new OperationAbortedError());
+    };
+    process.once('SIGINT', handleInterrupt);
+    try {
+      const result = await manageMcp({
+        action,
+        name,
+        command,
+        scope: options.scope,
+        url: options.url,
+        headers: options.header,
+        environment: options.env,
+        protocolMode: options.protocolMode,
+        json: options.json,
+        workspaceRoot: process.cwd(),
+        signal: abortController.signal,
+        forbiddenEnvironmentNames:
+          configuredProviderCredentialEnvironmentNames()
+      });
+      console.log(options.json ? JSON.stringify(result.json) : result.text);
+    } catch (error) {
+      const reason = error instanceof Error ? error.message : String(error);
+      console.error(chalk.red('\nMCP command failed:'), `${reason}\n`);
+      process.exitCode = isAbortError(error) ? 130 : 1;
+    } finally {
+      process.removeListener('SIGINT', handleInterrupt);
+    }
+  });
+
+program
+  .command('hooks')
+  .description('Manage and validate local command Hooks')
+  .argument('<action>', 'Action: list, add, remove, enable, disable, doctor')
+  .argument('[name]', 'Hook name')
+  .argument('[command...]', 'Hook command and arguments after the name')
+  .option('--scope <scope>', 'Configuration scope: user or project', 'user')
+  .option('--event <event>', 'Hook lifecycle event')
+  .option('--matcher <glob>', 'Tool matcher glob')
+  .option('--timeout-ms <milliseconds>', 'Hook timeout')
+  .option('--on-error <policy>', 'Failure policy: continue or deny')
+  .option(
+    '--env <name=value>',
+    'Add a Hook environment template; repeat for multiple variables',
+    collectOption,
+    []
+  )
+  .option('--json', 'Emit machine-readable JSON')
+  .action(async (action, name, command, options) => {
+    try {
+      const result = await manageHooks({
+        action,
+        name,
+        command,
+        scope: options.scope,
+        event: options.event,
+        matcher: options.matcher,
+        timeoutMs: options.timeoutMs,
+        onError: options.onError,
+        environment: options.env,
+        json: options.json,
+        workspaceRoot: process.cwd()
+      });
+      console.log(options.json ? JSON.stringify(result.json) : result.text);
+    } catch (error) {
+      const reason = error instanceof Error ? error.message : String(error);
+      console.error(chalk.red('\nHooks command failed:'), `${reason}\n`);
       process.exitCode = 1;
     }
   });

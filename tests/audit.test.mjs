@@ -101,6 +101,69 @@ test('audit records only allowlisted metadata', () => {
     JSON.stringify(compaction).includes('PRIVATE COMPACTION SUMMARY'),
     false
   );
+
+  const mcp = toAuditRecord(envelope('mcp_server_status', {
+    server: 'fixture',
+    source: 'project',
+    transport: 'http',
+    state: 'error',
+    toolCount: 2,
+    errorCode: 'connection',
+    url: 'https://secret.example/mcp?token=private',
+    headers: { Authorization: 'Bearer private' }
+  }), 'workspace-hash');
+  const hook = toAuditRecord(envelope('hook_completed', {
+    hook: 'policy',
+    event: 'PreToolUse',
+    source: 'project',
+    outcome: 'denied',
+    durationMs: 4,
+    payload: { command: 'PRIVATE COMMAND' },
+    stdout: 'PRIVATE STDOUT'
+  }), 'workspace-hash');
+  const subagentStarted = toAuditRecord(envelope('subagent_started', {
+    role: 'review',
+    task: 'PRIVATE DELEGATED TASK'
+  }), 'workspace-hash');
+  const subagentProgress = toAuditRecord(envelope('subagent_progress', {
+    role: 'review',
+    phase: 'tool',
+    toolName: 'Read',
+    transcript: 'PRIVATE TRANSCRIPT'
+  }), 'workspace-hash');
+  const subagentCompleted = toAuditRecord(envelope('subagent_completed', {
+    role: 'review',
+    outcome: 'success',
+    durationMs: 25,
+    toolCalls: 3,
+    usage: { inputTokens: 20, outputTokens: 10 },
+    report: 'PRIVATE REPORT'
+  }), 'workspace-hash');
+  const extensionsSerialized = JSON.stringify({
+    mcp,
+    hook,
+    subagentCompleted
+  });
+  assert.equal(subagentStarted, undefined);
+  assert.equal(subagentProgress, undefined);
+  assert.doesNotMatch(
+    extensionsSerialized,
+    /secret\.example|Authorization|PRIVATE|token/
+  );
+  assert.deepEqual(subagentCompleted, {
+    schemaVersion: 1,
+    sessionId: 'session-audit',
+    turnId: 'turn-audit',
+    sequence: 1,
+    timestamp: '2026-07-22T00:00:00.000Z',
+    type: 'subagent_completed',
+    workspaceId: 'workspace-hash',
+    role: 'review',
+    outcome: 'success',
+    durationMs: 25,
+    toolCalls: 3,
+    usage: { inputTokens: 20, outputTokens: 10 }
+  });
 });
 
 test('local audit logger writes JSONL without raw content', async () => {

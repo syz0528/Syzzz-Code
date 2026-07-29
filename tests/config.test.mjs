@@ -222,15 +222,26 @@ test('rejects Provider URLs that could expose embedded credentials', () => {
   );
 });
 
-test('configuration v1 adds session defaults and rejects future schemas', () => {
+test('configuration v1 adds session and subagent defaults and rejects future schemas', () => {
   const legacy = validateConfig(createValidConfig());
   assert.equal(legacy.schemaVersion, 1);
   assert.deepEqual(legacy.sessions, { autoSave: true });
+  assert.deepEqual(legacy.subagents, { enabled: true });
 
   const disabled = createValidConfig();
   disabled.schemaVersion = 1;
   disabled.sessions = { autoSave: false };
-  assert.deepEqual(validateConfig(disabled).sessions, { autoSave: false });
+  disabled.subagents = { enabled: false };
+  const validatedDisabled = validateConfig(disabled);
+  assert.deepEqual(validatedDisabled.sessions, { autoSave: false });
+  assert.deepEqual(validatedDisabled.subagents, { enabled: false });
+
+  const invalidSubagents = createValidConfig();
+  invalidSubagents.subagents = { enabled: 'sometimes' };
+  assert.throws(
+    () => validateConfig(invalidSubagents),
+    /subagents.enabled must be a boolean/
+  );
 
   const future = createValidConfig();
   future.schemaVersion = 99;

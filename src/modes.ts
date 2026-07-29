@@ -24,9 +24,18 @@ export function agentModeDescription(mode: AgentMode): string {
 
 export function isToolAllowedInMode(
   mode: AgentMode,
-  tool: Pick<ToolDefinition, 'risk'>
+  tool: Pick<ToolDefinition, 'risk' | 'modeAccess'>
 ): boolean {
-  return mode === 'code' || tool.risk === 'read';
+  return mode === 'code' ||
+    tool.risk === 'read' ||
+    tool.modeAccess === 'all-modes';
+}
+
+export function isToolRiskAllowedInMode(
+  mode: AgentMode,
+  risk: ToolDefinition['risk']
+): boolean {
+  return mode === 'code' || risk === 'read';
 }
 
 export function modeSystemInstructions(mode: AgentMode): readonly string[] {

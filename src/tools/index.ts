@@ -20,6 +20,8 @@ import { defineTool } from './runtime.js';
 import { globTool, grepTool } from './search-tools.js';
 import { runShellCommand, type ShellRunResult } from './shell-runner.js';
 import { resolveWorkspacePath } from './workspace.js';
+import type { McpManager } from '../extensions/mcp-manager.js';
+import { createMcpTools } from '../extensions/mcp-tools.js';
 
 const MAX_PATH_CHARACTERS = 4_096;
 const MAX_FILE_CONTENT_CHARACTERS = 2_000_000;
@@ -462,7 +464,7 @@ export const editTool = defineTool({
   }
 });
 
-export const allTools: ToolDefinition[] = [
+const coreTools: ToolDefinition[] = [
   globTool,
   grepTool,
   repoMapTool,
@@ -477,6 +479,23 @@ export const allTools: ToolDefinition[] = [
   shellTool
 ];
 
+export interface ToolRuntimeServices {
+  mcpManager?: McpManager;
+  delegateTool?: ToolDefinition;
+}
+
+export function createToolSet(
+  services: ToolRuntimeServices = {}
+): ToolDefinition[] {
+  return [
+    ...coreTools,
+    ...(services.mcpManager ? createMcpTools(services.mcpManager) : []),
+    ...(services.delegateTool ? [services.delegateTool] : [])
+  ];
+}
+
+export const allTools: ToolDefinition[] = createToolSet();
+
 export {
   diagnosticsTool,
   gitDiffTool,
@@ -484,5 +503,6 @@ export {
   globTool,
   grepTool,
   patchTool,
+  readRangeTool,
   repoMapTool
 };

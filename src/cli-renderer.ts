@@ -151,6 +151,8 @@ export class HumanEventRenderer {
           this.startSpinner('Thinking...');
         } else if (event.phase === 'compaction') {
           this.startSpinner('Compacting context...');
+        } else if (event.phase === 'subagent') {
+          this.startSpinner('Delegating read-only work...');
         }
         break;
       case 'compaction_started':
@@ -189,6 +191,10 @@ export class HumanEventRenderer {
           this.startSpinner('Retrying context compaction...');
           break;
         }
+        if (event.purpose === 'subagent') {
+          this.startSpinner('Retrying subagent...');
+          break;
+        }
         {
           const recoveryStatus = immediateRecoveryStatus(event);
           if (recoveryStatus) {
@@ -207,6 +213,53 @@ export class HumanEventRenderer {
       case 'tool_started':
         this.stopForStatus();
         this.startSpinner(`Running ${event.toolName}...`);
+        break;
+      case 'mcp_server_status':
+        this.stopForStatus();
+        if (event.state === 'connecting') {
+          this.startSpinner(`Connecting MCP ${event.server}...`);
+        } else if (event.state === 'error') {
+          this.writeLine(chalk.yellow(
+            `MCP ${event.server} unavailable (${event.errorCode ?? 'error'})`
+          ));
+        }
+        break;
+      case 'hook_started':
+        this.stopForStatus();
+        this.startSpinner(`Running Hook ${event.hook}...`);
+        break;
+      case 'hook_completed':
+        this.stopForStatus();
+        if (event.outcome !== 'success') {
+          this.writeLine(chalk.yellow(
+            `Hook ${event.hook} ${event.outcome}` +
+            `${event.errorCode ? ` (${event.errorCode})` : ''}`
+          ));
+        }
+        break;
+      case 'subagent_started':
+        this.stopForStatus();
+        this.startSpinner(
+          event.role === 'review'
+            ? 'Reviewing in subagent...'
+            : 'Exploring in subagent...'
+        );
+        break;
+      case 'subagent_progress':
+        this.setSpinnerText(
+          event.phase === 'tool' && event.toolName
+            ? `Subagent reading with ${event.toolName}...`
+            : 'Subagent thinking...'
+        );
+        break;
+      case 'subagent_completed':
+        this.stopForStatus();
+        if (event.outcome !== 'success') {
+          this.writeLine(chalk.yellow(
+            `Subagent ${event.role} ${event.outcome}` +
+            `${event.errorCode ? ` (${event.errorCode})` : ''}`
+          ));
+        }
         break;
       case 'tool_completed': {
         this.stopForStatus();

@@ -276,6 +276,43 @@ export function toAuditRecord(
         outcome: event.outcome,
         durationMs: event.durationMs
       };
+    case 'mcp_server_status':
+      return {
+        ...base,
+        server: event.server,
+        source: event.source,
+        transport: event.transport,
+        state: event.state,
+        toolCount: event.toolCount,
+        ...(event.errorCode ? { errorCode: event.errorCode } : {})
+      };
+    case 'hook_started':
+      return {
+        ...base,
+        hook: event.hook,
+        event: event.event,
+        source: event.source
+      };
+    case 'hook_completed':
+      return {
+        ...base,
+        hook: event.hook,
+        event: event.event,
+        source: event.source,
+        outcome: event.outcome,
+        durationMs: event.durationMs,
+        ...(event.errorCode ? { errorCode: event.errorCode } : {})
+      };
+    case 'subagent_completed':
+      return {
+        ...base,
+        role: event.role,
+        outcome: event.outcome,
+        durationMs: event.durationMs,
+        toolCalls: event.toolCalls,
+        ...(event.usage ? { usage: event.usage } : {}),
+        ...(event.errorCode ? { errorCode: event.errorCode } : {})
+      };
     case 'turn_completed':
       return {
         ...base,

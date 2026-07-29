@@ -918,10 +918,66 @@ test('ask and plan modes expose only read tools and deny forged side effects', a
   assert.equal(writeExecutions, 0);
   assert.equal(requests[1].messages.at(-1).isError, true);
   assert.match(requests[1].messages.at(-1).content, /unavailable in ask mode/);
+  assert.match(requests[1].messages.at(-1).content, /work mode to code/);
+  assert.match(requests[1].messages.at(-1).content, /permission mode is a separate/);
 
   engine.setMode('plan');
   assert.equal(engine.getMode(), 'plan');
   assert.deepEqual(engine.getStatus().mode, 'plan');
+});
+
+test('a successful file side effect is reinforced in the final Provider request', async () => {
+  const requests = [];
+  let executions = 0;
+  const provider = {
+    async chat(request) {
+      requests.push(request);
+      if (requests.length === 1) {
+        return {
+          message: {
+            role: 'assistant',
+            content: '',
+            toolCalls: [{
+              id: 'write-side-effect',
+              name: 'Write',
+              input: { path: 'confirmed.txt' }
+            }]
+          }
+        };
+      }
+      return {
+        message: {
+          role: 'assistant',
+          content: 'confirmed.txt was created.'
+        }
+      };
+    },
+    getInfo() {
+      return { name: 'Fake', type: 'test' };
+    }
+  };
+  const engine = new QueryEngine({
+    provider,
+    tools: [{
+      name: 'Write',
+      description: 'Write',
+      inputSchema: z.object({ path: z.string() }).strict(),
+      risk: 'write',
+      approval: 'never',
+      async execute() {
+        executions += 1;
+        return { content: 'written' };
+      }
+    }],
+    mode: 'code',
+    permissionMode: 'fullAccess',
+    audit: false
+  });
+
+  assert.equal(await engine.chat('write once'), 'confirmed.txt was created.');
+  assert.equal(executions, 1);
+  assert.match(requests[1].systemPrompt, /Confirmed file side effects succeeded/);
+  assert.match(requests[1].systemPrompt, /must not claim that no file was modified/);
 });
 
 test('engine state validation and persistence health fail closed', () => {

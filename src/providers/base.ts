@@ -103,4 +103,6 @@ export interface AIProvider {
   getInfo(): ProviderInfo;
 
   setModel?(model: string): void;
+
+  fork?(): AIProvider;
 }

@@ -5,6 +5,7 @@ import {
   mkdir,
   stat
 } from 'node:fs/promises';
+import { existsSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { join } from 'node:path';
 import {
@@ -14,6 +15,12 @@ import {
   resolveProviderCredential
 } from './config.js';
 import { SessionStore } from './session-store.js';
+import {
+  getExtensionConfigPaths,
+  inspectProjectExtensions,
+  loadExtensionConfiguration
+} from './extensions/config.js';
+import { inspectWorkspaceTrust } from './extensions/trust.js';
 
 export type DoctorCheckStatus = 'ok' | 'warning' | 'error';
 
@@ -149,6 +156,37 @@ export async function runDoctor(
       endpoint.origin
     );
   }
+
+  const extensionPaths = getExtensionConfigPaths(workspaceRoot);
+  const extensionConfiguration = loadExtensionConfiguration(workspaceRoot);
+  const projectInspection = inspectProjectExtensions(workspaceRoot);
+  const trustInspection = inspectWorkspaceTrust(workspaceRoot);
+  const extensionWarnings = [
+    ...extensionConfiguration.warnings,
+    ...projectInspection.warnings
+  ];
+  check(
+    checks,
+    'MCP configuration',
+    extensionWarnings.length > 0 ? 'warning' : 'ok',
+    extensionWarnings.length > 0
+      ? `${extensionWarnings.length} extension configuration warning(s); ` +
+        'run "syzzz mcp list" and "syzzz hooks list" for details'
+      : `${extensionConfiguration.mcpServers.length} active server(s); offline validation only`
+  );
+  const projectConfigurationPresent =
+    existsSync(extensionPaths.projectMcp) ||
+    existsSync(extensionPaths.projectHooks);
+  check(
+    checks,
+    'Workspace trust',
+    projectConfigurationPresent && !trustInspection.trusted ? 'warning' : 'ok',
+    projectConfigurationPresent
+      ? trustInspection.trusted
+        ? 'Project extensions are active for this canonical workspace path'
+        : 'Project extension files are present but inactive'
+      : 'No project extension files are present'
+  );
 
   await checkPrivateDirectory(
     checks,

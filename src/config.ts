@@ -50,6 +50,10 @@ export interface SessionsConfig {
   autoSave: boolean;
 }
 
+export interface SubagentsConfig {
+  enabled: boolean;
+}
+
 export interface Config {
   schemaVersion: typeof CONFIG_SCHEMA_VERSION;
   currentProvider: string;
@@ -58,6 +62,7 @@ export interface Config {
   ui: UiConfig;
   context: ContextConfig;
   sessions: SessionsConfig;
+  subagents: SubagentsConfig;
 }
 
 export type ConfigInspection =
@@ -101,6 +106,10 @@ export const DEFAULT_SESSIONS_CONFIG: Readonly<SessionsConfig> = Object.freeze({
   autoSave: true
 });
 
+export const DEFAULT_SUBAGENTS_CONFIG: Readonly<SubagentsConfig> = Object.freeze({
+  enabled: true
+});
+
 const DEFAULT_CONFIG: Config = {
   schemaVersion: CONFIG_SCHEMA_VERSION,
   currentProvider: 'deepseek',
@@ -108,6 +117,7 @@ const DEFAULT_CONFIG: Config = {
   ui: { ...DEFAULT_UI_CONFIG },
   context: { ...DEFAULT_CONTEXT_CONFIG },
   sessions: { ...DEFAULT_SESSIONS_CONFIG },
+  subagents: { ...DEFAULT_SUBAGENTS_CONFIG },
   providers: {
     deepseek: {
       name: 'Deepseek',
@@ -238,6 +248,19 @@ function validateSessionsConfig(value: unknown): SessionsConfig {
   return { autoSave: value.autoSave };
 }
 
+function validateSubagentsConfig(value: unknown): SubagentsConfig {
+  if (value === undefined) {
+    return { ...DEFAULT_SUBAGENTS_CONFIG };
+  }
+  if (!isRecord(value)) {
+    throw new Error('subagents must be an object');
+  }
+  if (typeof value.enabled !== 'boolean') {
+    throw new Error('subagents.enabled must be a boolean');
+  }
+  return { enabled: value.enabled };
+}
+
 export function validateConfig(value: unknown): Config {
   if (!isRecord(value)) {
     throw new Error('configuration root must be an object');
@@ -360,7 +383,8 @@ export function validateConfig(value: unknown): Config {
     audit: validateAuditConfig(value.audit),
     ui: validateUiConfig(value.ui),
     context: validateContextConfig(value.context),
-    sessions: validateSessionsConfig(value.sessions)
+    sessions: validateSessionsConfig(value.sessions),
+    subagents: validateSubagentsConfig(value.subagents)
   };
 }
 

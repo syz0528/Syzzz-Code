@@ -134,6 +134,8 @@ export class OpenAICompatibleProvider implements AIProvider {
   private supportsReasoningToggle: boolean;
   private reasoningToggleOverride: boolean | undefined;
   private readonly modelContextWindows: Readonly<Record<string, number>>;
+  private readonly apiKey: string;
+  private readonly baseURL: string;
 
   constructor(
     apiKey: string,
@@ -143,6 +145,8 @@ export class OpenAICompatibleProvider implements AIProvider {
     supportsReasoningToggle?: boolean,
     modelContextWindows: Readonly<Record<string, number>> = {}
   ) {
+    this.apiKey = apiKey;
+    this.baseURL = baseURL;
     this.client = new OpenAI({
       apiKey,
       baseURL,
@@ -404,6 +408,17 @@ export class OpenAICompatibleProvider implements AIProvider {
     this.model = model;
     this.supportsReasoningToggle = this.reasoningToggleOverride ??
       supportsDeepSeekThinkingToggle(this.providerName, model);
+  }
+
+  fork(): AIProvider {
+    return new OpenAICompatibleProvider(
+      this.apiKey,
+      this.baseURL,
+      this.model,
+      this.providerName,
+      this.reasoningToggleOverride,
+      this.modelContextWindows
+    );
   }
 
   private async createCompletion(

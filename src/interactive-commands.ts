@@ -20,6 +20,7 @@ export const COMMAND_CATEGORIES = [
   'work',
   'session',
   'runtime',
+  'extensions',
   'general'
 ] as const;
 
@@ -29,6 +30,7 @@ export const COMMAND_CATEGORY_LABELS: Record<CommandCategory, string> = {
   work: 'Work modes',
   session: 'Session',
   runtime: 'Runtime',
+  extensions: 'Extensions',
   general: 'General'
 };
 

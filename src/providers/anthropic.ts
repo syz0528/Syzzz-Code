@@ -81,6 +81,8 @@ export class AnthropicProvider implements AIProvider {
   private client: Anthropic;
   private model: string;
   private readonly modelContextWindows: Readonly<Record<string, number>>;
+  private readonly apiKey: string;
+  private readonly baseURL: string;
 
   constructor(
     apiKey: string,
@@ -88,6 +90,8 @@ export class AnthropicProvider implements AIProvider {
     model: string,
     modelContextWindows: Readonly<Record<string, number>> = {}
   ) {
+    this.apiKey = apiKey;
+    this.baseURL = baseURL;
     this.client = new Anthropic({
       apiKey,
       baseURL,
@@ -186,5 +190,14 @@ export class AnthropicProvider implements AIProvider {
       throw new Error('model must be a non-empty string');
     }
     this.model = model;
+  }
+
+  fork(): AIProvider {
+    return new AnthropicProvider(
+      this.apiKey,
+      this.baseURL,
+      this.model,
+      this.modelContextWindows
+    );
   }
 }

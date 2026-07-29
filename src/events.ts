@@ -8,6 +8,7 @@ import type {
   PublicProviderError
 } from './providers/errors.js';
 import type { AgentMode } from './modes.js';
+import type { SubagentRole } from './subagents.js';
 
 export interface AgentEventEnvelope {
   schemaVersion: 1;
@@ -20,6 +21,8 @@ export interface AgentEventEnvelope {
 export type AgentPhase =
   | 'provider'
   | 'compaction'
+  | 'extension'
+  | 'subagent'
   | 'approval'
   | 'tool'
   | 'completed';
@@ -103,7 +106,7 @@ export interface UsageUpdatedEvent extends AgentEventEnvelope {
   purpose?: ProviderPurpose;
 }
 
-export type ProviderPurpose = 'turn' | 'compaction';
+export type ProviderPurpose = 'turn' | 'compaction' | 'subagent';
 
 export interface ContextUsageUpdatedEvent extends AgentEventEnvelope {
   type: 'context_usage_updated';
@@ -174,6 +177,66 @@ export interface ToolStartedEvent extends AgentEventEnvelope {
   toolName: string;
 }
 
+export interface McpServerStatusEvent extends AgentEventEnvelope {
+  type: 'mcp_server_status';
+  server: string;
+  source: 'user' | 'project';
+  transport: 'stdio' | 'http';
+  state: 'disabled' | 'disconnected' | 'connecting' | 'ready' | 'error';
+  toolCount: number;
+  errorCode?: string;
+}
+
+export type HookEventName =
+  | 'PreTurn'
+  | 'PreToolUse'
+  | 'PostToolUse'
+  | 'TurnCompleted'
+  | 'TurnFailed'
+  | 'TurnCancelled';
+
+export interface HookStartedEvent extends AgentEventEnvelope {
+  type: 'hook_started';
+  hook: string;
+  event: HookEventName;
+  source: 'user' | 'project';
+}
+
+export interface HookCompletedEvent extends AgentEventEnvelope {
+  type: 'hook_completed';
+  hook: string;
+  event: HookEventName;
+  source: 'user' | 'project';
+  outcome: 'success' | 'denied' | 'error' | 'timeout';
+  durationMs: number;
+  errorCode?: string;
+}
+
+export interface SubagentStartedEvent extends AgentEventEnvelope {
+  type: 'subagent_started';
+  subagentId: string;
+  role: SubagentRole;
+}
+
+export interface SubagentProgressEvent extends AgentEventEnvelope {
+  type: 'subagent_progress';
+  subagentId: string;
+  role: SubagentRole;
+  phase: 'provider' | 'tool';
+  toolName?: string;
+}
+
+export interface SubagentCompletedEvent extends AgentEventEnvelope {
+  type: 'subagent_completed';
+  subagentId: string;
+  role: SubagentRole;
+  outcome: 'success' | 'error' | 'cancelled';
+  durationMs: number;
+  toolCalls: number;
+  usage?: ProviderUsage;
+  errorCode?: string;
+}
+
 export type ToolOutcome = 'success' | 'error' | 'denied' | 'cancelled';
 
 export interface ToolCompletedEvent extends AgentEventEnvelope {
@@ -231,6 +294,12 @@ export type AgentEvent =
   | ApprovalRequestedEvent
   | ApprovalResolvedEvent
   | ToolStartedEvent
+  | McpServerStatusEvent
+  | HookStartedEvent
+  | HookCompletedEvent
+  | SubagentStartedEvent
+  | SubagentProgressEvent
+  | SubagentCompletedEvent
   | ToolCompletedEvent
   | TurnCompletedEvent
   | TurnFailedEvent

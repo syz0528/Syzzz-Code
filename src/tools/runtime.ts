@@ -11,6 +11,10 @@ export function defineTool<Input, Output = unknown>(
   return {
     ...definition,
     inputSchema: definition.inputSchema as z.ZodType<unknown>,
+    resolvePolicy: definition.resolvePolicy
+      ? async (input, context) =>
+          definition.resolvePolicy!(input as Input, context)
+      : undefined,
     prepareApproval: definition.prepareApproval
       ? async (input, context) => definition.prepareApproval!(input as Input, context)
       : undefined,

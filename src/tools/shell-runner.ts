@@ -347,7 +347,7 @@ async function terminateWindowsProcessTree(
   });
 }
 
-async function terminateProcessTree(
+export async function terminateProcessTree(
   processId: number,
   platform: NodeJS.Platform,
   graceMilliseconds: number

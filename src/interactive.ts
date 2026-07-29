@@ -49,6 +49,11 @@ const COMMAND_PRIORITIES = {
   model: 60,
   provider: 70,
   stream: 80,
+  mcp: 85,
+  hooks: 86,
+  agents: 87,
+  trust: 88,
+  untrust: 89,
   new: 90,
   resume: 100,
   save: 110,
@@ -73,6 +78,7 @@ export interface InteractiveSessionOptions {
   streamOutput?: boolean;
   availableModels?: readonly string[];
   persistStreamOutput?: (enabled: boolean) => void | Promise<void>;
+  persistSubagentsEnabled?: (enabled: boolean) => void | Promise<void>;
   persistModel?: (
     model: string,
     providerId: string
@@ -92,6 +98,7 @@ interface InteractiveCommandContext {
   streamOutput: boolean;
   availableModels: readonly string[];
   persistStreamOutput?: (enabled: boolean) => void | Promise<void>;
+  persistSubagentsEnabled?: (enabled: boolean) => void | Promise<void>;
   persistModel?: (
     model: string,
     providerId: string
@@ -266,6 +273,9 @@ function modelChoices(context: InteractiveCommandContext): readonly CommandChoic
 function formatStatus(context: InteractiveCommandContext): string {
   const status = context.engine.getStatus();
   const sessionStatus = context.session?.getStatus();
+  const extensions = (
+    status as { extensions?: typeof status.extensions }
+  ).extensions;
   const contextPercent = status.context.contextWindowTokens > 0
     ? Math.min(
       100,
@@ -293,6 +303,30 @@ function formatStatus(context: InteractiveCommandContext): string {
     `  Usage:        ${status.totalUsage.inputTokens} in / ` +
       `${status.totalUsage.outputTokens} out`,
     `  Messages:     ${status.messageCount}`,
+    ...(extensions
+      ? [
+          `  MCP:          ${extensions.mcp.ready} ready / ` +
+            `${extensions.mcp.configured} configured` +
+            (extensions.inactiveProject?.mcpServers
+              ? ` / ${extensions.inactiveProject.mcpServers} project inactive`
+              : ''),
+          `  Hooks:        ${extensions.hooks.enabled} enabled / ` +
+            `${extensions.hooks.configured} configured` +
+            (extensions.inactiveProject?.hooks
+              ? ` / ${extensions.inactiveProject.hooks} project inactive`
+              : ''),
+          `  Subagents:    ${!extensions.subagents.enabled
+            ? 'off'
+            : extensions.subagents.available
+              ? 'available'
+              : 'Provider unsupported'}`,
+          `  Trust:        ${extensions.workspaceTrusted
+            ? 'workspace trusted'
+            : extensions.projectConfigurationPresent
+              ? 'project extensions inactive'
+              : 'no project extensions'}`
+        ]
+      : []),
     ...(sessionStatus
       ? [
           `  Title:        ${sessionStatus.title}`,
@@ -758,6 +792,271 @@ function createCommandRegistry(
   });
 
   register({
+    name: 'mcp',
+    category: 'extensions',
+    priority: COMMAND_PRIORITIES.mcp,
+    description: 'Show, reload, or reconnect configured MCP servers.',
+    argumentHint: '[reload|reconnect <server>]',
+    isEnabled: commandContext =>
+      typeof commandContext.engine.getExtensionRuntime === 'function' &&
+      Boolean(commandContext.engine.getExtensionRuntime()),
+    choices: commandContext => {
+      const runtime = commandContext.engine.getExtensionRuntime?.();
+      const servers = runtime?.mcp.getStatuses() ?? [];
+      return [
+        { value: 'reload', description: 'Reload extension configuration' },
+        ...servers.map(server => ({
+          value: `reconnect ${server.name}`,
+          label: `reconnect ${server.name}`,
+          description: `${server.state}; ${server.toolCount} tools`
+        }))
+      ];
+    },
+    async execute(
+      argument,
+      commandContext,
+      signal
+    ): Promise<CommandExecutionResult> {
+      const runtime = commandContext.engine.getExtensionRuntime?.();
+      if (!runtime) {
+        console.log(chalk.yellow('\nExtension runtime is unavailable.\n'));
+        return 'continue';
+      }
+      const normalized = argument?.trim();
+      if (normalized === 'reload') {
+        await runtime.reload();
+        console.log(chalk.green('\nMCP and Hooks configuration reloaded.\n'));
+        return 'continue';
+      }
+      if (normalized?.toLowerCase().startsWith('reconnect ')) {
+        const name = normalized.slice('reconnect '.length).trim();
+        if (!name) {
+          console.log(chalk.red('\nUse: /mcp reconnect <server>\n'));
+          return 'continue';
+        }
+        await runtime.mcp.reconnect(name, signal);
+        console.log(chalk.green(`\nMCP server ${name} reconnected.\n`));
+        return 'continue';
+      }
+      if (normalized) {
+        console.log(chalk.red(`\nUnknown MCP action: ${normalized}\n`));
+        return 'continue';
+      }
+      const statuses = runtime.mcp.getStatuses();
+      console.log(chalk.cyan('\nMCP servers\n'));
+      if (statuses.length === 0) {
+        console.log(chalk.gray('  No MCP servers are configured.\n'));
+        return 'continue';
+      }
+      for (const status of statuses) {
+        console.log(
+          `  ${status.name.padEnd(20)} ${status.state.padEnd(12)} ` +
+          `${status.transport.padEnd(5)} ${status.toolCount} tools ` +
+          `[${status.source}]`
+        );
+      }
+      console.log('');
+      return 'continue';
+    }
+  });
+
+  register({
+    name: 'hooks',
+    category: 'extensions',
+    priority: COMMAND_PRIORITIES.hooks,
+    description: 'Show or reload configured command Hooks.',
+    argumentHint: '[reload]',
+    isEnabled: commandContext =>
+      typeof commandContext.engine.getExtensionRuntime === 'function' &&
+      Boolean(commandContext.engine.getExtensionRuntime()),
+    choices: () => [{
+      value: 'reload',
+      description: 'Reload MCP and Hook configuration'
+    }],
+    async execute(
+      argument,
+      commandContext
+    ): Promise<CommandExecutionResult> {
+      const runtime = commandContext.engine.getExtensionRuntime?.();
+      if (!runtime) {
+        console.log(chalk.yellow('\nExtension runtime is unavailable.\n'));
+        return 'continue';
+      }
+      const normalized = argument?.trim().toLowerCase();
+      if (normalized === 'reload') {
+        await runtime.reload();
+        console.log(chalk.green('\nMCP and Hooks configuration reloaded.\n'));
+        return 'continue';
+      }
+      if (normalized) {
+        console.log(chalk.red(`\nUnknown Hooks action: ${argument}\n`));
+        return 'continue';
+      }
+      const status = runtime.getStatus().hooks;
+      console.log(chalk.cyan('\nCommand Hooks\n'));
+      console.log(`  Configured: ${status.configured}`);
+      console.log(`  Enabled:    ${status.enabled}`);
+      if (status.lastErrorCode) {
+        console.log(chalk.yellow(`  Last error: ${status.lastErrorCode}`));
+      }
+      console.log('');
+      return 'continue';
+    }
+  });
+
+  register({
+    name: 'agents',
+    category: 'extensions',
+    priority: COMMAND_PRIORITIES.agents,
+    description: 'Show or toggle bounded read-only subagents.',
+    argumentHint: '[on|off]',
+    isEnabled: commandContext =>
+      typeof commandContext.engine.getExtensionRuntime === 'function' &&
+      Boolean(commandContext.engine.getExtensionRuntime()),
+    choices: commandContext => {
+      const status = commandContext.engine.getExtensionRuntime?.()
+        ?.getStatus().subagents;
+      return [
+        {
+          value: 'on',
+          label: 'On',
+          description: 'Expose Delegate when the Provider supports isolated forks',
+          current: status?.enabled === true
+        },
+        {
+          value: 'off',
+          label: 'Off',
+          description: 'Hide Delegate from subsequent turns',
+          current: status?.enabled === false
+        }
+      ];
+    },
+    async execute(
+      argument,
+      commandContext
+    ): Promise<CommandExecutionResult> {
+      const runtime = commandContext.engine.getExtensionRuntime?.();
+      if (!runtime) {
+        console.log(chalk.yellow('\nExtension runtime is unavailable.\n'));
+        return 'continue';
+      }
+      const normalized = argument?.trim().toLowerCase();
+      if (!normalized) {
+        const status = runtime.getStatus().subagents;
+        console.log(chalk.cyan('\nRead-only subagents\n'));
+        console.log(`  Configured: ${status.enabled ? 'on' : 'off'}`);
+        console.log(
+          `  Current Provider: ${runtime.supportsSubagents()
+            ? 'supported'
+            : 'unsupported'}\n`
+        );
+        return 'continue';
+      }
+      if (normalized !== 'on' && normalized !== 'off') {
+        console.log(chalk.red('\nUse: /agents on|off\n'));
+        return 'continue';
+      }
+      const enabled = normalized === 'on';
+      await commandContext.persistSubagentsEnabled?.(enabled);
+      runtime.setSubagentsEnabled(enabled);
+      console.log(chalk.green(
+        `\nRead-only subagents ${enabled ? 'enabled' : 'disabled'}.\n`
+      ));
+      return 'continue';
+    }
+  });
+
+  register({
+    name: 'trust',
+    category: 'extensions',
+    priority: COMMAND_PRIORITIES.trust,
+    description: 'Trust project MCP servers and Hooks for this workspace path.',
+    isEnabled: commandContext =>
+      typeof commandContext.engine.getExtensionRuntime === 'function' &&
+      Boolean(commandContext.engine.getExtensionRuntime()),
+    async execute(
+      _argument,
+      commandContext,
+      signal
+    ): Promise<CommandExecutionResult> {
+      const runtime = commandContext.engine.getExtensionRuntime?.();
+      if (!runtime) {
+        return 'continue';
+      }
+      const status = runtime.getStatus();
+      if (status.workspaceTrusted) {
+        console.log(chalk.green('\nThis workspace path is already trusted.\n'));
+        return 'continue';
+      }
+      const preview = runtime.getTrustPreview();
+      if (preview.warnings.length > 0) {
+        console.log(chalk.red('\nProject extension configuration is invalid:'));
+        preview.warnings.forEach(warning => console.log(`  ${warning}`));
+        console.log(chalk.gray('\nFix the configuration before trusting it.\n'));
+        return 'continue';
+      }
+      if (preview.lines.length === 0) {
+        console.log(chalk.yellow(
+          '\nNo project MCP or Hooks configuration was found.\n'
+        ));
+        return 'continue';
+      }
+      console.log(chalk.yellow('\nWARNING: Trusting project extensions'));
+      console.log(
+        'The following local commands or remote endpoints can run with your ' +
+        'user account privileges:'
+      );
+      preview.lines.forEach(line => console.log(`  ${line}`));
+      console.log('');
+      console.log(
+        'Trust is bound to this canonical workspace path. Future project ' +
+        'extension changes take effect after restart or reload without another prompt.'
+      );
+      console.log(
+        'This does not change Agent mode or permission mode, and it is not an OS sandbox.'
+      );
+      const answer = await commandContext.terminal.readLine({
+        prompt: chalk.yellow('Trust project extensions for this workspace? [y/N]: '),
+        signal
+      });
+      if (answer.type === 'interrupt') {
+        throw new OperationAbortedError('Workspace trust cancelled');
+      }
+      if (
+        answer.type !== 'line' ||
+        (answer.value !== 'y' && answer.value !== 'Y')
+      ) {
+        console.log(chalk.yellow('\nWorkspace trust cancelled.\n'));
+        return 'continue';
+      }
+      await runtime.trustWorkspace();
+      console.log(chalk.green('\nProject extensions are now trusted.\n'));
+      return 'continue';
+    }
+  });
+
+  register({
+    name: 'untrust',
+    category: 'extensions',
+    priority: COMMAND_PRIORITIES.untrust,
+    description: 'Disable project extensions and remove workspace trust.',
+    isEnabled: commandContext =>
+      typeof commandContext.engine.getExtensionRuntime === 'function' &&
+      Boolean(commandContext.engine.getExtensionRuntime()),
+    async execute(
+      _argument,
+      commandContext
+    ): Promise<CommandExecutionResult> {
+      const runtime = commandContext.engine.getExtensionRuntime?.();
+      await runtime?.untrustWorkspace();
+      console.log(chalk.green(
+        '\nProject MCP servers disconnected and project Hooks disabled.\n'
+      ));
+      return 'continue';
+    }
+  });
+
+  register({
     name: 'model',
     category: 'runtime',
     priority: COMMAND_PRIORITIES.model,
@@ -924,6 +1223,7 @@ export async function runInteractiveSession(
     availableModels: options.availableModels ??
       (providerInfo?.model ? [providerInfo.model] : []),
     persistStreamOutput: options.persistStreamOutput,
+    persistSubagentsEnabled: options.persistSubagentsEnabled,
     persistModel: options.persistModel,
     session: options.session,
     getProviderOptions: options.getProviderOptions,

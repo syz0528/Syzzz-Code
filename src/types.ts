@@ -1,4 +1,7 @@
 import type { ZodType } from 'zod';
+import type { AgentEventData } from './events.js';
+import type { AgentMode } from './modes.js';
+import type { PermissionMode } from './permissions/mode.js';
 
 export type ToolRisk = 'read' | 'write' | 'execute';
 
@@ -37,10 +40,22 @@ export type ToolApprovalHandler = (
 
 export interface ToolContext {
   toolCallId: string;
+  sessionId: string;
+  turnId: string;
   workspaceRoot: string;
   workingDirectory: string;
+  mode: AgentMode;
+  permissionMode: PermissionMode;
   signal: AbortSignal;
   approvalData?: unknown;
+  emitEvent?: (event: AgentEventData) => void;
+}
+
+export interface ResolvedToolPolicy {
+  risk: ToolRisk;
+  approval: 'never' | 'always';
+  displayName?: string;
+  metadata?: Record<string, unknown>;
 }
 
 export interface ToolDefinition {
@@ -49,6 +64,11 @@ export interface ToolDefinition {
   inputSchema: ZodType<unknown>;
   risk: ToolRisk;
   approval: 'never' | 'always';
+  modeAccess?: 'risk-derived' | 'all-modes';
+  resolvePolicy?: (
+    input: unknown,
+    context: ToolContext
+  ) => Promise<ResolvedToolPolicy>;
   prepareApproval?: (
     input: unknown,
     context: ToolContext
@@ -60,8 +80,15 @@ export interface ToolDefinition {
 }
 
 export interface TypedToolDefinition<Input, Output = unknown>
-  extends Omit<ToolDefinition, 'inputSchema' | 'prepareApproval' | 'execute'> {
+  extends Omit<
+    ToolDefinition,
+    'inputSchema' | 'resolvePolicy' | 'prepareApproval' | 'execute'
+  > {
   inputSchema: ZodType<Input>;
+  resolvePolicy?: (
+    input: Input,
+    context: ToolContext
+  ) => Promise<ResolvedToolPolicy>;
   prepareApproval?: (
     input: Input,
     context: ToolContext

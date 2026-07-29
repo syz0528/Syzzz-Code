@@ -1,9 +1,9 @@
 # Syzzz Code 路线图
 
 **制定日期：** 2026-06-16
-**最近更新：** 2026-07-28
+**最近更新：** 2026-07-29
 **适用基线：** `1.0.0` / Phase 3 冻结提交 `029e718`
-**当前入口：** Phase 4 已冻结，下一项进入 Phase 5
+**当前入口：** Phase 5 已完成实现与自动化验证，等待人工扩展 dogfood
 
 > 路线图描述实施顺序和验收边界。当前代码事实以 [`README.md`](README.md) 和 [`CURRENT_STATUS.md`](CURRENT_STATUS.md) 为准。
 
@@ -606,54 +606,76 @@ RepoMap 按需调用，不自动注入每个 prompt。
 - [x] 完成用户手动验收；
 - [x] 标记 **Frozen**，下一项进入 Phase 5。
 
-## 10. Phase 5：MCP、Hooks 与受限子 Agent
+## 10. Phase 5：可信扩展运行时、MCP Broker 与受限委派
+
+**状态：** 实现和自动化验证完成，等待人工 dogfood，尚未 Frozen。
 
 ### 目标
 
-在统一权限和事件系统之上扩展生态，而不是让外部能力绕过安全边界。
+在统一权限、事件、上下文和会话系统之上扩展生态，同时确保外部能力不能绕过已有安全边界。
 
-### 10.1 MCP Client
+### 10.1 Phase 5.0：可信 MCP Broker
 
-- 使用标准 MCP SDK；
-- 支持 stdio 和必要的远程 transport；
-- MCP 工具转换为内部 `ToolDefinition`；
-- 复用同一个输入校验、权限、审批、取消和审计系统；
-- 对 MCP Server 实施信任等级和独立权限；
-- 默认不允许外部工具静默获取工作区外数据。
+- [x] 精确锁定 `@modelcontextprotocol/client@2.0.0`；
+- [x] 路径级 workspace trust 与原子信任记录；
+- [x] 未受信项目扩展完全不加载，项目同名项覆盖用户项；
+- [x] 固定 `McpSearch + McpCall`，按需发现，不注入完整远端 schema；
+- [x] stdio executable/argv、环境白名单和 Windows `.cmd/.bat` 封装；
+- [x] Streamable HTTP 强制 HTTPS/loopback、环境认证头和禁止重定向；
+- [x] `legacy | modern` 显式协议模式，不使用 stdio 自动探测；
+- [x] `readOnlyHint` 动态风险映射与执行层 fail closed；
+- [x] ask/plan、safe/acceptEdits/fullAccess 权限矩阵；
+- [x] schema、工具数量、目录字节、结果、超时和进程树上限；
+- [x] MCP 调用不重试，结果和错误标记为不可信外部数据；
+- [x] `syzzz mcp ...`、`/mcp`、`/trust` 与 `/untrust`。
 
-### 10.2 Hooks
+### 10.2 Phase 5.1：可信命令 Hooks
 
-支持有限生命周期：
+- [x] `PreTurn | PreToolUse | PostToolUse | TurnCompleted | TurnFailed | TurnCancelled`；
+- [x] 用户优先、项目随后、项目同名覆盖；
+- [x] `builtin:<name>` 与 `mcp:<qualifiedName>` glob matcher；
+- [x] 直接 spawn、环境脱敏、stdin/stdout/stderr 与超时上限；
+- [x] `PreToolUse` 只能 continue 或 deny，不能授权或改写输入；
+- [x] 输入校验/风险 → 模式 → Hook → 审批 → 执行的固定顺序；
+- [x] `PostToolUse` 只接收 outcome 与脱敏 metadata；
+- [x] 终态 Hook 在唯一 turn 终态之前结束，失败不改变既定结果；
+- [x] `syzzz hooks ...` 与 `/hooks`。
 
-- pre-turn；
-- pre-tool；
-- post-tool；
-- turn-complete；
-- error/cancel。
+### 10.3 Phase 5.2：只读 Subagent
 
-Hooks 不能绕过 Tool Policy，也不能默认访问密钥。
+- [x] `Delegate({role:'explore'|'review',task})`；
+- [x] Provider 隔离 fork，不支持 fork 时不暴露 Delegate；
+- [x] 固定 ask+safe 和角色工具白名单；
+- [x] 不提供写入、Shell、MCP、Hooks 或嵌套 Delegate；
+- [x] 每父回合 2 次、单层串行、6 工具轮次、120 秒；
+- [x] 第 6 轮或约 90 秒关闭工具并完成有界总结，失败后父 Agent 不重复调查；
+- [x] 32K context window 与 20 KiB 最终报告；
+- [x] 父取消、generator 关闭、usage 聚合和有界事件；
+- [x] 不输出或持久化完整 Subagent transcript；
+- [x] `/agents on|off` 与 `subagents.enabled`。
 
-### 10.3 受限子 Agent
+### 10.4 克制边界
 
-只有在单 Agent 长任务稳定后再实现。每个子 Agent 必须拥有：
+本阶段明确不实现：
 
-- 独立任务目标；
-- 独立上下文预算；
-- 独立工具权限；
-- 独立取消信号；
-- 最大运行步数；
-- 可追踪事件；
-- 明确返回结果。
-
-不在第一版实现开放式、自复制或无限递归的 Agent 层级。
+- OAuth、旧 SSE、MCP Resources/Prompts/Sampling；
+- HTTP 或后台 Hooks、输入重写；
+- 写入型、并行、后台或嵌套 Subagent；
+- `@`、`$`、Skills、完整 TUI；
+- Tag、npm 发布或版本升级。
 
 ### Phase 5 退出条件
 
-- MCP 工具无法绕过本地权限策略；
-- 外部 Server 的错误、超时和取消能够正确传播；
-- Hooks 具有明确执行顺序和失败策略；
-- 子 Agent 的预算、权限和生命周期受父任务控制；
-- 生态扩展具有隔离测试和安全说明。
+- [x] 238 项自动化测试全部通过；
+- [x] stdio legacy/modern 与 Streamable HTTP 传输级回归；
+- [x] MCP 工具不能绕过模式、权限与审批；
+- [x] Hooks 具有确定顺序、失败策略和进程上限；
+- [x] Subagent 的预算、权限、深度和生命周期受父任务控制；
+- [x] NDJSON、审计和会话隐私边界有自动化回归；
+- [x] README、CURRENT_STATUS、SECURITY 与扩展指南同步；
+- [x] 生产依赖审计、npm 包 allowlist、diff-check 与离线 doctor 通过；
+- [ ] 使用真实终端与 Provider 完成 Phase 5 dogfood；
+- [ ] 人工验收通过后标记 **Frozen** 并推送分支。
 
 ## 11. Phase 6：持续评测、发布与工程治理
 
@@ -798,29 +820,26 @@ Hooks 不能绕过 Tool Policy，也不能默认访问密钥。
 
 ### 已完成
 
-- [x] 冻结 Phase 1.1 安全 Tool Runtime；
-- [x] 建立 AgentEvent 与 `runTurn()`；
-- [x] 实现 OpenAI-compatible 真流式和 Anthropic 非流式兼容；
-- [x] 实现 ProviderError、硬 timeout、有限重试和 usage；
-- [x] 实现 CLI 事件渲染与 stream-json；
-- [x] 实现元数据审计与清理；
-- [x] 完成交互命令注册表、Slash 菜单、流式展示开关与当前 Provider 模型切换；
-- [x] 完成紧凑工具渲染、footer 统计和系统提示收尾；
-- [x] 扩展正式测试套件到 114 项；
-- [x] 完成生产依赖审计和 npm 包内容检查；
-- [x] 完成真实 DeepSeek 纯文本与只读工具 dogfood。
+- [x] Phase 1 至 Phase 4 全部冻结并保留回归；
+- [x] 建立 workspace trust 与用户/项目扩展配置合并；
+- [x] 完成 MCP Broker、stdio/HTTP、legacy/modern 与动态风险；
+- [x] 完成有序 Hooks、失败策略、环境脱敏和进程限制；
+- [x] 完成只读 Subagent、Provider fork、预算和父级取消；
+- [x] 扩展自动化套件到 238 项；
+- [x] 新增 SECURITY 与扩展使用文档。
 
-### 冻结结果
+### 当前验收
 
-- [x] 普通 PowerShell 执行 `npm test` 114/114；
-- [x] 真实 PowerShell 完成展示开关、中文流式、Provider 切换和降噪 dogfood；
-- [x] 权限、模型、菜单、取消和 Shell 生命周期回归覆盖通过，剩余人工按键组合被接受为非阻塞观察；
-- [x] 独立消费者验证真实 CLI NDJSON 及脱敏；
-- [x] 提交 Phase 2/2.1 冻结状态。
+- [x] 全量自动化回归通过；
+- [x] 官方 v2 stdio 与本地 Streamable HTTP 传输回归通过；
+- [x] 环境、NDJSON、审计和管理输出脱敏回归通过；
+- [ ] 完成真实 DeepSeek 的 MCP、Hook 和 Subagent dogfood；
+- [ ] 完成用户人工验收；
+- [ ] 标记 Phase 5 Frozen 并推送 `codex/phase5-extensions`。
 
 ### 下一阶段入口
 
-Phase 3 已冻结。下一阶段进入 Phase 4，会话持久化、工作模式与终端产品体验继续建立在现有 Runtime、Context Manager 和工具边界上。
+Phase 5 人工验收通过后进入 Phase 6，重点转向持续评测、跨平台 CI、发布和工程治理，不在 Phase 5 继续扩展生态能力。
 
 ## 15. 路线图完成标准
 

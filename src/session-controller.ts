@@ -241,6 +241,7 @@ export class SessionController {
     }
 
     const oldLease = this.lease;
+    const oldEngine = this.currentEngine;
     this.detachCheckpointHandler();
     try {
       await oldLease.release();
@@ -263,6 +264,9 @@ export class SessionController {
     this.hasWarned = false;
     this.lastSavedAt = snapshot.updatedAt;
     this.attachCheckpointHandler();
+    if (typeof oldEngine.close === 'function') {
+      await oldEngine.close().catch(() => undefined);
+    }
     if (this.dirty) {
       await this.tryAutoSave();
     }
@@ -290,6 +294,7 @@ export class SessionController {
     }
     const nextLease = await this.store.acquire(sessionId);
     const oldLease = this.lease;
+    const oldEngine = this.currentEngine;
     this.detachCheckpointHandler();
     try {
       await oldLease.release();
@@ -312,6 +317,9 @@ export class SessionController {
     this.hasWarned = false;
     this.lastSavedAt = undefined;
     this.attachCheckpointHandler();
+    if (typeof oldEngine.close === 'function') {
+      await oldEngine.close().catch(() => undefined);
+    }
     return {
       sessionId,
       title: this.title,
@@ -339,6 +347,9 @@ export class SessionController {
       this.reportPersistenceFailure(error);
     } finally {
       this.detachCheckpointHandler();
+      if (typeof this.currentEngine.close === 'function') {
+        await this.currentEngine.close().catch(() => undefined);
+      }
       await this.lease.release();
       this.closed = true;
     }

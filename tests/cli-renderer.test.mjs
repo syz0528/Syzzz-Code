@@ -46,6 +46,38 @@ test('stream-json removes tool results and metadata', () => {
   assert.doesNotMatch(serialized, /\u001b\[/);
 });
 
+test('stream-json extension events expose status metadata but no private payloads', () => {
+  const events = [
+    event('mcp_server_status', {
+      server: 'fixture',
+      source: 'project',
+      transport: 'stdio',
+      state: 'ready',
+      toolCount: 2
+    }),
+    event('hook_completed', {
+      hook: 'policy',
+      event: 'PreToolUse',
+      source: 'project',
+      outcome: 'success',
+      durationMs: 3
+    }),
+    event('subagent_completed', {
+      role: 'explore',
+      outcome: 'success',
+      durationMs: 12,
+      toolCalls: 2,
+      usage: { inputTokens: 20, outputTokens: 4 }
+    })
+  ];
+  const serialized = events.map(serializeAgentEvent).join('\n');
+  assert.doesNotMatch(serialized, /task|transcript|report|headers|result/);
+  assert.equal(
+    serialized.split('\n').every(line => JSON.parse(line).schemaVersion === 1),
+    true
+  );
+});
+
 test('stream-json emits valid NDJSON events', () => {
   const events = [
     event('retry_scheduled', {

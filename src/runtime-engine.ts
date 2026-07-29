@@ -1,5 +1,11 @@
 import { randomUUID } from 'node:crypto';
 import { LocalAuditLogger, type AgentEventSink } from './audit.js';
+import type { ExtensionRuntime } from './extensions/runtime.js';
+import type {
+  ExtensionStatus,
+  HookEventName
+} from './extensions/types.js';
+import type { HookRunResult } from './extensions/hooks.js';
 import { loadConfig, resolveProviderCredential } from './config.js';
 import {
   applyCompactionPlan,
@@ -19,6 +25,7 @@ import type {
 import {
   DEFAULT_AGENT_MODE,
   isToolAllowedInMode,
+  isToolRiskAllowedInMode,
   modeSystemInstructions,
   type AgentMode
 } from './modes.js';
@@ -52,14 +59,28 @@ import type {
   ToolResult
 } from './types.js';
 import { isAbortError, OperationAbortedError, throwIfAborted } from './tools/abort.js';
-import { allTools } from './tools/index.js';
+import { createToolSet } from './tools/index.js';
+import { limitUtf8Head } from './tools/output-limits.js';
 import {
   convertToolSchemaToJsonSchema,
   validateToolInput
 } from './tools/runtime.js';
 import { resolveShellInvocation } from './tools/shell-runner.js';
+import {
+  createBoundedSubagentProvider,
+  createDelegateTool,
+  createSubagentToolSet,
+  SUBAGENT_CONTEXT_WINDOW_TOKENS,
+  SUBAGENT_MAX_CALLS_PER_TURN,
+  SUBAGENT_MAX_REPORT_BYTES,
+  SUBAGENT_MAX_TOOL_ROUNDS,
+  SUBAGENT_SOFT_DEADLINE_MS,
+  SUBAGENT_TIMEOUT_MS,
+  subagentSystemInstructions,
+  type DelegateInput
+} from './subagents.js';
 
-const MAX_TOOL_ROUNDS = 10;
+const DEFAULT_MAX_TOOL_ROUNDS = 10;
 const MAX_COMPACTIONS_PER_PROVIDER_CALL = 3;
 
 const COMPACTION_SYSTEM_PROMPT = [
@@ -104,6 +125,33 @@ function addUsage(total: ProviderUsage | undefined, next: ProviderUsage): Provid
     outputTokens: (total?.outputTokens ?? 0) + next.outputTokens,
     totalTokens: (total?.totalTokens ?? 0) + next.totalTokens
   };
+}
+
+function sanitizeToolMetadataForHook(
+  metadata: Record<string, unknown> | undefined
+): Record<string, unknown> | undefined {
+  if (!metadata) {
+    return undefined;
+  }
+  const blockedKey = /(?:path|command|argument|input|output|content|diff|url|header|token|key|secret|stdout|stderr|response)/i;
+  const sanitized: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(metadata)) {
+    if (blockedKey.test(key)) {
+      continue;
+    }
+    if (
+      typeof value === 'boolean' ||
+      typeof value === 'number' ||
+      value === null
+    ) {
+      sanitized[key] = value;
+      continue;
+    }
+    if (typeof value === 'string') {
+      sanitized[key] = value.slice(0, 256);
+    }
+  }
+  return Object.keys(sanitized).length > 0 ? sanitized : undefined;
 }
 
 function toAgentError(error: unknown): AgentErrorDetails {
@@ -312,6 +360,7 @@ export interface EngineStatus {
   messageCount: number;
   totalUsage: ProviderUsage;
   persistence: EnginePersistenceStatus;
+  extensions: ExtensionStatus;
   context: {
     estimatedInputTokens: number;
     contextWindowTokens: number;
@@ -378,6 +427,11 @@ export interface QueryEngineOptions {
   checkpoint?: EngineCheckpointHandler;
   onCheckpointError?: (error: unknown) => void;
   persistenceStatus?: EnginePersistenceStatusProvider;
+  extensions?: ExtensionRuntime;
+  maxToolRounds?: number;
+  finalizeOnToolBudget?: boolean;
+  toolSoftDeadlineMs?: number;
+  systemPromptSuffix?: string;
 }
 
 export interface ChatOptions {
@@ -411,9 +465,20 @@ export class QueryEngine {
   private checkpoint?: EngineCheckpointHandler;
   private onCheckpointError?: (error: unknown) => void;
   private persistenceStatus?: EnginePersistenceStatusProvider;
+  private extensions?: ExtensionRuntime;
+  private maxToolRounds: number;
+  private finalizeOnToolBudget: boolean;
+  private toolSoftDeadlineMs?: number;
+  private systemPromptSuffix?: string;
+  private activeDelegateCalls = 0;
+  private activeSubagentUsage?: ProviderUsage;
 
   constructor(options: QueryEngineOptions = {}) {
-    this.tools = options.tools ?? allTools;
+    this.extensions = options.extensions;
+    this.tools = options.tools ?? createToolSet({
+      mcpManager: this.extensions?.mcp,
+      delegateTool: this.extensions ? createDelegateTool() : undefined
+    });
     this.workspaceRoot = options.workspaceRoot ?? process.cwd();
     this.permissionMode = options.permissionMode ?? DEFAULT_PERMISSION_MODE;
     this.mode = options.mode ?? DEFAULT_AGENT_MODE;
@@ -425,6 +490,28 @@ export class QueryEngine {
     this.checkpoint = options.checkpoint;
     this.onCheckpointError = options.onCheckpointError;
     this.persistenceStatus = options.persistenceStatus;
+    this.maxToolRounds = options.maxToolRounds ?? DEFAULT_MAX_TOOL_ROUNDS;
+    if (
+      !Number.isSafeInteger(this.maxToolRounds) ||
+      this.maxToolRounds < 1 ||
+      this.maxToolRounds > DEFAULT_MAX_TOOL_ROUNDS
+    ) {
+      throw new Error(
+        `maxToolRounds must be an integer from 1 to ${DEFAULT_MAX_TOOL_ROUNDS}`
+      );
+    }
+    this.finalizeOnToolBudget = options.finalizeOnToolBudget ?? false;
+    this.toolSoftDeadlineMs = options.toolSoftDeadlineMs;
+    if (
+      this.toolSoftDeadlineMs !== undefined &&
+      (
+        !Number.isSafeInteger(this.toolSoftDeadlineMs) ||
+        this.toolSoftDeadlineMs < 1
+      )
+    ) {
+      throw new Error('toolSoftDeadlineMs must be a positive integer');
+    }
+    this.systemPromptSuffix = options.systemPromptSuffix?.trim() || undefined;
 
     if (options.audit !== undefined && options.audit !== false) {
       this.audit = options.audit;
@@ -432,6 +519,7 @@ export class QueryEngine {
 
     if (options.provider) {
       this.provider = options.provider;
+      this.extensions?.setSubagentsAvailable?.(Boolean(this.provider.fork));
       return;
     }
 
@@ -450,6 +538,7 @@ export class QueryEngine {
 
     try {
       this.provider = createProvider(providerConfig);
+      this.extensions?.setSubagentsAvailable?.(Boolean(this.provider.fork));
       this.contextManager = new ContextManager({
         ...config.context,
         ...options.context
@@ -552,6 +641,7 @@ export class QueryEngine {
       throw new Error('Cannot switch providers while a turn is processing');
     }
     this.provider = provider;
+    this.extensions?.setSubagentsAvailable?.(Boolean(provider.fork));
     this.pendingCompactionReason = 'model_switch';
     this.messages = portableMessages(this.messages);
     this.lastReportedModel = undefined;
@@ -583,6 +673,24 @@ export class QueryEngine {
       persistence: this.persistenceStatus?.() ?? {
         state: 'unmanaged',
         dirty: false
+      },
+      extensions: this.extensions?.getStatus() ?? {
+        workspaceTrusted: false,
+        projectConfigurationPresent: false,
+        mcp: {
+          configured: 0,
+          ready: 0,
+          servers: []
+        },
+        hooks: {
+          configured: 0,
+          enabled: 0
+        },
+        subagents: {
+          enabled: false,
+          available: false
+        },
+        warnings: []
       },
       context: {
         estimatedInputTokens: measurement.estimatedInputTokens,
@@ -630,8 +738,94 @@ export class QueryEngine {
     this.pendingCompactionReason = undefined;
   }
 
+  getExtensionRuntime(): ExtensionRuntime | undefined {
+    return this.extensions;
+  }
+
+  async close(): Promise<void> {
+    if (this.isProcessing) {
+      throw new Error('Cannot close the engine while an operation is processing');
+    }
+    await this.extensions?.close();
+    await this.audit?.flush();
+  }
+
   private getAllowedTools(): ToolDefinition[] {
-    return this.tools.filter(tool => isToolAllowedInMode(this.mode, tool));
+    return this.tools.filter(tool =>
+      isToolAllowedInMode(this.mode, tool) &&
+      (
+        tool.name !== 'Delegate' ||
+        Boolean(this.extensions?.canRunSubagents?.())
+      )
+    );
+  }
+
+  private async *runHooks(
+    eventName: HookEventName,
+    turnId: string,
+    payload: Record<string, unknown>,
+    signal: AbortSignal,
+    subject?: string
+  ): AsyncGenerator<AgentEventData, HookRunResult> {
+    const runner = this.extensions?.hooks;
+    if (!runner) {
+      return { decision: 'continue' };
+    }
+    return yield *runner.run({
+      event: eventName,
+      context: {
+        sessionId: this.sessionId,
+        turnId,
+        mode: this.mode,
+        permissionMode: this.permissionMode
+      },
+      workspaceRoot: this.workspaceRoot,
+      timestamp: new Date(this.now()).toISOString(),
+      ...(subject ? { subject } : {}),
+      payload
+    }, signal);
+  }
+
+  private async *runTerminalHooks(
+    eventName: Extract<
+      HookEventName,
+      'TurnCompleted' | 'TurnFailed' | 'TurnCancelled'
+    >,
+    turnId: string,
+    payload: Record<string, unknown>
+  ): AsyncGenerator<AgentEventData, void> {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => {
+      controller.abort(
+        new OperationAbortedError('Terminal Hook budget expired')
+      );
+    }, 2_000);
+    timeout.unref?.();
+    const hooks = this.runHooks(
+      eventName,
+      turnId,
+      payload,
+      controller.signal
+    );
+    let completed = false;
+    try {
+      while (true) {
+        const next = await hooks.next();
+        if (next.done) {
+          completed = true;
+          return;
+        }
+        yield next.value;
+      }
+    } catch {
+      // Terminal Hooks are observability side effects and cannot replace
+      // the already determined turn outcome.
+    } finally {
+      clearTimeout(timeout);
+      if (!completed) {
+        await hooks.return(undefined as never).catch(() => undefined);
+      }
+    }
   }
 
   private getProviderTools(): ProviderTool[] {
@@ -1113,6 +1307,17 @@ export class QueryEngine {
             message: 'Another message is still being processed'
           }
         };
+        const terminalHooks = this.runTerminalHooks(
+          'TurnFailed',
+          turnId,
+          {
+            durationMs: result.durationMs,
+            errorCode: result.error.code
+          }
+        );
+        for await (const hookEvent of terminalHooks) {
+          yield event(hookEvent);
+        }
         yield event({
           type: 'turn_failed',
           durationMs: result.durationMs,
@@ -1122,6 +1327,29 @@ export class QueryEngine {
       }
 
       this.activeFileChangeReceipts = [];
+      this.activeDelegateCalls = 0;
+      this.activeSubagentUsage = undefined;
+      const preTurnHooks = this.runHooks(
+        'PreTurn',
+        turnId,
+        { userMessage },
+        signal
+      );
+      let preTurnHooksCompleted = false;
+      try {
+        while (true) {
+          const next = await preTurnHooks.next();
+          if (next.done) {
+            preTurnHooksCompleted = true;
+            break;
+          }
+          yield event(next.value);
+        }
+      } finally {
+        if (!preTurnHooksCompleted) {
+          await preTurnHooks.return(undefined as never);
+        }
+      }
       const pendingReceiptMessage = this.createPendingReceiptMessage();
       let workingMessages: ConversationMessage[] = [
         ...this.messages,
@@ -1130,6 +1358,11 @@ export class QueryEngine {
       ];
       const responseParts: string[] = [];
       const providerTools = this.getProviderTools();
+      const confirmedFileSideEffects = new Set<string>();
+      let forcedFinalizationReason:
+        | 'delegate-failure'
+        | 'hook-denial'
+        | undefined;
       let cumulativeUsage: ProviderUsage | undefined;
       let finalFinishReason: string | null | undefined;
       let latestMeasurement = this.contextManager.measure(
@@ -1141,13 +1374,62 @@ export class QueryEngine {
       const compactionsAtStart = this.contextManager.compactions;
 
       throwIfAborted(signal);
-      for (let toolRound = 0; toolRound <= MAX_TOOL_ROUNDS; toolRound++) {
+      for (let toolRound = 0; toolRound <= this.maxToolRounds; toolRound++) {
         throwIfAborted(signal);
-        const systemPrompt = this.getSystemPrompt();
+        const budgetFinalizationReason =
+          this.finalizeOnToolBudget &&
+          toolRound > 0 &&
+          (
+            toolRound === this.maxToolRounds ||
+            (
+              this.toolSoftDeadlineMs !== undefined &&
+              this.now() - turnStartedAt >= this.toolSoftDeadlineMs
+            )
+          )
+            ? toolRound === this.maxToolRounds
+              ? 'tool-budget'
+              : 'soft-deadline'
+            : undefined;
+        const finalizationReason =
+          forcedFinalizationReason ?? budgetFinalizationReason;
+        const runtimeInstructions: string[] = [];
+        if (confirmedFileSideEffects.size > 0) {
+          runtimeInstructions.push(
+            'Confirmed file side effects succeeded in this turn through: ' +
+            `${[...confirmedFileSideEffects].join(', ')}. ` +
+            'The final answer must disclose these changes and must not claim ' +
+            'that no file was modified.'
+          );
+        }
+        if (finalizationReason === 'hook-denial') {
+          runtimeInstructions.push(
+            'A local Hook definitively denied an operation. Tool access is now ' +
+            'closed for this turn. Do not retry it or use another tool to ' +
+            'bypass the denied operation. Explain the limitation accurately.'
+          );
+        } else if (finalizationReason === 'delegate-failure') {
+          runtimeInstructions.push(
+            'The requested Delegate operation failed. Tool access is now ' +
+            'closed for this turn. Do not retry delegation or repeat the ' +
+            'delegated investigation yourself. Report the failure and its ' +
+            'known limitation concisely.'
+          );
+        } else if (finalizationReason) {
+          responseParts.length = 0;
+          runtimeInstructions.push(
+            'The bounded tool budget is now closed. Do not call tools. Return ' +
+            'the concise final report now using only evidence already gathered. ' +
+            'State any remaining uncertainty instead of requesting more evidence.'
+          );
+        }
+        const systemPrompt = this.getSystemPrompt(runtimeInstructions);
+        const providerToolsForRound = finalizationReason
+          ? []
+          : providerTools;
         const preparation = this.prepareContextBudget(
           workingMessages,
           systemPrompt,
-          providerTools,
+          providerToolsForRound,
           signal,
           this.pendingCompactionReason ?? 'threshold',
           false,
@@ -1181,7 +1463,7 @@ export class QueryEngine {
           const progress: ProviderProgress = { visibleContentOrTool: false };
           const providerRun = this.runProviderWithEvents({
             messages: workingMessages,
-            tools: providerTools,
+            tools: providerToolsForRound,
             systemPrompt,
             signal
           }, signal, cumulativeUsage, 'turn', progress, latestMeasurement);
@@ -1210,7 +1492,7 @@ export class QueryEngine {
               const forcedPreparation = this.prepareContextBudget(
                 workingMessages,
                 systemPrompt,
-                providerTools,
+                providerToolsForRound,
                 signal,
                 'context_exceeded',
                 true,
@@ -1252,12 +1534,15 @@ export class QueryEngine {
 
         const toolCalls = response.message.toolCalls ?? [];
         if (toolCalls.length === 0) {
+          const turnUsage = this.activeSubagentUsage
+            ? addUsage(cumulativeUsage, this.activeSubagentUsage)
+            : cumulativeUsage;
           const result: TurnResult = {
             status: 'completed',
             response: responseParts.join('\n\n'),
             durationMs: Math.max(0, this.now() - turnStartedAt),
             finishReason: finalFinishReason,
-            usage: cumulativeUsage,
+            usage: turnUsage,
             context: {
               compactions: this.contextManager.compactions - compactionsAtStart,
               inputTokens: this.contextManager.measure(
@@ -1269,6 +1554,18 @@ export class QueryEngine {
               contextWindowTokens: latestMeasurement.contextWindowTokens
             }
           };
+          const terminalHooks = this.runTerminalHooks(
+            'TurnCompleted',
+            turnId,
+            {
+              durationMs: result.durationMs,
+              finishReason: result.finishReason ?? null,
+              usage: result.usage
+            }
+          );
+          for await (const hookEvent of terminalHooks) {
+            yield event(hookEvent);
+          }
           yield event({ type: 'phase_changed', phase: 'completed' });
           this.messages = workingMessages;
           this.pendingFileChangeReceipts = [];
@@ -1283,23 +1580,58 @@ export class QueryEngine {
           return result;
         }
 
-        if (toolRound === MAX_TOOL_ROUNDS) {
+        if (finalizationReason) {
           throw new Error(
-            'Tool call limit exceeded (' + MAX_TOOL_ROUNDS + ' rounds)'
+            'Provider requested tools after tool access was closed'
           );
         }
 
+        if (toolRound === this.maxToolRounds) {
+          throw new Error(
+            'Tool call limit exceeded (' + this.maxToolRounds + ' rounds)'
+          );
+        }
+
+        let closeRemainingTools = false;
         for (const toolCall of toolCalls) {
+          if (closeRemainingTools) {
+            const content =
+              'Tool execution skipped because tool access was closed after a ' +
+              'local policy or delegation failure. Do not retry this operation.';
+            yield event({
+              type: 'tool_requested',
+              toolCallId: toolCall.id,
+              toolName: toolCall.name
+            });
+            yield event({
+              type: 'tool_completed',
+              toolCallId: toolCall.id,
+              toolName: toolCall.name,
+              outcome: 'denied',
+              durationMs: 0,
+              result: content,
+              metadata: { reason: 'turn-tool-access-closed' }
+            });
+            workingMessages.push({
+              role: 'tool',
+              toolCallId: toolCall.id,
+              toolName: toolCall.name,
+              content,
+              isError: true
+            });
+            continue;
+          }
           const toolResultBudgetBytes =
             this.contextManager.toolResultBudgetBytes(
               workingMessages,
-              this.getSystemPrompt(),
+              systemPrompt,
               providerTools,
               this.getProviderInfo(),
               toolCall.id,
               toolCall.name
             );
           const toolRun = this.executeToolCall(
+            turnId,
             toolCall.id,
             toolCall.name,
             toolCall.input,
@@ -1309,14 +1641,22 @@ export class QueryEngine {
           );
           let toolRunCompleted = false;
           let toolRunFailed = false;
+          let toolResultMessage: ToolResultMessage | undefined;
+          let toolCompletedEvent:
+            | Extract<AgentEventData, { type: 'tool_completed' }>
+            | undefined;
 
           try {
             while (true) {
               const next = await toolRun.next();
               if (next.done) {
                 toolRunCompleted = true;
-                workingMessages.push(next.value);
+                toolResultMessage = next.value;
+                workingMessages.push(toolResultMessage);
                 break;
+              }
+              if (next.value.type === 'tool_completed') {
+                toolCompletedEvent = next.value;
               }
               yield event(next.value);
             }
@@ -1331,6 +1671,29 @@ export class QueryEngine {
               await toolRun.return(undefined as never);
             }
           }
+          if (
+            toolCompletedEvent?.outcome === 'success' &&
+            (
+              toolCall.name === 'Write' ||
+              toolCall.name === 'Edit' ||
+              toolCall.name === 'Patch'
+            )
+          ) {
+            confirmedFileSideEffects.add(toolCall.name);
+          }
+          if (
+            toolCompletedEvent?.outcome === 'denied' &&
+            toolCompletedEvent.metadata?.reason === 'hook-policy'
+          ) {
+            forcedFinalizationReason = 'hook-denial';
+            closeRemainingTools = true;
+          } else if (
+            toolCall.name === 'Delegate' &&
+            toolResultMessage?.isError
+          ) {
+            forcedFinalizationReason = 'delegate-failure';
+            closeRemainingTools = true;
+          }
         }
       }
 
@@ -1344,6 +1707,14 @@ export class QueryEngine {
           durationMs,
           reason
         };
+        const terminalHooks = this.runTerminalHooks(
+          'TurnCancelled',
+          turnId,
+          { durationMs, reason: 'user_cancelled' }
+        );
+        for await (const hookEvent of terminalHooks) {
+          yield event(hookEvent);
+        }
         yield event({ type: 'turn_cancelled', durationMs, reason });
         return result;
       }
@@ -1353,6 +1724,20 @@ export class QueryEngine {
         durationMs,
         error: toAgentError(error)
       };
+      const terminalHooks = this.runTerminalHooks(
+        'TurnFailed',
+        turnId,
+        {
+          durationMs,
+          errorCode: result.error.code,
+          ...(result.error.status === undefined
+            ? {}
+            : { status: result.error.status })
+        }
+      );
+      for await (const hookEvent of terminalHooks) {
+        yield event(hookEvent);
+      }
       yield event({
         type: 'turn_failed',
         durationMs,
@@ -1537,7 +1922,347 @@ export class QueryEngine {
     throw new Error('Chat error: ' + result.error.message);
   }
 
+  private async *runSubagent(
+    input: DelegateInput,
+    signal: AbortSignal
+  ): AsyncGenerator<AgentEventData, ToolResult> {
+    if (
+      !this.extensions?.canRunSubagents?.() ||
+      typeof this.provider.fork !== 'function'
+    ) {
+      return {
+        content:
+          'Delegate failed: subagents are disabled or the current Provider ' +
+          'does not support isolated forks',
+        isError: true,
+        metadata: { errorCode: 'subagent_unavailable' }
+      };
+    }
+    if (this.activeDelegateCalls >= SUBAGENT_MAX_CALLS_PER_TURN) {
+      return {
+        content:
+          `Delegate failed: at most ${SUBAGENT_MAX_CALLS_PER_TURN} ` +
+          'subagents may run in one parent turn',
+        isError: true,
+        metadata: { errorCode: 'subagent_limit_exceeded' }
+      };
+    }
+    this.activeDelegateCalls += 1;
+
+    const subagentId = this.idFactory();
+    const startedAt = this.now();
+    let toolCalls = 0;
+    let usage: ProviderUsage | undefined;
+    let timedOut = false;
+    let childEngine: QueryEngine | undefined;
+    const controller = new AbortController();
+    const handleParentAbort = () => controller.abort(signal.reason);
+    signal.addEventListener('abort', handleParentAbort, { once: true });
+    if (signal.aborted) {
+      handleParentAbort();
+    }
+    const timeout = setTimeout(() => {
+      timedOut = true;
+      controller.abort(new OperationAbortedError('Subagent timed out'));
+    }, SUBAGENT_TIMEOUT_MS);
+    timeout.unref?.();
+
+    yield { type: 'phase_changed', phase: 'subagent' };
+    yield {
+      type: 'subagent_started',
+      subagentId,
+      role: input.role
+    };
+
+    try {
+      const forkedProvider = this.provider.fork();
+      childEngine = new QueryEngine({
+        provider: createBoundedSubagentProvider(forkedProvider),
+        tools: createSubagentToolSet(input.role),
+        workspaceRoot: this.workspaceRoot,
+        mode: 'ask',
+        permissionMode: 'safe',
+        audit: false,
+        context: {
+          autoCompact: true,
+          defaultWindowTokens: SUBAGENT_CONTEXT_WINDOW_TOKENS
+        },
+        providerRunner: {
+          ...this.providerRunnerOptions,
+          attemptTimeoutMs: Math.min(
+            this.providerRunnerOptions.attemptTimeoutMs ?? SUBAGENT_TIMEOUT_MS,
+            SUBAGENT_TIMEOUT_MS
+          ),
+          totalTimeoutMs: Math.min(
+            this.providerRunnerOptions.totalTimeoutMs ?? SUBAGENT_TIMEOUT_MS,
+            SUBAGENT_TIMEOUT_MS
+          )
+        },
+        maxToolRounds: SUBAGENT_MAX_TOOL_ROUNDS,
+        finalizeOnToolBudget: true,
+        toolSoftDeadlineMs: SUBAGENT_SOFT_DEADLINE_MS,
+        now: this.now,
+        systemPromptSuffix: subagentSystemInstructions(input.role)
+      });
+      const childTurn = childEngine.runTurn(input.task, {
+        signal: controller.signal
+      });
+      let childTurnCompleted = false;
+      let childResult: TurnResult;
+      try {
+        while (true) {
+          const next = await childTurn.next();
+          if (next.done) {
+            childTurnCompleted = true;
+            childResult = next.value;
+            break;
+          }
+          const childEvent = next.value;
+          switch (childEvent.type) {
+            case 'provider_request_started':
+              yield {
+                type: 'subagent_progress',
+                subagentId,
+                role: input.role,
+                phase: 'provider'
+              };
+              yield {
+                type: 'provider_request_started',
+                provider: childEvent.provider,
+                model: childEvent.model,
+                attempt: childEvent.attempt,
+                attemptId: childEvent.attemptId,
+                purpose: 'subagent'
+              };
+              break;
+            case 'provider_request_failed':
+              yield {
+                type: 'provider_request_failed',
+                provider: childEvent.provider,
+                model: childEvent.model,
+                attempt: childEvent.attempt,
+                attemptId: childEvent.attemptId,
+                durationMs: childEvent.durationMs,
+                willRetry: childEvent.willRetry,
+                error: childEvent.error,
+                purpose: 'subagent'
+              };
+              break;
+            case 'provider_request_completed':
+              yield {
+                type: 'provider_request_completed',
+                provider: childEvent.provider,
+                model: childEvent.model,
+                attempt: childEvent.attempt,
+                attemptId: childEvent.attemptId,
+                durationMs: childEvent.durationMs,
+                finishReason: childEvent.finishReason,
+                requestId: childEvent.requestId,
+                reportedModel: childEvent.reportedModel,
+                purpose: 'subagent'
+              };
+              break;
+            case 'retry_scheduled':
+              yield {
+                type: 'retry_scheduled',
+                attempt: childEvent.attempt,
+                nextAttempt: childEvent.nextAttempt,
+                delayMs: childEvent.delayMs,
+                reason: childEvent.reason,
+                purpose: 'subagent'
+              };
+              break;
+            case 'usage_updated':
+              usage = addUsage(usage, childEvent.usage);
+              this.activeSubagentUsage = addUsage(
+                this.activeSubagentUsage,
+                childEvent.usage
+              );
+              this.totalUsage = addUsage(this.totalUsage, childEvent.usage);
+              yield {
+                type: 'usage_updated',
+                attempt: childEvent.attempt,
+                attemptId: childEvent.attemptId,
+                usage: childEvent.usage,
+                cumulativeUsage: usage,
+                purpose: 'subagent'
+              };
+              break;
+            case 'tool_started':
+              toolCalls += 1;
+              yield {
+                type: 'subagent_progress',
+                subagentId,
+                role: input.role,
+                phase: 'tool',
+                toolName: childEvent.toolName
+              };
+              break;
+            default:
+              break;
+          }
+        }
+      } finally {
+        if (!childTurnCompleted) {
+          await childTurn.return(undefined as never).catch(() => undefined);
+        }
+      }
+
+      const durationMs = Math.max(0, this.now() - startedAt);
+      if (childResult.status === 'completed') {
+        if (!childResult.response.trim()) {
+          yield {
+            type: 'subagent_completed',
+            subagentId,
+            role: input.role,
+            outcome: 'error',
+            durationMs,
+            toolCalls,
+            ...(usage ? { usage } : {}),
+            errorCode: 'empty_report'
+          };
+          return {
+            content: 'Delegate failed: subagent returned an empty report',
+            isError: true,
+            metadata: {
+              role: input.role,
+              toolCalls,
+              errorCode: 'empty_report',
+              ...(usage ? { usage } : {})
+            }
+          };
+        }
+        const report = limitUtf8Head(
+          [
+            `<subagent_report role="${input.role}">`,
+            'This is a bounded read-only research report. Verify important claims.',
+            '',
+            childResult.response.trim(),
+            '</subagent_report>'
+          ].join('\n'),
+          SUBAGENT_MAX_REPORT_BYTES,
+          '\n\n[Subagent report truncated]'
+        );
+        yield {
+          type: 'subagent_completed',
+          subagentId,
+          role: input.role,
+          outcome: 'success',
+          durationMs,
+          toolCalls,
+          ...(usage ? { usage } : {})
+        };
+        return {
+          content: report.text,
+          metadata: {
+            role: input.role,
+            toolCalls,
+            reportTruncated: report.truncated,
+            ...(usage ? { usage } : {})
+          }
+        };
+      }
+
+      if (childResult.status === 'cancelled') {
+        const errorCode = timedOut ? 'timeout' : 'cancelled';
+        if (signal.aborted) {
+          throw new OperationAbortedError('Subagent cancelled with parent turn');
+        }
+        yield {
+          type: 'subagent_completed',
+          subagentId,
+          role: input.role,
+          outcome: timedOut ? 'error' : 'cancelled',
+          durationMs,
+          toolCalls,
+          ...(usage ? { usage } : {}),
+          errorCode
+        };
+        return {
+          content: timedOut
+            ? `Delegate failed: subagent exceeded ${SUBAGENT_TIMEOUT_MS} ms`
+            : 'Delegate failed: subagent was cancelled',
+          isError: true,
+          metadata: {
+            role: input.role,
+            toolCalls,
+            errorCode,
+            ...(usage ? { usage } : {})
+          }
+        };
+      }
+
+      yield {
+        type: 'subagent_completed',
+        subagentId,
+        role: input.role,
+        outcome: 'error',
+        durationMs,
+        toolCalls,
+        ...(usage ? { usage } : {}),
+        errorCode: childResult.error.code
+      };
+      return {
+        content: limitUtf8Head(
+          `Delegate failed (${childResult.error.code}): ` +
+          childResult.error.message,
+          SUBAGENT_MAX_REPORT_BYTES
+        ).text,
+        isError: true,
+        metadata: {
+          role: input.role,
+          toolCalls,
+          errorCode: childResult.error.code,
+          ...(usage ? { usage } : {})
+        }
+      };
+    } catch (error) {
+      const durationMs = Math.max(0, this.now() - startedAt);
+      if (signal.aborted || (!timedOut && isAbortError(error))) {
+        yield {
+          type: 'subagent_completed',
+          subagentId,
+          role: input.role,
+          outcome: 'cancelled',
+          durationMs,
+          toolCalls,
+          ...(usage ? { usage } : {}),
+          errorCode: 'cancelled'
+        };
+        throw new OperationAbortedError('Subagent cancelled with parent turn');
+      }
+      const errorCode = timedOut ? 'timeout' : 'subagent_failed';
+      yield {
+        type: 'subagent_completed',
+        subagentId,
+        role: input.role,
+        outcome: 'error',
+        durationMs,
+        toolCalls,
+        ...(usage ? { usage } : {}),
+        errorCode
+      };
+      return {
+        content: timedOut
+          ? `Delegate failed: subagent exceeded ${SUBAGENT_TIMEOUT_MS} ms`
+          : 'Delegate failed: isolated subagent execution failed',
+        isError: true,
+        metadata: {
+          role: input.role,
+          toolCalls,
+          errorCode,
+          ...(usage ? { usage } : {})
+        }
+      };
+    } finally {
+      clearTimeout(timeout);
+      signal.removeEventListener('abort', handleParentAbort);
+      await childEngine?.close().catch(() => undefined);
+    }
+  }
+
   private async *executeToolCall(
+    turnId: string,
     toolCallId: string,
     toolName: string,
     input: unknown,
@@ -1578,16 +2303,6 @@ export class QueryEngine {
       yield complete('error', content);
       return toolMessage(content, true);
     }
-    if (!isToolAllowedInMode(this.mode, tool)) {
-      const content =
-        `Tool execution denied: ${toolName} is unavailable in ${this.mode} mode`;
-      yield complete('denied', content, {
-        reason: 'work-mode-policy',
-        mode: this.mode
-      });
-      return toolMessage(content, true);
-    }
-
     const validationResult = validateToolInput(tool, input);
     if (!validationResult.success) {
       yield complete('error', validationResult.message);
@@ -1596,17 +2311,130 @@ export class QueryEngine {
 
     const baseContext: ToolContext = {
       toolCallId,
+      sessionId: this.sessionId,
+      turnId,
       workspaceRoot: this.workspaceRoot,
       workingDirectory: this.workspaceRoot,
-      signal
+      mode: this.mode,
+      permissionMode: this.permissionMode,
+      signal,
+      emitEvent: event => {
+        pendingToolEvents.push(event);
+      }
     };
+    const pendingToolEvents: AgentEventData[] = [];
+    const drainToolEvents = function *(): Generator<AgentEventData> {
+      while (pendingToolEvents.length > 0) {
+        yield pendingToolEvents.shift()!;
+      }
+    };
+    let postHookContext: {
+      subject: string;
+      toolName: string;
+      providerToolName: string;
+      risk: ToolDefinition['risk'];
+    } | undefined;
 
     try {
       throwIfAborted(signal);
+      const resolvedPolicy = tool.resolvePolicy
+        ? await tool.resolvePolicy(validationResult.data, baseContext)
+        : {
+            risk: tool.risk,
+            approval: tool.approval
+          };
+      yield *drainToolEvents();
+      if (!isToolRiskAllowedInMode(this.mode, resolvedPolicy.risk)) {
+        const content =
+          `Tool execution denied: ${resolvedPolicy.displayName ?? toolName} ` +
+          `is unavailable in ${this.mode} mode. ` +
+          'Switch work mode to code to request execution; permission mode is ' +
+          'a separate setting and cannot bypass the work-mode boundary.';
+        yield complete('denied', content, {
+          reason: 'work-mode-policy',
+          mode: this.mode,
+          ...(resolvedPolicy.metadata ?? {})
+        });
+        return toolMessage(content, true);
+      }
+      const effectiveTool = {
+        name: tool.name,
+        risk: resolvedPolicy.risk,
+        approval: resolvedPolicy.approval
+      };
+      const approvalToolName = resolvedPolicy.displayName ?? tool.name;
+      const hookSubject = tool.name === 'McpCall'
+        ? `mcp:${approvalToolName}`
+        : `builtin:${tool.name}`;
+      postHookContext = {
+        subject: hookSubject,
+        toolName: approvalToolName,
+        providerToolName: tool.name,
+        risk: resolvedPolicy.risk
+      };
+      const hookPayload = {
+        toolName: approvalToolName,
+        providerToolName: tool.name,
+        risk: resolvedPolicy.risk,
+        input: validationResult.data
+      };
+      const preToolHooks = this.runHooks(
+        'PreToolUse',
+        turnId,
+        hookPayload,
+        signal,
+        hookSubject
+      );
+      let preToolResult: HookRunResult | undefined;
+      let preToolHooksCompleted = false;
+      try {
+        while (true) {
+          const next = await preToolHooks.next();
+          if (next.done) {
+            preToolResult = next.value;
+            preToolHooksCompleted = true;
+            break;
+          }
+          yield next.value;
+        }
+      } finally {
+        if (!preToolHooksCompleted) {
+          await preToolHooks.return(undefined as never);
+        }
+      }
+      if (preToolResult?.decision === 'deny') {
+        const displayContent =
+          `Tool execution denied by Hook: ${preToolResult.reason ?? 'policy denied'}`;
+        const providerContent =
+          'Tool execution denied by a local Hook policy. This denial is ' +
+          'definitive for the current turn; do not retry it or attempt an ' +
+          'equivalent side effect with another tool.';
+        yield *this.runHooks(
+          'PostToolUse',
+          turnId,
+          {
+            toolName: approvalToolName,
+            providerToolName: tool.name,
+            risk: resolvedPolicy.risk,
+            outcome: 'denied',
+            metadata: { reason: 'hook-policy' }
+          },
+          signal,
+          hookSubject
+        );
+        yield complete('denied', displayContent, {
+          reason: 'hook-policy',
+          ...(resolvedPolicy.metadata ?? {})
+        });
+        return toolMessage(providerContent, true);
+      }
       let executionContext = baseContext;
-      const needsUserApproval = requiresUserApproval(this.permissionMode, tool);
+      const needsUserApproval = requiresUserApproval(
+        this.permissionMode,
+        effectiveTool
+      );
       const needsPreparation =
-        tool.approval === 'always' || Boolean(tool.prepareApproval);
+        resolvedPolicy.approval === 'always' || Boolean(tool.prepareApproval);
 
       if (needsPreparation) {
         let approvalDetails: ToolApprovalDetails = {
@@ -1617,30 +2445,44 @@ export class QueryEngine {
             validationResult.data,
             baseContext
           );
+          yield *drainToolEvents();
         }
 
         if (needsUserApproval) {
-          const choices = approvalChoicesForTool(tool);
+          const choices = approvalChoicesForTool(effectiveTool);
           yield { type: 'phase_changed', phase: 'approval' };
           yield {
             type: 'approval_requested',
             toolCallId,
-            toolName,
-            risk: tool.risk,
+            toolName: approvalToolName,
+            risk: resolvedPolicy.risk,
             choices
           };
 
           if (!requestApproval) {
             const content =
-              'Tool execution denied: ' + tool.name +
+              'Tool execution denied: ' + approvalToolName +
               ' requires user approval, but no approval handler is available';
             yield {
               type: 'approval_resolved',
               toolCallId,
-              toolName,
+              toolName: approvalToolName,
               choice: 'deny',
               resolution: 'handler-unavailable'
             };
+            yield *this.runHooks(
+              'PostToolUse',
+              turnId,
+              {
+                toolName: approvalToolName,
+                providerToolName: tool.name,
+                risk: resolvedPolicy.risk,
+                outcome: 'denied',
+                metadata: { reason: 'handler-unavailable' }
+              },
+              signal,
+              hookSubject
+            );
             yield complete('denied', content);
             return toolMessage(content, true);
           }
@@ -1648,8 +2490,8 @@ export class QueryEngine {
           throwIfAborted(signal);
           const approvalChoice = await requestApproval({
             toolCallId,
-            toolName,
-            risk: tool.risk,
+            toolName: approvalToolName,
+            risk: resolvedPolicy.risk,
             input: validationResult.data,
             description: approvalDetails.description,
             preview: approvalDetails.preview,
@@ -1659,14 +2501,28 @@ export class QueryEngine {
 
           if (!isOfferedApprovalChoice(approvalChoice, choices)) {
             const content =
-              'Tool execution denied: invalid approval choice for ' + tool.name;
+              'Tool execution denied: invalid approval choice for ' +
+              approvalToolName;
             yield {
               type: 'approval_resolved',
               toolCallId,
-              toolName,
+              toolName: approvalToolName,
               choice: 'deny',
               resolution: 'invalid-choice'
             };
+            yield *this.runHooks(
+              'PostToolUse',
+              turnId,
+              {
+                toolName: approvalToolName,
+                providerToolName: tool.name,
+                risk: resolvedPolicy.risk,
+                outcome: 'denied',
+                metadata: { reason: 'invalid-choice' }
+              },
+              signal,
+              hookSubject
+            );
             yield complete('denied', content);
             return toolMessage(content, true);
           }
@@ -1674,13 +2530,26 @@ export class QueryEngine {
           yield {
             type: 'approval_resolved',
             toolCallId,
-            toolName,
+            toolName: approvalToolName,
             choice: approvalChoice,
             resolution: 'user'
           };
           if (approvalChoice === 'deny') {
             const content =
               'Tool execution denied by the user: ' + approvalDetails.description;
+            yield *this.runHooks(
+              'PostToolUse',
+              turnId,
+              {
+                toolName: approvalToolName,
+                providerToolName: tool.name,
+                risk: resolvedPolicy.risk,
+                outcome: 'denied',
+                metadata: { reason: 'user-denied' }
+              },
+              signal,
+              hookSubject
+            );
             yield complete('denied', content);
             return toolMessage(content, true);
           }
@@ -1697,10 +2566,35 @@ export class QueryEngine {
 
       yield { type: 'phase_changed', phase: 'tool' };
       yield { type: 'tool_started', toolCallId, toolName };
-      const toolResult: ToolResult = await tool.execute(
-        validationResult.data,
-        executionContext
-      );
+      let toolResult: ToolResult;
+      if (tool.name === 'Delegate') {
+        const subagent = this.runSubagent(
+          validationResult.data as DelegateInput,
+          signal
+        );
+        let subagentCompleted = false;
+        try {
+          while (true) {
+            const next = await subagent.next();
+            if (next.done) {
+              subagentCompleted = true;
+              toolResult = next.value;
+              break;
+            }
+            yield next.value;
+          }
+        } finally {
+          if (!subagentCompleted) {
+            await subagent.return(undefined as never).catch(() => undefined);
+          }
+        }
+      } else {
+        toolResult = await tool.execute(
+          validationResult.data,
+          executionContext
+        );
+      }
+      yield *drainToolEvents();
       throwIfAborted(signal);
 
       if (!toolResult.isError) {
@@ -1733,6 +2627,20 @@ export class QueryEngine {
               : {})
           }
         : toolResult.metadata;
+      const hookMetadata = sanitizeToolMetadataForHook(metadata);
+      yield *this.runHooks(
+        'PostToolUse',
+        turnId,
+        {
+          toolName: approvalToolName,
+          providerToolName: tool.name,
+          risk: resolvedPolicy.risk,
+          outcome: toolResult.isError ? 'error' : 'success',
+          ...(hookMetadata ? { metadata: hookMetadata } : {})
+        },
+        signal,
+        hookSubject
+      );
       yield complete(
         toolResult.isError ? 'error' : 'success',
         limited.content,
@@ -1740,12 +2648,28 @@ export class QueryEngine {
       );
       return toolMessage(limited.content, Boolean(toolResult.isError));
     } catch (error) {
+      yield *drainToolEvents();
       if (signal.aborted || isAbortError(error)) {
         const reason = 'Operation cancelled by the user';
         yield complete('cancelled', reason);
         throw new OperationAbortedError(reason);
       }
       const reason = error instanceof Error ? error.message : String(error);
+      if (postHookContext) {
+        yield *this.runHooks(
+          'PostToolUse',
+          turnId,
+          {
+            toolName: postHookContext.toolName,
+            providerToolName: postHookContext.providerToolName,
+            risk: postHookContext.risk,
+            outcome: 'error',
+            metadata: { reason: 'execution-error' }
+          },
+          signal,
+          postHookContext.subject
+        );
+      }
       const limited = this.contextManager.limitToolResult(
         toolName,
         reason,
@@ -1829,7 +2753,9 @@ export class QueryEngine {
     };
   }
 
-  private getSystemPrompt(): string {
+  private getSystemPrompt(
+    currentTurnInstructions: readonly string[] = []
+  ): string {
     const shell = resolveShellInvocation(':', process.platform);
     const shellExecutor = shell.executable;
     const shellHints = shell.kind === 'cmd'
@@ -1860,8 +2786,21 @@ export class QueryEngine {
       '9. Before requesting Shell approval, choose a command and output format likely to complete the task in one run.',
       '10. Do not rerun a successful tool only to reformat its output; summarize the existing result instead.',
       '11. Describe inspection scope accurately: verify exact counts, and do not call a sampled review complete or exhaustive.',
+      '12. Treat mode, approval, and Hook denials as definitive; do not retry or use another tool to bypass the denied operation.',
+      '13. If Write, Edit, or Patch succeeds, disclose that file side effect accurately even when another operation fails.',
+      ...(this.getAllowedTools().some(tool => tool.name === 'Delegate')
+        ? [
+            '14. Use Delegate only for independent read-only exploration or review with clear benefit; do not delegate trivial work.'
+          ]
+        : []),
       '',
       ...modeSystemInstructions(this.mode),
+      ...(this.systemPromptSuffix
+        ? ['', 'Additional runtime constraints:', this.systemPromptSuffix]
+        : []),
+      ...(currentTurnInstructions.length > 0
+        ? ['', 'Current turn constraints:', ...currentTurnInstructions]
+        : []),
       '',
       'Environment:',
       '- Workspace root: ' + this.workspaceRoot,
