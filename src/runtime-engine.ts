@@ -71,10 +71,14 @@ import {
   createDelegateTool,
   createSubagentToolSet,
   SUBAGENT_CONTEXT_WINDOW_TOKENS,
+  SUBAGENT_HARD_TOKEN_BUDGET,
   SUBAGENT_MAX_CALLS_PER_TURN,
+  SUBAGENT_MAX_PROVIDER_CALLS,
   SUBAGENT_MAX_REPORT_BYTES,
+  SUBAGENT_MAX_TOOL_CALLS,
   SUBAGENT_MAX_TOOL_ROUNDS,
   SUBAGENT_SOFT_DEADLINE_MS,
+  SUBAGENT_SOFT_TOKEN_BUDGET,
   SUBAGENT_TIMEOUT_MS,
   subagentSystemInstructions,
   type DelegateInput
@@ -155,6 +159,12 @@ function sanitizeToolMetadataForHook(
 }
 
 function toAgentError(error: unknown): AgentErrorDetails {
+  if (error instanceof AgentBudgetError) {
+    return {
+      code: error.code,
+      message: error.message
+    };
+  }
   if (error instanceof ContextCompactionError) {
     return {
       code: 'context_compaction_failed',
@@ -184,13 +194,41 @@ class ContextCompactionError extends Error {
   }
 }
 
+type BudgetStopReason =
+  | 'tool-round-limit'
+  | 'tool-call-limit'
+  | 'provider-call-limit'
+  | 'soft-timeout'
+  | 'soft-token-limit'
+  | 'hard-token-limit';
+
+class AgentBudgetError extends Error {
+  constructor(
+    public readonly code: Extract<
+      BudgetStopReason,
+      'provider-call-limit' | 'hard-token-limit'
+    >,
+    message: string
+  ) {
+    super(message);
+    this.name = 'AgentBudgetError';
+  }
+}
+
 interface ProviderProgress {
   visibleContentOrTool: boolean;
+}
+
+interface ProviderCallBudget {
+  count: number;
+  maximum?: number;
+  unreportedEstimatedTokens: number;
 }
 
 interface ProviderRunResult {
   response: ProviderChatResponse;
   usage?: ProviderUsage;
+  usageReported: boolean;
   finishReason?: string | null;
 }
 
@@ -429,8 +467,12 @@ export interface QueryEngineOptions {
   persistenceStatus?: EnginePersistenceStatusProvider;
   extensions?: ExtensionRuntime;
   maxToolRounds?: number;
+  maxToolCalls?: number;
+  maxProviderCalls?: number;
   finalizeOnToolBudget?: boolean;
   toolSoftDeadlineMs?: number;
+  softTokenBudget?: number;
+  hardTokenBudget?: number;
   systemPromptSuffix?: string;
 }
 
@@ -467,8 +509,12 @@ export class QueryEngine {
   private persistenceStatus?: EnginePersistenceStatusProvider;
   private extensions?: ExtensionRuntime;
   private maxToolRounds: number;
+  private maxToolCalls?: number;
+  private maxProviderCalls?: number;
   private finalizeOnToolBudget: boolean;
   private toolSoftDeadlineMs?: number;
+  private softTokenBudget?: number;
+  private hardTokenBudget?: number;
   private systemPromptSuffix?: string;
   private activeDelegateCalls = 0;
   private activeSubagentUsage?: ProviderUsage;
@@ -500,8 +546,23 @@ export class QueryEngine {
         `maxToolRounds must be an integer from 1 to ${DEFAULT_MAX_TOOL_ROUNDS}`
       );
     }
+    this.maxToolCalls = options.maxToolCalls;
+    this.maxProviderCalls = options.maxProviderCalls;
+    for (const [name, value] of [
+      ['maxToolCalls', this.maxToolCalls],
+      ['maxProviderCalls', this.maxProviderCalls]
+    ] as const) {
+      if (
+        value !== undefined &&
+        (!Number.isSafeInteger(value) || value < 1 || value > 10_000)
+      ) {
+        throw new Error(`${name} must be an integer from 1 to 10000`);
+      }
+    }
     this.finalizeOnToolBudget = options.finalizeOnToolBudget ?? false;
     this.toolSoftDeadlineMs = options.toolSoftDeadlineMs;
+    this.softTokenBudget = options.softTokenBudget;
+    this.hardTokenBudget = options.hardTokenBudget;
     if (
       this.toolSoftDeadlineMs !== undefined &&
       (
@@ -510,6 +571,30 @@ export class QueryEngine {
       )
     ) {
       throw new Error('toolSoftDeadlineMs must be a positive integer');
+    }
+    if (
+      this.softTokenBudget !== undefined &&
+      (
+        !Number.isSafeInteger(this.softTokenBudget) ||
+        this.softTokenBudget < 1
+      )
+    ) {
+      throw new Error('softTokenBudget must be a positive integer');
+    }
+    if (
+      this.hardTokenBudget !== undefined &&
+      (
+        !Number.isSafeInteger(this.hardTokenBudget) ||
+        this.hardTokenBudget < 1 ||
+        (
+          this.softTokenBudget !== undefined &&
+          this.hardTokenBudget <= this.softTokenBudget
+        )
+      )
+    ) {
+      throw new Error(
+        'hardTokenBudget must be a positive integer above softTokenBudget'
+      );
     }
     this.systemPromptSuffix = options.systemPromptSuffix?.trim() || undefined;
 
@@ -675,20 +760,36 @@ export class QueryEngine {
         dirty: false
       },
       extensions: this.extensions?.getStatus() ?? {
+        trustState: 'untrusted',
         workspaceTrusted: false,
         projectConfigurationPresent: false,
         mcp: {
           configured: 0,
           ready: 0,
+          error: 0,
+          disconnected: 0,
           servers: []
         },
         hooks: {
           configured: 0,
-          enabled: 0
+          enabled: 0,
+          entries: []
         },
         subagents: {
           enabled: false,
-          available: false
+          available: false,
+          budgets: {
+            maxPerTurn: SUBAGENT_MAX_CALLS_PER_TURN,
+            maxToolRounds: SUBAGENT_MAX_TOOL_ROUNDS,
+            maxToolCalls: SUBAGENT_MAX_TOOL_CALLS,
+            maxProviderCalls: SUBAGENT_MAX_PROVIDER_CALLS,
+            softTimeoutMs: SUBAGENT_SOFT_DEADLINE_MS,
+            hardTimeoutMs: SUBAGENT_TIMEOUT_MS,
+            contextWindowTokens: SUBAGENT_CONTEXT_WINDOW_TOKENS,
+            maxReportBytes: SUBAGENT_MAX_REPORT_BYTES,
+            softTokenBudget: SUBAGENT_SOFT_TOKEN_BUDGET,
+            hardTokenBudget: SUBAGENT_HARD_TOKEN_BUDGET
+          }
         },
         warnings: []
       },
@@ -864,6 +965,7 @@ export class QueryEngine {
     let providerRunCompleted = false;
     let providerRunFailed = false;
     let usage = cumulativeUsage;
+    let usageReported = false;
     let finishReason: string | null | undefined;
 
     try {
@@ -874,6 +976,7 @@ export class QueryEngine {
           return {
             response: next.value,
             usage,
+            usageReported,
             finishReason
           };
         }
@@ -945,6 +1048,7 @@ export class QueryEngine {
             }
             break;
           case 'usage':
+            usageReported = true;
             usage = addUsage(usage, providerEvent.usage);
             this.totalUsage = addUsage(this.totalUsage, providerEvent.usage);
             yield {
@@ -996,14 +1100,59 @@ export class QueryEngine {
     }
   }
 
+  private consumeProviderCallBudget(
+    budget: ProviderCallBudget | undefined,
+    cumulativeUsage?: ProviderUsage,
+    estimatedInputTokens = 0
+  ): void {
+    if (!budget) {
+      return;
+    }
+    if (
+      budget.maximum !== undefined &&
+      budget.count >= budget.maximum
+    ) {
+      throw new AgentBudgetError(
+        'provider-call-limit',
+        `Provider call limit exceeded (${budget.maximum})`
+      );
+    }
+    const projectedTokens =
+      (cumulativeUsage?.totalTokens ?? 0) +
+      budget.unreportedEstimatedTokens +
+      estimatedInputTokens;
+    if (
+      this.hardTokenBudget !== undefined &&
+      projectedTokens >= this.hardTokenBudget
+    ) {
+      throw new AgentBudgetError(
+        'hard-token-limit',
+        `Hard token budget would be exceeded (${this.hardTokenBudget})`
+      );
+    }
+    budget.count += 1;
+  }
+
+  private observedBudgetTokens(
+    budget: ProviderCallBudget,
+    cumulativeUsage?: ProviderUsage
+  ): number {
+    return (
+      (cumulativeUsage?.totalTokens ?? 0) +
+      budget.unreportedEstimatedTokens
+    );
+  }
+
   private async *prepareContextBudget(
     messages: ConversationMessage[],
     systemPrompt: string,
     tools: ProviderTool[],
+    turnId: string,
     signal: AbortSignal,
     reason: CompactionReason,
     force: boolean,
-    cumulativeUsage: ProviderUsage | undefined
+    cumulativeUsage: ProviderUsage | undefined,
+    providerCallBudget?: ProviderCallBudget
   ): AsyncGenerator<AgentEventData, ContextPreparationResult> {
     let workingMessages = messages;
     let usage = cumulativeUsage;
@@ -1095,6 +1244,17 @@ export class QueryEngine {
         beforeTokens: measurement.estimatedInputTokens,
         contextWindowTokens: measurement.contextWindowTokens
       };
+      yield *this.runHooks(
+        'PreCompact',
+        turnId,
+        {
+          reason,
+          beforeTokens: measurement.estimatedInputTokens,
+          passes: compactions
+        },
+        signal,
+        reason
+      );
 
       try {
         const providerInfo = this.getProviderInfo();
@@ -1132,6 +1292,11 @@ export class QueryEngine {
           );
         }
         const progress: ProviderProgress = { visibleContentOrTool: false };
+        this.consumeProviderCallBudget(
+          providerCallBudget,
+          usage,
+          summaryMeasurement.estimatedInputTokens
+        );
         const summaryRun = this.runProviderWithEvents({
           messages: summaryMessages,
           tools: [],
@@ -1178,6 +1343,18 @@ export class QueryEngine {
           );
         }
 
+        if (
+          providerCallBudget &&
+          summaryResult &&
+          !summaryResult.usageReported
+        ) {
+          providerCallBudget.unreportedEstimatedTokens +=
+            summaryMeasurement.estimatedInputTokens +
+            Math.ceil(Buffer.byteLength(
+              summaryResult.response.message.content,
+              'utf8'
+            ) / 2);
+        }
         usage = summaryResult?.usage;
         workingMessages = applyCompactionPlan(workingMessages, plan, summary);
         this.contextManager.recordCompactionSuccess();
@@ -1190,6 +1367,7 @@ export class QueryEngine {
           tools,
           this.getProviderInfo()
         );
+        const durationMs = Math.max(0, this.now() - startedAt);
         yield {
           type: 'compaction_completed',
           reason,
@@ -1197,8 +1375,21 @@ export class QueryEngine {
           beforeTokens,
           afterTokens: measurement.estimatedInputTokens,
           messagesCompacted: plan.selectedMessages.length,
-          durationMs: Math.max(0, this.now() - startedAt)
+          durationMs
         };
+        yield *this.runHooks(
+          'PostCompact',
+          turnId,
+          {
+            reason,
+            beforeTokens,
+            afterTokens: measurement.estimatedInputTokens,
+            passes: compactions,
+            durationMs
+          },
+          signal,
+          reason
+        );
         yield {
           type: 'context_usage_updated',
           inputTokens: measurement.estimatedInputTokens,
@@ -1363,6 +1554,16 @@ export class QueryEngine {
         | 'delegate-failure'
         | 'hook-denial'
         | undefined;
+      let forcedBudgetStopReason: BudgetStopReason | undefined;
+      let appliedBudgetStopReason: BudgetStopReason | undefined;
+      const providerCallBudget: ProviderCallBudget = {
+        count: 0,
+        unreportedEstimatedTokens: 0,
+        ...(this.maxProviderCalls === undefined
+          ? {}
+          : { maximum: this.maxProviderCalls })
+      };
+      let executedToolCalls = 0;
       let cumulativeUsage: ProviderUsage | undefined;
       let finalFinishReason: string | null | undefined;
       let latestMeasurement = this.contextManager.measure(
@@ -1380,16 +1581,38 @@ export class QueryEngine {
           this.finalizeOnToolBudget &&
           toolRound > 0 &&
           (
+            forcedBudgetStopReason !== undefined ||
             toolRound === this.maxToolRounds ||
+            (
+              this.softTokenBudget !== undefined &&
+              this.observedBudgetTokens(
+                providerCallBudget,
+                cumulativeUsage
+              ) >= this.softTokenBudget
+            ) ||
             (
               this.toolSoftDeadlineMs !== undefined &&
               this.now() - turnStartedAt >= this.toolSoftDeadlineMs
             )
           )
-            ? toolRound === this.maxToolRounds
-              ? 'tool-budget'
-              : 'soft-deadline'
+            ? forcedBudgetStopReason ??
+              (
+                toolRound === this.maxToolRounds
+                  ? 'tool-round-limit'
+                  : (
+                      this.softTokenBudget !== undefined &&
+                      this.observedBudgetTokens(
+                        providerCallBudget,
+                        cumulativeUsage
+                      ) >= this.softTokenBudget
+                    )
+                    ? 'soft-token-limit'
+                    : 'soft-timeout'
+              )
             : undefined;
+        if (budgetFinalizationReason) {
+          appliedBudgetStopReason = budgetFinalizationReason;
+        }
         const finalizationReason =
           forcedFinalizationReason ?? budgetFinalizationReason;
         const runtimeInstructions: string[] = [];
@@ -1430,10 +1653,12 @@ export class QueryEngine {
           workingMessages,
           systemPrompt,
           providerToolsForRound,
+          turnId,
           signal,
           this.pendingCompactionReason ?? 'threshold',
           false,
-          cumulativeUsage
+          cumulativeUsage,
+          providerCallBudget
         );
         let preparationCompleted = false;
         try {
@@ -1456,9 +1681,15 @@ export class QueryEngine {
         }
 
         let response: ProviderChatResponse | undefined;
+        let responseUsageReported = false;
         let recoveredFromContextExceeded = false;
         while (!response) {
           throwIfAborted(signal);
+          this.consumeProviderCallBudget(
+            providerCallBudget,
+            cumulativeUsage,
+            latestMeasurement.estimatedInputTokens
+          );
           yield event({ type: 'phase_changed', phase: 'provider' });
           const progress: ProviderProgress = { visibleContentOrTool: false };
           const providerRun = this.runProviderWithEvents({
@@ -1476,6 +1707,7 @@ export class QueryEngine {
                 providerRunCompleted = true;
                 response = next.value.response;
                 cumulativeUsage = next.value.usage;
+                responseUsageReported = next.value.usageReported;
                 finalFinishReason = next.value.finishReason;
                 break;
               }
@@ -1493,10 +1725,12 @@ export class QueryEngine {
                 workingMessages,
                 systemPrompt,
                 providerToolsForRound,
+                turnId,
                 signal,
                 'context_exceeded',
                 true,
-                cumulativeUsage
+                cumulativeUsage,
+                providerCallBudget
               );
               let forcedPreparationCompleted = false;
               try {
@@ -1533,6 +1767,37 @@ export class QueryEngine {
         }
 
         const toolCalls = response.message.toolCalls ?? [];
+        let responseBytes = Buffer.byteLength(
+          response.message.content,
+          'utf8'
+        );
+        try {
+          responseBytes += Buffer.byteLength(
+            JSON.stringify(toolCalls),
+            'utf8'
+          );
+        } catch {
+          responseBytes += 4_096;
+        }
+        if (!responseUsageReported) {
+          providerCallBudget.unreportedEstimatedTokens +=
+            latestMeasurement.estimatedInputTokens +
+            Math.ceil(responseBytes / 2);
+        }
+        const observedBudgetTokens = this.observedBudgetTokens(
+          providerCallBudget,
+          cumulativeUsage
+        );
+        if (
+          this.hardTokenBudget !== undefined &&
+          observedBudgetTokens >= this.hardTokenBudget &&
+          toolCalls.length > 0
+        ) {
+          throw new AgentBudgetError(
+            'hard-token-limit',
+            `Hard token budget exceeded (${this.hardTokenBudget})`
+          );
+        }
         if (toolCalls.length === 0) {
           const turnUsage = this.activeSubagentUsage
             ? addUsage(cumulativeUsage, this.activeSubagentUsage)
@@ -1542,6 +1807,9 @@ export class QueryEngine {
             response: responseParts.join('\n\n'),
             durationMs: Math.max(0, this.now() - turnStartedAt),
             finishReason: finalFinishReason,
+            ...(appliedBudgetStopReason
+              ? { budgetStopReason: appliedBudgetStopReason }
+              : {}),
             usage: turnUsage,
             context: {
               compactions: this.contextManager.compactions - compactionsAtStart,
@@ -1594,10 +1862,20 @@ export class QueryEngine {
 
         let closeRemainingTools = false;
         for (const toolCall of toolCalls) {
+          if (
+            !closeRemainingTools &&
+            this.maxToolCalls !== undefined &&
+            executedToolCalls >= this.maxToolCalls
+          ) {
+            forcedBudgetStopReason = 'tool-call-limit';
+            closeRemainingTools = true;
+          }
           if (closeRemainingTools) {
-            const content =
-              'Tool execution skipped because tool access was closed after a ' +
-              'local policy or delegation failure. Do not retry this operation.';
+            const content = forcedBudgetStopReason
+              ? 'Tool execution skipped because the bounded tool-call budget ' +
+                'was reached. Use only evidence already gathered.'
+              : 'Tool execution skipped because tool access was closed after a ' +
+                'local policy or delegation failure. Do not retry this operation.';
             yield event({
               type: 'tool_requested',
               toolCallId: toolCall.id,
@@ -1610,7 +1888,11 @@ export class QueryEngine {
               outcome: 'denied',
               durationMs: 0,
               result: content,
-              metadata: { reason: 'turn-tool-access-closed' }
+              metadata: {
+                reason: forcedBudgetStopReason
+                  ? forcedBudgetStopReason
+                  : 'turn-tool-access-closed'
+              }
             });
             workingMessages.push({
               role: 'tool',
@@ -1621,6 +1903,7 @@ export class QueryEngine {
             });
             continue;
           }
+          executedToolCalls += 1;
           const toolResultBudgetBytes =
             this.contextManager.toolResultBudgetBytes(
               workingMessages,
@@ -1842,6 +2125,7 @@ export class QueryEngine {
         [...this.messages],
         systemPrompt,
         providerTools,
+        operationId,
         signal,
         'manual',
         true,
@@ -1922,8 +2206,61 @@ export class QueryEngine {
     throw new Error('Chat error: ' + result.error.message);
   }
 
+  private async *completeSubagent(
+    turnId: string,
+    completion: Extract<
+      AgentEventData,
+      { type: 'subagent_completed' }
+    >,
+    signal: AbortSignal
+  ): AsyncGenerator<AgentEventData, void> {
+    yield completion;
+    this.extensions?.setLastSubagentStopReason?.(
+      completion.stopReason ?? completion.errorCode ?? completion.outcome
+    );
+    const controller = new AbortController();
+    const handleAbort = () => controller.abort(signal.reason);
+    if (!signal.aborted) {
+      signal.addEventListener('abort', handleAbort, { once: true });
+    }
+    const timeout = setTimeout(() => {
+      controller.abort(
+        new OperationAbortedError('SubagentStop Hook budget expired')
+      );
+    }, 2_000);
+    timeout.unref?.();
+    try {
+      if (!signal.aborted) {
+        yield *this.runHooks(
+          'SubagentStop',
+        turnId,
+        {
+          role: completion.role,
+          outcome: completion.outcome,
+          durationMs: completion.durationMs,
+          toolCalls: completion.toolCalls,
+          ...(completion.usage ? { usage: completion.usage } : {}),
+          ...(completion.stopReason
+            ? { stopReason: completion.stopReason }
+              : {})
+          },
+          controller.signal,
+          completion.role
+        );
+      }
+    } catch (error) {
+      if (!isAbortError(error)) {
+        throw error;
+      }
+    } finally {
+      clearTimeout(timeout);
+      signal.removeEventListener('abort', handleAbort);
+    }
+  }
+
   private async *runSubagent(
     input: DelegateInput,
+    turnId: string,
     signal: AbortSignal
   ): AsyncGenerator<AgentEventData, ToolResult> {
     if (
@@ -1952,7 +2289,9 @@ export class QueryEngine {
     const subagentId = this.idFactory();
     const startedAt = this.now();
     let toolCalls = 0;
+    let providerCalls = 0;
     let usage: ProviderUsage | undefined;
+    let visibleText = '';
     let timedOut = false;
     let childEngine: QueryEngine | undefined;
     const controller = new AbortController();
@@ -1973,6 +2312,15 @@ export class QueryEngine {
       subagentId,
       role: input.role
     };
+    yield *this.runHooks(
+      'SubagentStart',
+      turnId,
+      {
+        role: input.role
+      },
+      controller.signal,
+      input.role
+    );
 
     try {
       const forkedProvider = this.provider.fork();
@@ -1999,8 +2347,12 @@ export class QueryEngine {
           )
         },
         maxToolRounds: SUBAGENT_MAX_TOOL_ROUNDS,
+        maxToolCalls: SUBAGENT_MAX_TOOL_CALLS,
+        maxProviderCalls: SUBAGENT_MAX_PROVIDER_CALLS,
         finalizeOnToolBudget: true,
         toolSoftDeadlineMs: SUBAGENT_SOFT_DEADLINE_MS,
+        softTokenBudget: SUBAGENT_SOFT_TOKEN_BUDGET,
+        hardTokenBudget: SUBAGENT_HARD_TOKEN_BUDGET,
         now: this.now,
         systemPromptSuffix: subagentSystemInstructions(input.role)
       });
@@ -2020,6 +2372,9 @@ export class QueryEngine {
           const childEvent = next.value;
           switch (childEvent.type) {
             case 'provider_request_started':
+              if (childEvent.attempt === 1) {
+                providerCalls += 1;
+              }
               yield {
                 type: 'subagent_progress',
                 subagentId,
@@ -2034,6 +2389,21 @@ export class QueryEngine {
                 attemptId: childEvent.attemptId,
                 purpose: 'subagent'
               };
+              break;
+            case 'text_delta':
+              if (
+                Buffer.byteLength(visibleText, 'utf8') <
+                SUBAGENT_MAX_REPORT_BYTES
+              ) {
+                const remaining =
+                  SUBAGENT_MAX_REPORT_BYTES -
+                  Buffer.byteLength(visibleText, 'utf8');
+                visibleText += limitUtf8Head(
+                  childEvent.delta,
+                  remaining,
+                  ''
+                ).text;
+              }
               break;
             case 'provider_request_failed':
               yield {
@@ -2111,22 +2481,26 @@ export class QueryEngine {
       const durationMs = Math.max(0, this.now() - startedAt);
       if (childResult.status === 'completed') {
         if (!childResult.response.trim()) {
-          yield {
+          yield *this.completeSubagent(turnId, {
             type: 'subagent_completed',
             subagentId,
             role: input.role,
             outcome: 'error',
             durationMs,
             toolCalls,
+            providerCalls,
+            stopReason: 'empty-report',
             ...(usage ? { usage } : {}),
             errorCode: 'empty_report'
-          };
+          }, controller.signal);
           return {
             content: 'Delegate failed: subagent returned an empty report',
             isError: true,
             metadata: {
               role: input.role,
               toolCalls,
+              providerCalls,
+              stopReason: 'empty-report',
               errorCode: 'empty_report',
               ...(usage ? { usage } : {})
             }
@@ -2143,20 +2517,30 @@ export class QueryEngine {
           SUBAGENT_MAX_REPORT_BYTES,
           '\n\n[Subagent report truncated]'
         );
-        yield {
+        const stopReason = childResult.budgetStopReason ?? 'completed';
+        const outcome = childResult.budgetStopReason
+          ? 'partial'
+          : 'success';
+        yield *this.completeSubagent(turnId, {
           type: 'subagent_completed',
           subagentId,
           role: input.role,
-          outcome: 'success',
+          outcome,
           durationMs,
           toolCalls,
+          providerCalls,
+          stopReason,
+          reportTruncated: report.truncated,
           ...(usage ? { usage } : {})
-        };
+        }, controller.signal);
         return {
           content: report.text,
           metadata: {
             role: input.role,
             toolCalls,
+            providerCalls,
+            outcome,
+            stopReason,
             reportTruncated: report.truncated,
             ...(usage ? { usage } : {})
           }
@@ -2168,16 +2552,58 @@ export class QueryEngine {
         if (signal.aborted) {
           throw new OperationAbortedError('Subagent cancelled with parent turn');
         }
-        yield {
+        const partialText = visibleText.trim();
+        if (timedOut && partialText) {
+          const report = limitUtf8Head(
+            [
+              `<subagent_report role="${input.role}" partial="true">`,
+              'The bounded subagent stopped at its hard timeout. Verify all claims.',
+              '',
+              partialText,
+              '</subagent_report>'
+            ].join('\n'),
+            SUBAGENT_MAX_REPORT_BYTES,
+            '\n\n[Subagent partial report truncated]'
+          );
+          yield *this.completeSubagent(turnId, {
+            type: 'subagent_completed',
+            subagentId,
+            role: input.role,
+            outcome: 'partial',
+            durationMs,
+            toolCalls,
+            providerCalls,
+            stopReason: 'hard-timeout',
+            reportTruncated: report.truncated,
+            ...(usage ? { usage } : {}),
+            errorCode
+          }, new AbortController().signal);
+          return {
+            content: report.text,
+            metadata: {
+              role: input.role,
+              toolCalls,
+              providerCalls,
+              outcome: 'partial',
+              stopReason: 'hard-timeout',
+              reportTruncated: report.truncated,
+              errorCode,
+              ...(usage ? { usage } : {})
+            }
+          };
+        }
+        yield *this.completeSubagent(turnId, {
           type: 'subagent_completed',
           subagentId,
           role: input.role,
           outcome: timedOut ? 'error' : 'cancelled',
           durationMs,
           toolCalls,
+          providerCalls,
+          stopReason: timedOut ? 'hard-timeout' : 'cancelled',
           ...(usage ? { usage } : {}),
           errorCode
-        };
+        }, timedOut ? new AbortController().signal : controller.signal);
         return {
           content: timedOut
             ? `Delegate failed: subagent exceeded ${SUBAGENT_TIMEOUT_MS} ms`
@@ -2186,22 +2612,69 @@ export class QueryEngine {
           metadata: {
             role: input.role,
             toolCalls,
+            providerCalls,
+            stopReason: timedOut ? 'hard-timeout' : 'cancelled',
             errorCode,
             ...(usage ? { usage } : {})
           }
         };
       }
 
-      yield {
+      const partialText = visibleText.trim();
+      const budgetFailure =
+        childResult.error.code === 'hard-token-limit' ||
+        childResult.error.code === 'provider-call-limit';
+      if (budgetFailure && partialText) {
+        const report = limitUtf8Head(
+          [
+            `<subagent_report role="${input.role}" partial="true">`,
+            'The bounded subagent exhausted its hard budget. Verify all claims.',
+            '',
+            partialText,
+            '</subagent_report>'
+          ].join('\n'),
+          SUBAGENT_MAX_REPORT_BYTES,
+          '\n\n[Subagent partial report truncated]'
+        );
+        yield *this.completeSubagent(turnId, {
+          type: 'subagent_completed',
+          subagentId,
+          role: input.role,
+          outcome: 'partial',
+          durationMs,
+          toolCalls,
+          providerCalls,
+          stopReason: childResult.error.code,
+          reportTruncated: report.truncated,
+          ...(usage ? { usage } : {}),
+          errorCode: childResult.error.code
+        }, controller.signal);
+        return {
+          content: report.text,
+          metadata: {
+            role: input.role,
+            toolCalls,
+            providerCalls,
+            outcome: 'partial',
+            stopReason: childResult.error.code,
+            reportTruncated: report.truncated,
+            errorCode: childResult.error.code,
+            ...(usage ? { usage } : {})
+          }
+        };
+      }
+      yield *this.completeSubagent(turnId, {
         type: 'subagent_completed',
         subagentId,
         role: input.role,
         outcome: 'error',
         durationMs,
         toolCalls,
+        providerCalls,
+        stopReason: childResult.error.code,
         ...(usage ? { usage } : {}),
         errorCode: childResult.error.code
-      };
+      }, controller.signal);
       return {
         content: limitUtf8Head(
           `Delegate failed (${childResult.error.code}): ` +
@@ -2212,6 +2685,8 @@ export class QueryEngine {
         metadata: {
           role: input.role,
           toolCalls,
+          providerCalls,
+          stopReason: childResult.error.code,
           errorCode: childResult.error.code,
           ...(usage ? { usage } : {})
         }
@@ -2219,29 +2694,33 @@ export class QueryEngine {
     } catch (error) {
       const durationMs = Math.max(0, this.now() - startedAt);
       if (signal.aborted || (!timedOut && isAbortError(error))) {
-        yield {
+        yield *this.completeSubagent(turnId, {
           type: 'subagent_completed',
           subagentId,
           role: input.role,
           outcome: 'cancelled',
           durationMs,
           toolCalls,
+          providerCalls,
+          stopReason: 'cancelled',
           ...(usage ? { usage } : {}),
           errorCode: 'cancelled'
-        };
+        }, new AbortController().signal);
         throw new OperationAbortedError('Subagent cancelled with parent turn');
       }
       const errorCode = timedOut ? 'timeout' : 'subagent_failed';
-      yield {
+      yield *this.completeSubagent(turnId, {
         type: 'subagent_completed',
         subagentId,
         role: input.role,
         outcome: 'error',
         durationMs,
         toolCalls,
+        providerCalls,
+        stopReason: timedOut ? 'hard-timeout' : errorCode,
         ...(usage ? { usage } : {}),
         errorCode
-      };
+      }, timedOut ? new AbortController().signal : controller.signal);
       return {
         content: timedOut
           ? `Delegate failed: subagent exceeded ${SUBAGENT_TIMEOUT_MS} ms`
@@ -2250,6 +2729,8 @@ export class QueryEngine {
         metadata: {
           role: input.role,
           toolCalls,
+          providerCalls,
+          stopReason: timedOut ? 'hard-timeout' : errorCode,
           errorCode,
           ...(usage ? { usage } : {})
         }
@@ -2570,6 +3051,7 @@ export class QueryEngine {
       if (tool.name === 'Delegate') {
         const subagent = this.runSubagent(
           validationResult.data as DelegateInput,
+          turnId,
           signal
         );
         let subagentCompleted = false;
@@ -2790,7 +3272,8 @@ export class QueryEngine {
       '13. If Write, Edit, or Patch succeeds, disclose that file side effect accurately even when another operation fails.',
       ...(this.getAllowedTools().some(tool => tool.name === 'Delegate')
         ? [
-            '14. Use Delegate only for independent read-only exploration or review with clear benefit; do not delegate trivial work.'
+            '14. Use Delegate only for independent read-only exploration or review with clear benefit; do not delegate trivial work.',
+            '15. After Delegate succeeds, use its report directly and do not repeat the same read-only investigation unless the report explicitly says evidence is insufficient.'
           ]
         : []),
       '',

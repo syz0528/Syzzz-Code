@@ -183,12 +183,6 @@ function matchesHook(
   if (!hook.matcher) {
     return true;
   }
-  if (
-    invocation.event !== 'PreToolUse' &&
-    invocation.event !== 'PostToolUse'
-  ) {
-    return false;
-  }
   return Boolean(invocation.subject) &&
     picomatch.isMatch(invocation.subject!, hook.matcher, {
       dot: true,
@@ -277,6 +271,14 @@ async function runHookProcess(
 export class HookRunner {
   private hooks: ResolvedHookConfig[];
   private lastErrorCode?: string;
+  private readonly runStatus = new Map<
+    string,
+    {
+      outcome: HookProcessResult['outcome'];
+      durationMs: number;
+      errorCode?: string;
+    }
+  >();
   private readonly forbiddenEnvironmentNames: readonly string[];
 
   constructor(
@@ -292,13 +294,35 @@ export class HookRunner {
   replaceHooks(hooks: ResolvedHookConfig[]): void {
     this.hooks = [...hooks];
     this.lastErrorCode = undefined;
+    this.runStatus.clear();
   }
 
   getStatus(): HookRuntimeStatus {
     return {
       configured: this.hooks.length,
       enabled: this.hooks.filter(hook => hook.config.enabled).length,
-      ...(this.lastErrorCode ? { lastErrorCode: this.lastErrorCode } : {})
+      ...(this.lastErrorCode ? { lastErrorCode: this.lastErrorCode } : {}),
+      entries: this.hooks.map(hook => {
+        const latest = this.runStatus.get(hook.config.name);
+        return {
+          name: hook.config.name,
+          event: hook.config.event,
+          source: hook.source,
+          enabled: hook.config.enabled,
+          ...(hook.config.matcher
+            ? { matcher: hook.config.matcher }
+            : {}),
+          ...(latest
+            ? {
+                lastOutcome: latest.outcome,
+                lastDurationMs: latest.durationMs,
+                ...(latest.errorCode
+                  ? { lastErrorCode: latest.errorCode }
+                  : {})
+              }
+            : {})
+        };
+      })
     };
   }
 
@@ -327,6 +351,11 @@ export class HookRunner {
       if (result.errorCode) {
         this.lastErrorCode = result.errorCode;
       }
+      this.runStatus.set(hook.config.name, {
+        outcome: result.outcome,
+        durationMs: result.durationMs,
+        ...(result.errorCode ? { errorCode: result.errorCode } : {})
+      });
       yield {
         type: 'hook_completed',
         hook: hook.config.name,

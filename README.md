@@ -2,7 +2,7 @@
 
 Syzzz Code 是一个使用 TypeScript 构建的实验性命令行 AI 编程 Agent。它提供统一的 Provider 接口、事件化 Agent Runtime、受约束的代码库工具、可靠编辑、上下文压缩、可恢复的本地会话，以及受信任边界约束的 MCP、Hooks 和只读 Subagent。
 
-当前实现已完成 Phase 5 的代码与自动化验证，正在等待人工扩展 dogfood。项目目标是成为一个安全边界清晰、可观察、可恢复，并适合在真实代码库中持续使用的本地编程助手。
+当前实现已完成 Phase 5.1 的代码与自动化验证，状态为 **Validated**，正在等待人工扩展 dogfood。项目目标是成为一个安全边界清晰、可观察、可恢复，并适合在真实代码库中持续使用的本地编程助手。
 
 > [!WARNING]
 > Syzzz Code 仍处于实验阶段。文件工具受工作区边界、敏感路径和并发 hash 校验保护，但 Shell 不是 OS sandbox。获批或在 `fullAccess` 下自动执行的命令仍可产生工作区外副作用。
@@ -92,10 +92,11 @@ Syzzz Code 是一个使用 TypeScript 构建的实验性命令行 AI 编程 Agen
 
 - `McpSearch` 渐进发现工具，`McpCall` 在执行前解析远端工具的实际风险与审批策略；不会把全部远端 schema 注入每次请求。
 - 支持 stdio 和 Streamable HTTP。远程 HTTP 必须使用 HTTPS，loopback 可使用 HTTP，并且不跟随重定向。
-- 项目 MCP 与 Hooks 只有在规范化 workspace 路径经过 `/trust` 确认后才加载；用户级配置不依赖 workspace trust。
-- MCP 的 `readOnlyHint:true` 映射为只读免审批；缺失或为 false 时按执行型工具处理。ask/plan 仍会拒绝执行型 MCP，即使权限为 `fullAccess`。
+- 项目 MCP 与 Hooks 只有在规范化 workspace 路径及当前配置摘要经过 `/trust` 确认后才加载；配置变化、损坏或 V1 信任迁移会进入 `review-required`，用户级配置不依赖 workspace trust。
+- MCP 本地策略可把工具收紧为 `execute` 或 `disabled`；`disabled` 不可发现、不可调用，`fullAccess` 也不能绕过。无本地策略时，仅非 destructive 的 `readOnlyHint:true` 映射为只读免审批。
 - Hooks 是用户授权的本地进程，只能由 `PreToolUse` 拒绝操作，不能授权、改写输入、注入上下文或改变模式；拒绝后当前回合关闭后续工具，避免重试或替代工具绕过。
-- `Delegate` 只提供 `explore` 与 `review` 两种只读 Subagent；每个父回合最多 2 次、单层、串行、6 个工具轮次、约 90 秒开始无工具收束、120 秒硬上限、32K 上下文和 20 KiB 报告。
+- 压缩和 Subagent 生命周期 Hook 只接收有界脱敏元数据，不能拒绝或改变执行。
+- `Delegate` 只提供 `explore` 与 `review` 两种只读 Subagent；每个父回合最多 2 次、单层、串行，并受轮次、工具调用、Provider 请求、时间、token、上下文和报告多重预算约束。
 - MCP 结果和 Subagent 报告有界；原始 Subagent transcript 不进入终端、审计或会话快照。
 
 完整配置、信任语义和人工验收步骤见 [扩展使用指南](docs/EXTENSIONS.md)，威胁模型见 [SECURITY.md](SECURITY.md)。
@@ -240,9 +241,10 @@ Runtime
 /stream on|off                         控制正文是否逐段显示
 
 Extensions
-/mcp [reload|reconnect <name>]          查看、重载或重连 MCP
+/extensions [reload]                    查看或重载全部扩展
+/mcp [reload|reconnect|inspect]         查看、重载、重连或检查 MCP
 /hooks [reload]                         查看或重载 Hooks
-/agents [on|off]                        查看或切换只读 Subagent
+/agents [on|off]                        查看预算或切换只读 Subagent
 /trust                                 信任当前路径下的项目扩展
 /untrust                               立即禁用当前项目扩展
 
@@ -284,6 +286,10 @@ syzzz mcp add <name> <executable> [args...]
 syzzz mcp add <name> --url https://example.com/mcp --header 'Authorization=Bearer ${MCP_TOKEN}'
 syzzz mcp enable|disable|remove <name>
 syzzz mcp doctor [name]
+syzzz mcp policy <server> <tool> execute|disabled|reset --scope user|project
+
+syzzz extensions status
+syzzz extensions status --json
 
 syzzz hooks list
 syzzz hooks add <name> <executable> [args...] --event PreToolUse --matcher "builtin:Shell"
@@ -291,7 +297,7 @@ syzzz hooks enable|disable|remove <name>
 syzzz hooks doctor
 ```
 
-`syzzz doctor` 始终离线；只有 `syzzz mcp doctor` 会连接服务器。项目范围使用 `--scope project`，但在 `/trust` 前保持禁用。HTTP 自定义头必须引用 `${ENV_NAME}`，不会把认证值写入扩展配置；被 Provider 配置声明为凭证来源的环境变量不能再被 MCP 或 Hook 模板引用。
+`syzzz doctor` 与 `syzzz extensions status` 始终离线；只有 `syzzz mcp doctor` 会连接服务器。项目范围使用 `--scope project`，配置变更后必须重新 `/trust`。HTTP 自定义头必须引用 `${ENV_NAME}`，不会把认证值写入扩展配置；被 Provider 配置声明为凭证来源的环境变量不能再被 MCP 或 Hook 模板引用。
 
 ### 其他命令
 
@@ -326,7 +332,7 @@ npm pack --dry-run --json
 git diff --check
 ```
 
-当前自动化套件包含 238 项测试，覆盖 Phase 1 至 Phase 5 的路径与权限安全、事件 Runtime、Provider 可靠性、终端交互、代码库上下文、压缩、会话恢复、配置迁移、MCP 传输与策略、Hooks 和只读 Subagent。
+当前自动化套件包含 253 项测试，覆盖 Phase 1 至 Phase 5.1 的路径与权限安全、事件 Runtime、Provider 可靠性、终端交互、代码库上下文、压缩、会话恢复、配置迁移、Trust V2、MCP 传输与策略、Hooks 和只读 Subagent 预算。
 
 npm 包使用 allowlist，只包含 `dist`、`README.md`、`SECURITY.md`、`docs` 和 npm 固定元数据，不包含 `src`、`tests`、`archive`、本地配置或历史报告。
 
@@ -340,10 +346,11 @@ npm 包使用 allowlist，只包含 `dist`、`README.md`、`SECURITY.md`、`docs
 - RepoMap 与 Diagnostics 仅提供 TS/JS 按需轻量分析，不是 LSP 或持久化语义索引。
 - 会话没有加密、云同步、fork/rewind 或跨工作区迁移。
 - workspace trust 授权项目扩展代码以当前用户权限运行，不是 OS sandbox，也不等于 `acceptEdits` 或 `fullAccess`。
+- Trust V2 审查扩展配置定义，不会追踪被引用脚本或 executable 内容的后续变化。
 - MCP `readOnlyHint` 是受信 Server 的声明，Syzzz 无法证明远端实现没有副作用。
 - 当前不支持 OAuth、旧 SSE、MCP Resources/Prompts/Sampling、后台 Hooks、写入型或嵌套 Subagent。
 - 当前没有完整 TUI、并行工具、后台任务、`@` 上下文或 `$` Skills。
 
 ## 当前阶段
 
-Phase 4 保持 **Frozen**。Phase 5 已完成实现和自动化验证，当前状态为 **Validated，等待人工 dogfood**；通过人工验收后才会标记 Frozen 并推送分支。版本号保持 `1.0.0`，尚未发布 npm 包或创建 Tag。
+Phase 4 保持 **Frozen**。Phase 5.0 Core 已建立非冻结检查点，Phase 5.1 已完成实现和自动化验证，当前状态为 **Validated，等待人工 dogfood**；通过人工验收后才会标记 Frozen 并推送分支。版本号保持 `1.0.0`，尚未发布 npm 包或创建 Tag。

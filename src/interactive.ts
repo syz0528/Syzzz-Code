@@ -49,6 +49,7 @@ const COMMAND_PRIORITIES = {
   model: 60,
   provider: 70,
   stream: 80,
+  extensions: 84,
   mcp: 85,
   hooks: 86,
   agents: 87,
@@ -320,11 +321,13 @@ function formatStatus(context: InteractiveCommandContext): string {
             : extensions.subagents.available
               ? 'available'
               : 'Provider unsupported'}`,
-          `  Trust:        ${extensions.workspaceTrusted
-            ? 'workspace trusted'
-            : extensions.projectConfigurationPresent
-              ? 'project extensions inactive'
-              : 'no project extensions'}`
+          `  Trust:        ${extensions.trustState === 'trusted'
+            ? 'workspace definition trusted'
+            : extensions.trustState === 'review-required'
+              ? 'review required'
+              : extensions.projectConfigurationPresent
+                ? 'project extensions inactive'
+                : 'no project extensions'}`
         ]
       : []),
     ...(sessionStatus
@@ -341,6 +344,83 @@ function formatStatus(context: InteractiveCommandContext): string {
   ];
   if (status.context.compactionCircuitOpen) {
     lines.push('  Context:      compaction circuit open');
+  }
+  return lines.join('\n');
+}
+
+function formatExtensionReload(
+  result: Awaited<ReturnType<
+    NonNullable<ReturnType<QueryEngine['getExtensionRuntime']>>['reload']
+  >>
+): string {
+  const lines = [
+    `Trust: ${result.trustState}`,
+    `MCP: ${result.mcp.configured} configured, ${result.mcp.ready} ready, ` +
+      `${result.mcp.error} error, ${result.mcp.disconnected} disconnected`,
+    `Hooks: ${result.hooks.enabled} enabled / ` +
+      `${result.hooks.configured} configured, ${result.hooks.error} error`
+  ];
+  if (result.warnings.length > 0) {
+    lines.push(
+      'Warnings:',
+      ...result.warnings.map(warning => `  ${warning}`)
+    );
+  }
+  return lines.join('\n');
+}
+
+function formatExtensionDetails(
+  status: ReturnType<
+    NonNullable<ReturnType<QueryEngine['getExtensionRuntime']>>['getStatus']
+  >
+): string {
+  const lines = [
+    'Extensions',
+    `  Trust: ${status.trustState}`,
+    `  MCP: ${status.mcp.ready} ready / ${status.mcp.configured} configured`
+  ];
+  for (const server of status.mcp.servers) {
+    lines.push(
+      `    ${server.name}: ${server.state}, ${server.toolCount} tools, ` +
+      `${server.protocolMode}` +
+      `${server.negotiatedProtocolVersion
+        ? ` -> ${server.negotiatedProtocolVersion}`
+        : ''} [${server.source}]` +
+      `${server.errorCode ? ` (${server.errorCode})` : ''}`
+    );
+  }
+  lines.push(
+    `  Hooks: ${status.hooks.enabled} enabled / ` +
+      `${status.hooks.configured} configured`
+  );
+  for (const hook of status.hooks.entries) {
+    lines.push(
+      `    ${hook.name}: ${hook.event}, ` +
+      `${hook.enabled ? 'enabled' : 'disabled'} [${hook.source}]` +
+      `${hook.lastOutcome ? `, last ${hook.lastOutcome}` : ''}` +
+      `${hook.lastDurationMs === undefined
+        ? ''
+        : ` in ${Math.round(hook.lastDurationMs)}ms`}` +
+      `${hook.lastErrorCode ? ` (${hook.lastErrorCode})` : ''}`
+    );
+  }
+  const budgets = status.subagents.budgets;
+  lines.push(
+    `  Subagents: ${status.subagents.enabled ? 'on' : 'off'}, ` +
+      `${status.subagents.available ? 'Provider supported' : 'Provider unsupported'}`,
+    `    per turn ${budgets.maxPerTurn}, rounds ${budgets.maxToolRounds}, ` +
+      `tools ${budgets.maxToolCalls}, Provider calls ${budgets.maxProviderCalls}`,
+    `    ${budgets.softTokenBudget}/${budgets.hardTokenBudget} tokens, ` +
+      `${budgets.softTimeoutMs / 1000}/${budgets.hardTimeoutMs / 1000}s`,
+    ...(budgets.lastStopReason
+      ? [`    last stop: ${budgets.lastStopReason}`]
+      : [])
+  );
+  if (status.warnings.length > 0) {
+    lines.push(
+      '  Warnings:',
+      ...status.warnings.map(warning => `    ${warning}`)
+    );
   }
   return lines.join('\n');
 }
@@ -792,11 +872,51 @@ function createCommandRegistry(
   });
 
   register({
+    name: 'extensions',
+    category: 'extensions',
+    priority: COMMAND_PRIORITIES.extensions,
+    description: 'Show or reload the complete extension runtime.',
+    argumentHint: '[reload]',
+    isEnabled: commandContext =>
+      typeof commandContext.engine.getExtensionRuntime === 'function' &&
+      Boolean(commandContext.engine.getExtensionRuntime()),
+    choices: () => [{
+      value: 'reload',
+      description: 'Re-evaluate trust and reload MCP and Hooks'
+    }],
+    async execute(
+      argument,
+      commandContext
+    ): Promise<CommandExecutionResult> {
+      const runtime = commandContext.engine.getExtensionRuntime?.();
+      if (!runtime) {
+        console.log(chalk.yellow('\nExtension runtime is unavailable.\n'));
+        return 'continue';
+      }
+      const normalized = argument?.trim().toLowerCase();
+      if (normalized === 'reload') {
+        const result = await runtime.reload();
+        console.log(chalk.cyan('\nExtension reload\n'));
+        console.log(`${formatExtensionReload(result)}\n`);
+        return 'continue';
+      }
+      if (normalized) {
+        console.log(chalk.red('\nUse: /extensions [reload]\n'));
+        return 'continue';
+      }
+      console.log(chalk.cyan('\n' + formatExtensionDetails(
+        runtime.getStatus()
+      ) + '\n'));
+      return 'continue';
+    }
+  });
+
+  register({
     name: 'mcp',
     category: 'extensions',
     priority: COMMAND_PRIORITIES.mcp,
     description: 'Show, reload, or reconnect configured MCP servers.',
-    argumentHint: '[reload|reconnect <server>]',
+    argumentHint: '[reload|reconnect <server>|inspect <server>]',
     isEnabled: commandContext =>
       typeof commandContext.engine.getExtensionRuntime === 'function' &&
       Boolean(commandContext.engine.getExtensionRuntime()),
@@ -805,6 +925,11 @@ function createCommandRegistry(
       const servers = runtime?.mcp.getStatuses() ?? [];
       return [
         { value: 'reload', description: 'Reload extension configuration' },
+        ...servers.map(server => ({
+          value: `inspect ${server.name}`,
+          label: `inspect ${server.name}`,
+          description: 'Show effective MCP tool risks and policies'
+        })),
         ...servers.map(server => ({
           value: `reconnect ${server.name}`,
           label: `reconnect ${server.name}`,
@@ -824,8 +949,44 @@ function createCommandRegistry(
       }
       const normalized = argument?.trim();
       if (normalized === 'reload') {
-        await runtime.reload();
-        console.log(chalk.green('\nMCP and Hooks configuration reloaded.\n'));
+        const result = await runtime.reload();
+        console.log(chalk.cyan('\nExtension reload\n'));
+        console.log(`${formatExtensionReload(result)}\n`);
+        return 'continue';
+      }
+      if (normalized?.toLowerCase().startsWith('inspect ')) {
+        const name = normalized.slice('inspect '.length).trim();
+        if (!name) {
+          console.log(chalk.red('\nUse: /mcp inspect <server>\n'));
+          return 'continue';
+        }
+        const inspection = await runtime.mcp.inspectServer(name, signal);
+        console.log(chalk.cyan(`\nMCP ${name}\n`));
+        console.log(
+          `  State: ${inspection.status.state}\n` +
+          `  Protocol: ${inspection.status.protocolMode}` +
+          `${inspection.status.negotiatedProtocolVersion
+            ? ` -> ${inspection.status.negotiatedProtocolVersion}`
+            : ''}\n`
+        );
+        if (inspection.tools.length === 0) {
+          console.log(chalk.gray('  No enabled tools.\n'));
+          return 'continue';
+        }
+        for (const tool of inspection.tools) {
+          console.log(
+            `  ${tool.qualifiedName}: ${tool.risk} ` +
+            `(${tool.riskSource})` +
+            `${tool.policy ? ` policy=${tool.policy}` : ''}` +
+            `${tool.policySources
+              ? ` [${tool.policySources.join('+')}]`
+              : ''}`
+          );
+          if (tool.annotationWarning) {
+            console.log(chalk.yellow(`    ${tool.annotationWarning}`));
+          }
+        }
+        console.log('');
         return 'continue';
       }
       if (normalized?.toLowerCase().startsWith('reconnect ')) {
@@ -884,8 +1045,9 @@ function createCommandRegistry(
       }
       const normalized = argument?.trim().toLowerCase();
       if (normalized === 'reload') {
-        await runtime.reload();
-        console.log(chalk.green('\nMCP and Hooks configuration reloaded.\n'));
+        const result = await runtime.reload();
+        console.log(chalk.cyan('\nExtension reload\n'));
+        console.log(`${formatExtensionReload(result)}\n`);
         return 'continue';
       }
       if (normalized) {
@@ -898,6 +1060,13 @@ function createCommandRegistry(
       console.log(`  Enabled:    ${status.enabled}`);
       if (status.lastErrorCode) {
         console.log(chalk.yellow(`  Last error: ${status.lastErrorCode}`));
+      }
+      for (const hook of status.entries) {
+        console.log(
+          `  ${hook.name}: ${hook.event}, ` +
+          `${hook.enabled ? 'enabled' : 'disabled'} [${hook.source}]` +
+          `${hook.lastOutcome ? `, last ${hook.lastOutcome}` : ''}`
+        );
       }
       console.log('');
       return 'continue';
@@ -950,6 +1119,24 @@ function createCommandRegistry(
             ? 'supported'
             : 'unsupported'}\n`
         );
+        const budgets = status.budgets;
+        console.log(
+          `  Budget: ${budgets.maxToolRounds} rounds / ` +
+          `${budgets.maxToolCalls} tools / ` +
+          `${budgets.maxProviderCalls} Provider calls`
+        );
+        console.log(
+          `  Tokens: ${budgets.softTokenBudget} soft / ` +
+          `${budgets.hardTokenBudget} hard`
+        );
+        console.log(
+          `  Time:   ${budgets.softTimeoutMs / 1000}s soft / ` +
+          `${budgets.hardTimeoutMs / 1000}s hard`
+        );
+        if (budgets.lastStopReason) {
+          console.log(`  Last stop: ${budgets.lastStopReason}`);
+        }
+        console.log('');
         return 'continue';
       }
       if (normalized !== 'on' && normalized !== 'off') {
@@ -984,12 +1171,19 @@ function createCommandRegistry(
         return 'continue';
       }
       const status = runtime.getStatus();
+      let preview = runtime.getTrustPreview();
       if (status.workspaceTrusted) {
-        console.log(chalk.green('\nThis workspace path is already trusted.\n'));
-        return 'continue';
+        const loadedDigest = runtime.getConfiguration().projectDigest;
+        if (preview.digest === loadedDigest) {
+          console.log(chalk.green(
+            '\nThis workspace extension definition is already trusted.\n'
+          ));
+          return 'continue';
+        }
+        await runtime.reload();
+        preview = runtime.getTrustPreview();
       }
-      const preview = runtime.getTrustPreview();
-      if (preview.warnings.length > 0) {
+      if (!preview.valid || preview.warnings.length > 0 || !preview.digest) {
         console.log(chalk.red('\nProject extension configuration is invalid:'));
         preview.warnings.forEach(warning => console.log(`  ${warning}`));
         console.log(chalk.gray('\nFix the configuration before trusting it.\n'));
@@ -1007,13 +1201,15 @@ function createCommandRegistry(
         'user account privileges:'
       );
       preview.lines.forEach(line => console.log(`  ${line}`));
+      console.log(`  Review digest: ${preview.digest.slice(0, 12)}`);
       console.log('');
       console.log(
-        'Trust is bound to this canonical workspace path. Future project ' +
-        'extension changes take effect after restart or reload without another prompt.'
+        'Trust is bound to this canonical workspace path and reviewed extension ' +
+        'definition. A configuration change requires another review.'
       );
       console.log(
-        'This does not change Agent mode or permission mode, and it is not an OS sandbox.'
+        'Referenced programs can still change independently. This does not change ' +
+        'Agent mode or permission mode, and it is not an OS sandbox.'
       );
       const answer = await commandContext.terminal.readLine({
         prompt: chalk.yellow('Trust project extensions for this workspace? [y/N]: '),
@@ -1029,7 +1225,7 @@ function createCommandRegistry(
         console.log(chalk.yellow('\nWorkspace trust cancelled.\n'));
         return 'continue';
       }
-      await runtime.trustWorkspace();
+      await runtime.trustWorkspace(preview.digest);
       console.log(chalk.green('\nProject extensions are now trusted.\n'));
       return 'continue';
     }

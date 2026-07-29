@@ -27,10 +27,23 @@ function runInteractive(input) {
         },
         async reconnect(name) {
           calls.push('reconnect:' + name);
+        },
+        async inspectServer(name) {
+          calls.push('inspect:' + name);
+          const status = this.getStatuses().find(server => server.name === name);
+          return {
+            status,
+            tools: [{
+              qualifiedName: name + '__echo',
+              risk: 'read',
+              riskSource: 'remote-annotation'
+            }]
+          };
         }
       },
       getStatus() {
         return {
+          trustState: trusted ? 'trusted' : 'untrusted',
           workspaceTrusted: trusted,
           projectConfigurationPresent: true,
           ...(trusted
@@ -39,17 +52,37 @@ function runInteractive(input) {
           mcp: {
             configured: trusted ? 1 : 0,
             ready: 0,
+            error: 0,
+            disconnected: trusted ? 1 : 0,
             servers: trusted ? this.mcp.getStatuses() : []
           },
           hooks: {
             configured: trusted ? 1 : 0,
-            enabled: trusted ? 1 : 0
+            enabled: trusted ? 1 : 0,
+            entries: []
           },
           subagents: {
             enabled: subagentsEnabled,
-            available: true
+            available: true,
+            budgets: {
+              maxPerTurn: 2,
+              maxToolRounds: 6,
+              maxToolCalls: 16,
+              maxProviderCalls: 7,
+              softTimeoutMs: 90000,
+              hardTimeoutMs: 120000,
+              contextWindowTokens: 32768,
+              maxReportBytes: 20480,
+              softTokenBudget: 96000,
+              hardTokenBudget: 128000
+            }
           },
           warnings: []
+        };
+      },
+      getConfiguration() {
+        return {
+          projectDigest: trusted ? 'a'.repeat(64) : undefined
         };
       },
       getTrustPreview() {
@@ -58,7 +91,9 @@ function runInteractive(input) {
             'MCP stdio project-mcp: node server.mjs --flag',
             'Hook PreToolUse block-shell: node hook.mjs'
           ],
-          warnings: []
+          warnings: [],
+          digest: 'a'.repeat(64),
+          valid: true
         };
       },
       supportsSubagents() {
@@ -68,9 +103,16 @@ function runInteractive(input) {
         subagentsEnabled = enabled;
         calls.push('agents:' + enabled);
       },
-      async trustWorkspace() {
+      async trustWorkspace(digest) {
+        if (digest !== 'a'.repeat(64)) throw new Error('bad digest');
         trusted = true;
         calls.push('trust');
+        return {
+          trustState: 'trusted',
+          mcp: { configured: 1, ready: 0, error: 0, disconnected: 1 },
+          hooks: { configured: 1, enabled: 1, error: 0 },
+          warnings: []
+        };
       },
       async untrustWorkspace() {
         trusted = false;
@@ -78,6 +120,21 @@ function runInteractive(input) {
       },
       async reload() {
         calls.push('reload');
+        return {
+          trustState: trusted ? 'trusted' : 'untrusted',
+          mcp: {
+            configured: trusted ? 1 : 0,
+            ready: 0,
+            error: 0,
+            disconnected: trusted ? 1 : 0
+          },
+          hooks: {
+            configured: trusted ? 1 : 0,
+            enabled: trusted ? 1 : 0,
+            error: 0
+          },
+          warnings: []
+        };
       }
     };
     const engine = {
@@ -148,7 +205,7 @@ test('workspace trust displays exact extensions and accepts only y or Y', () => 
   assert.match(result.stdout, /node hook\.mjs/);
   assert.match(
     result.stdout,
-    /Future project extension changes take effect after restart or reload/
+    /configuration change requires another review/
   );
   assert.equal(
     (result.stdout.match(/Workspace trust cancelled/g) ?? []).length,
@@ -176,5 +233,23 @@ test('/agents persists display state and extension commands stay local', () => {
     'reload'
   ]);
   assert.equal(state.subagentsEnabled, true);
+  assert.equal(state.calls.some(value => value.startsWith('chat:')), false);
+});
+
+test('/extensions and /mcp inspect expose structured local status', () => {
+  const result = runInteractive(
+    '/trust\ny\n/extensions\n/mcp inspect project-mcp\n/extensions reload\n/exit\n'
+  );
+  assert.equal(result.status, 0, result.stderr || result.error?.message);
+  assert.match(result.stdout, /Extensions/);
+  assert.match(result.stdout, /project-mcp: disconnected/);
+  assert.match(result.stdout, /project-mcp__echo: read/);
+  assert.match(result.stdout, /Extension reload/);
+  const state = parseResult(result.stdout);
+  assert.deepEqual(state.calls, [
+    'trust',
+    'inspect:project-mcp',
+    'reload'
+  ]);
   assert.equal(state.calls.some(value => value.startsWith('chat:')), false);
 });

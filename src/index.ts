@@ -663,9 +663,74 @@ program
   });
 
 program
+  .command('extensions')
+  .description('Inspect extension trust and configuration without connecting')
+  .argument('<action>', 'Action: status')
+  .option('--json', 'Emit machine-readable JSON')
+  .action(async (action, options) => {
+    if (String(action).toLowerCase() !== 'status') {
+      console.error(chalk.red(
+        '\nExtensions command failed: action must be status\n'
+      ));
+      process.exitCode = 1;
+      return;
+    }
+    const runtime = new ExtensionRuntime({
+      workspaceRoot: process.cwd(),
+      subagentsEnabled: loadConfig().subagents.enabled,
+      subagentsAvailable: false,
+      forbiddenEnvironmentNames:
+        configuredProviderCredentialEnvironmentNames()
+    });
+    try {
+      const status = runtime.getStatus();
+      if (options.json) {
+        console.log(JSON.stringify(status));
+        return;
+      }
+      const lines = [
+        `Trust: ${status.trustState}`,
+        `MCP: ${status.mcp.configured} configured, ` +
+          `${status.mcp.disconnected} disconnected, ${status.mcp.error} error`,
+        `Hooks: ${status.hooks.enabled} enabled / ` +
+          `${status.hooks.configured} configured`,
+        `Subagents: ${status.subagents.enabled ? 'enabled' : 'disabled'}`
+      ];
+      for (const server of status.mcp.servers) {
+        lines.push(
+          `  MCP ${server.name}: ${server.state}, ` +
+          `${server.protocolMode} [${server.source}]`
+        );
+      }
+      for (const hook of status.hooks.entries) {
+        lines.push(
+          `  Hook ${hook.name}: ${hook.event}, ` +
+          `${hook.enabled ? 'enabled' : 'disabled'} [${hook.source}]`
+        );
+      }
+      if (status.warnings.length > 0) {
+        lines.push(
+          'Warnings:',
+          ...status.warnings.map(warning => `  ${warning}`)
+        );
+      }
+      console.log(lines.join('\n'));
+    } catch (error) {
+      const reason = error instanceof Error ? error.message : String(error);
+      console.error(chalk.red('\nExtensions command failed:'), `${reason}\n`);
+      process.exitCode = 1;
+    } finally {
+      await runtime.close();
+    }
+  });
+
+program
   .command('mcp')
   .description('Manage and diagnose MCP servers')
-  .argument('<action>', 'Action: list, add, remove, enable, disable, doctor')
+  .argument(
+    '<action>',
+    'Action: list, add, remove, enable, disable, policy, doctor'
+  )
   .argument('[name]', 'MCP server name')
   .argument('[command...]', 'stdio command and arguments after the server name')
   .option('--scope <scope>', 'Configuration scope: user or project', 'user')

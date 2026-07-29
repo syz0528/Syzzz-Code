@@ -182,8 +182,15 @@ export interface McpServerStatusEvent extends AgentEventEnvelope {
   server: string;
   source: 'user' | 'project';
   transport: 'stdio' | 'http';
-  state: 'disabled' | 'disconnected' | 'connecting' | 'ready' | 'error';
+  state:
+    | 'disabled'
+    | 'disconnected'
+    | 'connecting'
+    | 'ready'
+    | 'error';
   toolCount: number;
+  negotiatedProtocolVersion?: string;
+  lastConnectedAt?: string;
   errorCode?: string;
 }
 
@@ -191,6 +198,10 @@ export type HookEventName =
   | 'PreTurn'
   | 'PreToolUse'
   | 'PostToolUse'
+  | 'PreCompact'
+  | 'PostCompact'
+  | 'SubagentStart'
+  | 'SubagentStop'
   | 'TurnCompleted'
   | 'TurnFailed'
   | 'TurnCancelled';
@@ -230,9 +241,12 @@ export interface SubagentCompletedEvent extends AgentEventEnvelope {
   type: 'subagent_completed';
   subagentId: string;
   role: SubagentRole;
-  outcome: 'success' | 'error' | 'cancelled';
+  outcome: 'success' | 'partial' | 'error' | 'cancelled';
   durationMs: number;
   toolCalls: number;
+  providerCalls?: number;
+  stopReason?: string;
+  reportTruncated?: boolean;
   usage?: ProviderUsage;
   errorCode?: string;
 }
@@ -317,6 +331,7 @@ export type TurnResult =
       response: string;
       durationMs: number;
       finishReason?: string | null;
+      budgetStopReason?: string;
       usage?: ProviderUsage;
       context?: {
         compactions: number;

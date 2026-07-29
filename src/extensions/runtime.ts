@@ -7,8 +7,21 @@ import {
 import { McpManager, type McpConnectionFactory } from './mcp-manager.js';
 import { setWorkspaceTrusted } from './trust.js';
 import { HookRunner } from './hooks.js';
+import {
+  SUBAGENT_CONTEXT_WINDOW_TOKENS,
+  SUBAGENT_HARD_TOKEN_BUDGET,
+  SUBAGENT_MAX_CALLS_PER_TURN,
+  SUBAGENT_MAX_PROVIDER_CALLS,
+  SUBAGENT_MAX_REPORT_BYTES,
+  SUBAGENT_MAX_TOOL_CALLS,
+  SUBAGENT_MAX_TOOL_ROUNDS,
+  SUBAGENT_SOFT_DEADLINE_MS,
+  SUBAGENT_SOFT_TOKEN_BUDGET,
+  SUBAGENT_TIMEOUT_MS
+} from '../subagents.js';
 import type {
   ExtensionConfiguration,
+  ExtensionReloadResult,
   ExtensionStatus
 } from './types.js';
 
@@ -26,6 +39,8 @@ export interface WorkspaceTrustPreview {
   warnings: string[];
   projectMcpServers: number;
   projectHooks: number;
+  digest?: string;
+  valid: boolean;
 }
 
 function quoted(value: string): string {
@@ -39,6 +54,7 @@ export class ExtensionRuntime {
   private readonly workspaceRoot: string;
   private subagentsEnabled: boolean;
   private subagentsAvailable: boolean;
+  private lastSubagentStopReason?: string;
 
   constructor(options: ExtensionRuntimeOptions) {
     this.workspaceRoot = options.workspaceRoot;
@@ -48,6 +64,7 @@ export class ExtensionRuntime {
     this.mcp = new McpManager({
       workspaceRoot: this.workspaceRoot,
       servers: this.configuration.mcpServers,
+      toolPolicies: this.configuration.mcpToolPolicies,
       forbiddenEnvironmentNames: options.forbiddenEnvironmentNames,
       connectionFactory: options.mcpConnectionFactory
     });
@@ -77,6 +94,10 @@ export class ExtensionRuntime {
     this.subagentsAvailable = available;
   }
 
+  setLastSubagentStopReason(reason: string | undefined): void {
+    this.lastSubagentStopReason = reason;
+  }
+
   getStatus(): ExtensionStatus {
     const paths = getExtensionConfigPaths(this.workspaceRoot);
     const statuses = this.mcp.getStatuses();
@@ -87,6 +108,7 @@ export class ExtensionRuntime {
         ? inspectProjectExtensions(this.workspaceRoot)
         : undefined;
     return {
+      trustState: this.configuration.trustState,
       workspaceTrusted: this.configuration.workspaceTrusted,
       projectConfigurationPresent,
       ...(inactiveInspection
@@ -100,17 +122,36 @@ export class ExtensionRuntime {
       mcp: {
         configured: statuses.length,
         ready: statuses.filter(status => status.state === 'ready').length,
+        error: statuses.filter(status => status.state === 'error').length,
+        disconnected: statuses.filter(status =>
+          status.state === 'disconnected'
+        ).length,
         servers: statuses
       },
       hooks: this.hooks.getStatus(),
       subagents: {
         enabled: this.subagentsEnabled,
-        available: this.subagentsAvailable
+        available: this.subagentsAvailable,
+        budgets: {
+          maxPerTurn: SUBAGENT_MAX_CALLS_PER_TURN,
+          maxToolRounds: SUBAGENT_MAX_TOOL_ROUNDS,
+          maxToolCalls: SUBAGENT_MAX_TOOL_CALLS,
+          maxProviderCalls: SUBAGENT_MAX_PROVIDER_CALLS,
+          softTimeoutMs: SUBAGENT_SOFT_DEADLINE_MS,
+          hardTimeoutMs: SUBAGENT_TIMEOUT_MS,
+          contextWindowTokens: SUBAGENT_CONTEXT_WINDOW_TOKENS,
+          maxReportBytes: SUBAGENT_MAX_REPORT_BYTES,
+          softTokenBudget: SUBAGENT_SOFT_TOKEN_BUDGET,
+          hardTokenBudget: SUBAGENT_HARD_TOKEN_BUDGET,
+          ...(this.lastSubagentStopReason
+            ? { lastStopReason: this.lastSubagentStopReason }
+            : {})
+        }
       },
-      warnings: [
+      warnings: [...new Set([
         ...this.configuration.warnings,
         ...(inactiveInspection?.warnings ?? [])
-      ]
+      ])]
     };
   }
 
@@ -137,30 +178,69 @@ export class ExtensionRuntime {
           .join(' ')
       );
     }
+    for (const policy of inspection.mcpToolPolicies) {
+      lines.push(
+        `MCP policy ${policy.qualifiedName}: ${policy.policy}`
+      );
+    }
     return {
       workspaceRoot: this.workspaceRoot,
       lines,
       warnings: inspection.warnings,
       projectMcpServers: inspection.mcpServers.length,
-      projectHooks: inspection.hooks.length
+      projectHooks: inspection.hooks.length,
+      ...(inspection.digest ? { digest: inspection.digest } : {}),
+      valid: inspection.valid
     };
   }
 
-  async trustWorkspace(): Promise<void> {
-    setWorkspaceTrusted(this.workspaceRoot, true);
-    await this.reload();
+  async trustWorkspace(expectedDigest: string): Promise<ExtensionReloadResult> {
+    const current = inspectProjectExtensions(this.workspaceRoot);
+    if (!current.valid || !current.digest) {
+      throw new Error(
+        'Project extension configuration is invalid and cannot be trusted'
+      );
+    }
+    if (current.digest !== expectedDigest) {
+      throw new Error(
+        'Project extension configuration changed during confirmation; review it again'
+      );
+    }
+    setWorkspaceTrusted(this.workspaceRoot, true, current.digest);
+    return this.reload();
   }
 
-  async untrustWorkspace(): Promise<void> {
+  async untrustWorkspace(): Promise<ExtensionReloadResult> {
     setWorkspaceTrusted(this.workspaceRoot, false);
-    await this.reload();
+    return this.reload();
   }
 
-  async reload(): Promise<void> {
+  async reload(): Promise<ExtensionReloadResult> {
     const next = loadExtensionConfiguration(this.workspaceRoot);
     this.configuration = next;
     this.hooks.replaceHooks(next.hooks);
-    await this.mcp.replaceServers(next.mcpServers);
+    await this.mcp.replaceServers(
+      next.mcpServers,
+      next.mcpToolPolicies
+    );
+    const status = this.getStatus();
+    return {
+      trustState: status.trustState,
+      mcp: {
+        configured: status.mcp.configured,
+        ready: status.mcp.ready,
+        error: status.mcp.error,
+        disconnected: status.mcp.disconnected
+      },
+      hooks: {
+        configured: status.hooks.configured,
+        enabled: status.hooks.enabled,
+        error: status.hooks.entries.filter(entry =>
+          entry.lastOutcome === 'error' || entry.lastOutcome === 'timeout'
+        ).length
+      },
+      warnings: [...status.warnings]
+    };
   }
 
   async close(): Promise<void> {

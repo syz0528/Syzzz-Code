@@ -10,7 +10,7 @@ import {
   unlinkSync,
   writeFileSync
 } from 'node:fs';
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { homedir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import picomatch from 'picomatch';
@@ -22,8 +22,10 @@ import type {
   HookEventName,
   McpProtocolMode,
   McpServerConfig,
+  McpToolPolicy,
   ResolvedHookConfig,
-  ResolvedMcpServerConfig
+  ResolvedMcpServerConfig,
+  ResolvedMcpToolPolicy
 } from './types.js';
 import { inspectWorkspaceTrust } from './trust.js';
 
@@ -33,6 +35,7 @@ const DEFAULT_HOOK_TIMEOUT_MS = 5_000;
 const MAX_EXTENSION_TIMEOUT_MS = 120_000;
 const MAX_HOOK_TIMEOUT_MS = 30_000;
 const MAX_MCP_SERVERS = 20;
+const MAX_MCP_TOOL_POLICIES = 5_000;
 const MAX_SERVER_NAME_CHARACTERS = 64;
 const MAX_COMMAND_CHARACTERS = 4_096;
 const MAX_ARGUMENT_CHARACTERS = 16_384;
@@ -46,6 +49,10 @@ const HOOK_EVENTS = new Set<HookEventName>([
   'PreTurn',
   'PreToolUse',
   'PostToolUse',
+  'PreCompact',
+  'PostCompact',
+  'SubagentStart',
+  'SubagentStop',
   'TurnCompleted',
   'TurnFailed',
   'TurnCancelled'
@@ -60,6 +67,9 @@ export interface ExtensionConfigPaths {
 
 export interface McpConfigFile {
   mcpServers: Record<string, unknown>;
+  syzzz?: {
+    toolPolicies?: Record<string, McpToolPolicy>;
+  };
 }
 
 export interface HookConfigFile {
@@ -69,8 +79,25 @@ export interface HookConfigFile {
 
 export interface ProjectExtensionInspection {
   mcpServers: ResolvedMcpServerConfig[];
+  mcpToolPolicies: ResolvedMcpToolPolicy[];
   hooks: ResolvedHookConfig[];
+  configurationPresent: boolean;
+  valid: boolean;
+  digest?: string;
   warnings: string[];
+}
+
+interface McpScopeResult {
+  servers: ResolvedMcpServerConfig[];
+  toolPolicies: ResolvedMcpToolPolicy[];
+  present: boolean;
+  valid: boolean;
+}
+
+interface HookScopeResult {
+  hooks: ResolvedHookConfig[];
+  present: boolean;
+  valid: boolean;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -232,6 +259,54 @@ export function validateMcpServerName(name: string): string {
   return name;
 }
 
+export function validateQualifiedMcpToolName(name: string): string {
+  const separator = name.indexOf('__');
+  if (
+    separator <= 0 ||
+    separator === name.length - 2 ||
+    name.length > 512 ||
+    /[\u0000-\u001f\u007f]/.test(name)
+  ) {
+    throw new Error(
+      'MCP tool policies must use a bounded <server>__<tool> name'
+    );
+  }
+  validateMcpServerName(name.slice(0, separator));
+  return name;
+}
+
+function validateMcpToolPolicies(
+  value: unknown,
+  source: ExtensionSource,
+  field: string
+): ResolvedMcpToolPolicy[] {
+  if (value === undefined) {
+    return [];
+  }
+  if (!isRecord(value)) {
+    throw new Error(`${field} must be an object`);
+  }
+  const entries = Object.entries(value);
+  if (entries.length > MAX_MCP_TOOL_POLICIES) {
+    throw new Error(
+      `${field} exceeds ${MAX_MCP_TOOL_POLICIES} entries`
+    );
+  }
+  return entries.map(([qualifiedName, policy]) => {
+    validateQualifiedMcpToolName(qualifiedName);
+    if (policy !== 'execute' && policy !== 'disabled') {
+      throw new Error(
+        `${field}.${qualifiedName} must be "execute" or "disabled"`
+      );
+    }
+    return {
+      qualifiedName,
+      policy,
+      sources: [source]
+    };
+  });
+}
+
 export function validateHookName(name: string): string {
   if (
     !name ||
@@ -321,10 +396,14 @@ export function validateHookConfig(value: unknown, field: string): HookConfig {
   if (
     matcher &&
     event !== 'PreToolUse' &&
-    event !== 'PostToolUse'
+    event !== 'PostToolUse' &&
+    event !== 'PreCompact' &&
+    event !== 'PostCompact' &&
+    event !== 'SubagentStart' &&
+    event !== 'SubagentStop'
   ) {
     throw new Error(
-      `${field}.matcher is valid only for PreToolUse or PostToolUse`
+      `${field}.matcher is valid only for tool, compaction, or subagent Hooks`
     );
   }
   if (matcher) {
@@ -378,7 +457,69 @@ function readJsonFile(path: string): unknown | undefined {
   if (!existsSync(path)) {
     return undefined;
   }
-  return JSON.parse(readFileSync(path, 'utf8')) as unknown;
+  const source = readFileSync(path, 'utf8').replace(/^\uFEFF/, '');
+  let sanitized = '';
+  let inString = false;
+  let escaped = false;
+  for (let index = 0; index < source.length; index++) {
+    const character = source[index]!;
+    const next = source[index + 1];
+    if (inString) {
+      sanitized += character;
+      if (escaped) {
+        escaped = false;
+      } else if (character === '\\') {
+        escaped = true;
+      } else if (character === '"') {
+        inString = false;
+      }
+      continue;
+    }
+    if (character === '"') {
+      inString = true;
+      sanitized += character;
+      continue;
+    }
+    if (character === '/' && next === '/') {
+      sanitized += '  ';
+      index += 1;
+      while (index + 1 < source.length) {
+        const commentCharacter = source[index + 1]!;
+        if (commentCharacter === '\r' || commentCharacter === '\n') {
+          break;
+        }
+        sanitized += ' ';
+        index += 1;
+      }
+      continue;
+    }
+    if (character === '/' && next === '*') {
+      sanitized += '  ';
+      index += 1;
+      let closed = false;
+      while (index + 1 < source.length) {
+        const commentCharacter = source[index + 1]!;
+        const commentNext = source[index + 2];
+        if (commentCharacter === '*' && commentNext === '/') {
+          sanitized += '  ';
+          index += 2;
+          closed = true;
+          break;
+        }
+        sanitized +=
+          commentCharacter === '\r' || commentCharacter === '\n'
+            ? commentCharacter
+            : ' ';
+        index += 1;
+      }
+      if (!closed) {
+        throw new SyntaxError(`Unterminated block comment in ${path}`);
+      }
+      continue;
+    }
+    sanitized += character;
+  }
+  return JSON.parse(sanitized) as unknown;
 }
 
 function readMcpScope(
@@ -386,7 +527,7 @@ function readMcpScope(
   source: ExtensionSource,
   trusted: boolean,
   warnings: string[]
-): ResolvedMcpServerConfig[] {
+): McpScopeResult {
   let raw: unknown;
   try {
     raw = readJsonFile(path);
@@ -395,16 +536,17 @@ function readMcpScope(
       `${source} MCP configuration disabled: ` +
       `${error instanceof Error ? error.message : String(error)}`
     );
-    return [];
+    return { servers: [], toolPolicies: [], present: true, valid: false };
   }
   if (raw === undefined) {
-    return [];
+    return { servers: [], toolPolicies: [], present: false, valid: true };
   }
   if (!isRecord(raw) || !isRecord(raw.mcpServers)) {
     warnings.push(`${source} MCP configuration disabled: mcpServers must be an object`);
-    return [];
+    return { servers: [], toolPolicies: [], present: true, valid: false };
   }
   const servers: ResolvedMcpServerConfig[] = [];
+  let valid = true;
   for (const [name, value] of Object.entries(raw.mcpServers)) {
     try {
       validateMcpServerName(name);
@@ -415,13 +557,31 @@ function readMcpScope(
         config: validateMcpServerConfig(value, `mcpServers.${name}`)
       });
     } catch (error) {
+      valid = false;
       warnings.push(
         `${source} MCP server "${name}" disabled: ` +
         `${error instanceof Error ? error.message : String(error)}`
       );
     }
   }
-  return servers;
+  let toolPolicies: ResolvedMcpToolPolicy[] = [];
+  try {
+    if (raw.syzzz !== undefined && !isRecord(raw.syzzz)) {
+      throw new Error('syzzz must be an object');
+    }
+    toolPolicies = validateMcpToolPolicies(
+      isRecord(raw.syzzz) ? raw.syzzz.toolPolicies : undefined,
+      source,
+      'syzzz.toolPolicies'
+    );
+  } catch (error) {
+    valid = false;
+    warnings.push(
+      `${source} MCP tool policies disabled: ` +
+      `${error instanceof Error ? error.message : String(error)}`
+    );
+  }
+  return { servers, toolPolicies, present: true, valid };
 }
 
 function readHookScope(
@@ -429,7 +589,7 @@ function readHookScope(
   source: ExtensionSource,
   trusted: boolean,
   warnings: string[]
-): ResolvedHookConfig[] {
+): HookScopeResult {
   let raw: unknown;
   try {
     raw = readJsonFile(path);
@@ -438,10 +598,10 @@ function readHookScope(
       `${source} Hooks configuration disabled: ` +
       `${error instanceof Error ? error.message : String(error)}`
     );
-    return [];
+    return { hooks: [], present: true, valid: false };
   }
   if (raw === undefined) {
-    return [];
+    return { hooks: [], present: false, valid: true };
   }
   if (
     !isRecord(raw) ||
@@ -451,14 +611,16 @@ function readHookScope(
     warnings.push(
       `${source} Hooks configuration disabled: schemaVersion 1 and hooks[] are required`
     );
-    return [];
+    return { hooks: [], present: true, valid: false };
   }
   const hooks: ResolvedHookConfig[] = [];
   const names = new Set<string>();
+  let valid = true;
   for (const [index, value] of raw.hooks.entries()) {
     try {
       const config = validateHookConfig(value, `hooks[${index}]`);
       if (names.has(config.name)) {
+        valid = false;
         warnings.push(
           `${source} Hook at index ${index} disabled: duplicate name "${config.name}"`
         );
@@ -471,13 +633,14 @@ function readHookScope(
         config
       });
     } catch (error) {
+      valid = false;
       warnings.push(
         `${source} Hook at index ${index} disabled: ` +
         `${error instanceof Error ? error.message : String(error)}`
       );
     }
   }
-  return hooks;
+  return { hooks, present: true, valid };
 }
 
 function mergeByName<T>(
@@ -492,22 +655,103 @@ function mergeByName<T>(
   ];
 }
 
+function mergeToolPolicies(
+  userEntries: ResolvedMcpToolPolicy[],
+  projectEntries: ResolvedMcpToolPolicy[]
+): ResolvedMcpToolPolicy[] {
+  const rank: Record<McpToolPolicy, number> = {
+    execute: 1,
+    disabled: 2
+  };
+  const merged = new Map<string, ResolvedMcpToolPolicy>();
+  for (const entry of [...userEntries, ...projectEntries]) {
+    const previous = merged.get(entry.qualifiedName);
+    if (!previous) {
+      merged.set(entry.qualifiedName, {
+        ...entry,
+        sources: [...entry.sources]
+      });
+      continue;
+    }
+    merged.set(entry.qualifiedName, {
+      qualifiedName: entry.qualifiedName,
+      policy: rank[entry.policy] > rank[previous.policy]
+        ? entry.policy
+        : previous.policy,
+      sources: [...new Set([...previous.sources, ...entry.sources])]
+    });
+  }
+  return [...merged.values()].sort((left, right) =>
+    left.qualifiedName.localeCompare(right.qualifiedName)
+  );
+}
+
+function canonicalize(value: unknown): unknown {
+  if (Array.isArray(value)) {
+    return value.map(canonicalize);
+  }
+  if (isRecord(value)) {
+    return Object.fromEntries(
+      Object.keys(value)
+        .sort()
+        .map(key => [key, canonicalize(value[key])])
+    );
+  }
+  return value;
+}
+
+function digestProjectExtensions(
+  mcpServers: ResolvedMcpServerConfig[],
+  toolPolicies: ResolvedMcpToolPolicy[],
+  hooks: ResolvedHookConfig[]
+): string {
+  const normalized = canonicalize({
+    mcpServers: [...mcpServers]
+      .sort((left, right) => left.name.localeCompare(right.name))
+      .map(entry => ({ name: entry.name, config: entry.config })),
+    toolPolicies: [...toolPolicies]
+      .sort((left, right) =>
+        left.qualifiedName.localeCompare(right.qualifiedName)
+      )
+      .map(entry => ({
+        qualifiedName: entry.qualifiedName,
+        policy: entry.policy
+      })),
+    hooks: hooks.map(entry => entry.config)
+  });
+  return createHash('sha256')
+    .update(JSON.stringify(normalized), 'utf8')
+    .digest('hex');
+}
+
 export function loadExtensionConfiguration(
   workspaceRoot: string
 ): ExtensionConfiguration {
   const paths = getExtensionConfigPaths(workspaceRoot);
-  const trust = inspectWorkspaceTrust(workspaceRoot);
-  const warnings = [...trust.warnings];
-  const userServers = readMcpScope(paths.userMcp, 'user', true, warnings);
-  const projectServers = trust.trusted
-    ? readMcpScope(paths.projectMcp, 'project', true, warnings)
-    : [];
-  const userHooks = readHookScope(paths.userHooks, 'user', true, warnings);
-  const projectHooks = trust.trusted
-    ? readHookScope(paths.projectHooks, 'project', true, warnings)
-    : [];
+  const project = inspectProjectExtensions(workspaceRoot);
+  const trust = inspectWorkspaceTrust(workspaceRoot, project.digest);
+  const warnings = [...trust.warnings, ...project.warnings];
+  if (project.configurationPresent && !project.valid) {
+    warnings.push(
+      'Project extensions are disabled until their configuration is valid'
+    );
+  } else if (trust.trustState === 'review-required') {
+    warnings.push(
+      'Project extension configuration changed and requires /trust review'
+    );
+  }
+  const userMcp = readMcpScope(paths.userMcp, 'user', true, warnings);
+  const userHookScope = readHookScope(
+    paths.userHooks,
+    'user',
+    true,
+    warnings
+  );
+  const projectServers = trust.trusted ? project.mcpServers : [];
+  const projectPolicies = trust.trusted ? project.mcpToolPolicies : [];
+  const projectHooks = trust.trusted ? project.hooks : [];
   const mcpServers = mergeByName(
-    userServers,
+    userMcp.servers,
     projectServers,
     entry => entry.name
   );
@@ -519,10 +763,16 @@ export function loadExtensionConfiguration(
   }
   return {
     workspaceRoot: resolve(workspaceRoot),
+    trustState: trust.trustState,
     workspaceTrusted: trust.trusted,
+    ...(project.digest ? { projectDigest: project.digest } : {}),
     mcpServers: mcpServers.slice(0, MAX_MCP_SERVERS),
+    mcpToolPolicies: mergeToolPolicies(
+      userMcp.toolPolicies,
+      projectPolicies
+    ),
     hooks: mergeByName(
-      userHooks,
+      userHookScope.hooks,
       projectHooks,
       entry => entry.config.name
     ),
@@ -535,19 +785,34 @@ export function inspectProjectExtensions(
 ): ProjectExtensionInspection {
   const paths = getExtensionConfigPaths(workspaceRoot);
   const warnings: string[] = [];
+  const mcp = readMcpScope(
+    paths.projectMcp,
+    'project',
+    false,
+    warnings
+  );
+  const hookScope = readHookScope(
+    paths.projectHooks,
+    'project',
+    false,
+    warnings
+  );
+  const valid = mcp.valid && hookScope.valid;
   return {
-    mcpServers: readMcpScope(
-      paths.projectMcp,
-      'project',
-      false,
-      warnings
-    ),
-    hooks: readHookScope(
-      paths.projectHooks,
-      'project',
-      false,
-      warnings
-    ),
+    mcpServers: mcp.servers,
+    mcpToolPolicies: mcp.toolPolicies,
+    hooks: hookScope.hooks,
+    configurationPresent: mcp.present || hookScope.present,
+    valid,
+    ...(valid
+      ? {
+          digest: digestProjectExtensions(
+            mcp.servers,
+            mcp.toolPolicies,
+            hookScope.hooks
+          )
+        }
+      : {}),
     warnings
   };
 }
@@ -593,7 +858,26 @@ export function loadRawMcpConfig(
   if (!isRecord(raw) || !isRecord(raw.mcpServers)) {
     throw new Error(`Invalid MCP configuration at ${path}`);
   }
-  return { mcpServers: { ...raw.mcpServers } };
+  if (raw.syzzz !== undefined && !isRecord(raw.syzzz)) {
+    throw new Error(`Invalid MCP Syzzz configuration at ${path}`);
+  }
+  const policies = validateMcpToolPolicies(
+    isRecord(raw.syzzz) ? raw.syzzz.toolPolicies : undefined,
+    scope,
+    'syzzz.toolPolicies'
+  );
+  return {
+    mcpServers: { ...raw.mcpServers },
+    ...(policies.length > 0
+      ? {
+          syzzz: {
+            toolPolicies: Object.fromEntries(
+              policies.map(entry => [entry.qualifiedName, entry.policy])
+            )
+          }
+        }
+      : {})
+  };
 }
 
 export function saveRawMcpConfig(

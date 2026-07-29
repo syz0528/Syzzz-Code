@@ -4,6 +4,7 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { QueryEngine } from '../dist/engine.js';
+import { HookRunner } from '../dist/extensions/hooks.js';
 import {
   createBoundedSubagentProvider,
   createSubagentToolSet,
@@ -21,11 +22,11 @@ function info() {
   };
 }
 
-function fakeExtensionRuntime(enabled = true) {
+function fakeExtensionRuntime(enabled = true, hooks) {
   let supported = false;
   let configured = enabled;
   return {
-    hooks: undefined,
+    hooks,
     mcp: undefined,
     supportsSubagents() {
       return supported;
@@ -181,12 +182,50 @@ test('Delegate runs an isolated ask+safe child and aggregates usage', async () =
         childRequest = request;
       }
     });
+    const hooks = new HookRunner([
+      {
+        source: 'user',
+        trusted: true,
+        config: {
+          name: 'subagent-start',
+          event: 'SubagentStart',
+          command: process.execPath,
+          args: ['-e', ''],
+          matcher: 'explore',
+          timeoutMs: 1_000,
+          onError: 'continue',
+          env: {},
+          enabled: true
+        }
+      },
+      {
+        source: 'user',
+        trusted: true,
+        config: {
+          name: 'subagent-stop',
+          event: 'SubagentStop',
+          command: process.execPath,
+          args: ['-e', ''],
+          matcher: 'explore',
+          timeoutMs: 1_000,
+          onError: 'continue',
+          env: {},
+          enabled: true
+        }
+      }
+    ]);
+    const subagentHookInvocations = [];
+    const runSubagentHook = hooks.run.bind(hooks);
+    hooks.run = async function* (invocation, signal) {
+      subagentHookInvocations.push(structuredClone(invocation));
+      return yield* runSubagentHook(invocation, signal);
+    };
     const engine = new QueryEngine({
       provider: fixture.provider,
       workspaceRoot: directory,
       mode: 'plan',
       permissionMode: 'fullAccess',
-      extensions: fakeExtensionRuntime(true),
+      extensions: fakeExtensionRuntime(true, hooks),
       audit: false
     });
 
@@ -217,12 +256,43 @@ test('Delegate runs an isolated ask+safe child and aggregates usage', async () =
     ));
     const completed = events.find(event => event.type === 'subagent_completed');
     assert.equal(completed.outcome, 'success');
+    assert.equal(completed.stopReason, 'completed');
     assert.equal(completed.role, 'explore');
     assert.deepEqual(completed.usage, {
       inputTokens: 5,
       outputTokens: 2,
       totalTokens: 7
     });
+    const ordered = events.map(event =>
+      event.type === 'hook_started'
+        ? `${event.type}:${event.event}`
+        : event.type
+    );
+    assert.ok(
+      ordered.indexOf('subagent_started') <
+      ordered.indexOf('hook_started:SubagentStart')
+    );
+    assert.ok(
+      ordered.indexOf('hook_started:SubagentStart') <
+      ordered.indexOf('subagent_completed')
+    );
+    assert.ok(
+      ordered.indexOf('subagent_completed') <
+      ordered.indexOf('hook_started:SubagentStop')
+    );
+    const subagentStartInvocation = subagentHookInvocations.find(
+      invocation => invocation.event === 'SubagentStart'
+    );
+    const subagentStopInvocation = subagentHookInvocations.find(
+      invocation => invocation.event === 'SubagentStop'
+    );
+    assert.deepEqual(subagentStartInvocation.payload, {
+      role: 'explore'
+    });
+    assert.deepEqual(
+      Object.keys(subagentStopInvocation.payload).sort(),
+      ['durationMs', 'outcome', 'role', 'stopReason', 'toolCalls', 'usage']
+    );
     assert.deepEqual(engine.getStatus().totalUsage, result.usage);
   });
 });
@@ -492,8 +562,10 @@ test('subagent closes tools and synthesizes after six tool rounds', async () => 
     assert.equal(result.status, 'completed');
     assert.equal(childCalls, 7);
     const completed = events.find(event => event.type === 'subagent_completed');
-    assert.equal(completed.outcome, 'success');
+    assert.equal(completed.outcome, 'partial');
+    assert.equal(completed.stopReason, 'tool-round-limit');
     assert.equal(completed.toolCalls, 6);
+    assert.equal(completed.providerCalls, 7);
     assert.deepEqual(finalChildRequest.tools, []);
     assert.match(finalChildRequest.systemPrompt, /tool budget is now closed/i);
   });
@@ -564,8 +636,228 @@ test('subagent soft deadline reserves a final no-tool synthesis request', async 
     assert.equal(result.status, 'completed');
     assert.equal(childCalls, 3);
     const completed = events.find(event => event.type === 'subagent_completed');
-    assert.equal(completed.outcome, 'success');
+    assert.equal(completed.outcome, 'partial');
+    assert.equal(completed.stopReason, 'soft-timeout');
     assert.equal(completed.toolCalls, 2);
+  });
+});
+
+test('subagent tool-call budget closes tools and reserves one synthesis', async () => {
+  await withTempDirectory(async directory => {
+    let parentCalls = 0;
+    let childCalls = 0;
+    const provider = {
+      async chat() {
+        parentCalls += 1;
+        return parentCalls === 1
+          ? {
+              message: {
+                role: 'assistant',
+                content: '',
+                toolCalls: [{
+                  id: 'tool-budget-delegate',
+                  name: 'Delegate',
+                  input: { role: 'explore', task: 'bounded calls' }
+                }]
+              }
+            }
+          : { message: { role: 'assistant', content: 'parent done' } };
+      },
+      getInfo: info,
+      fork() {
+        return {
+          async chat(request) {
+            childCalls += 1;
+            if (request.tools.length === 0) {
+              return {
+                message: {
+                  role: 'assistant',
+                  content: 'tool-call budget report'
+                }
+              };
+            }
+            return {
+              message: {
+                role: 'assistant',
+                content: '',
+                toolCalls: Array.from({ length: 4 }, (_, index) => ({
+                  id: `list-${childCalls}-${index}`,
+                  name: 'ListDirectory',
+                  input: { path: '.' }
+                }))
+              }
+            };
+          },
+          getInfo: info
+        };
+      }
+    };
+    const engine = new QueryEngine({
+      provider,
+      workspaceRoot: directory,
+      extensions: fakeExtensionRuntime(true),
+      audit: false
+    });
+
+    const { events, result } = await collect(engine.runTurn('tool budget'));
+    assert.equal(result.status, 'completed');
+    const completed = events.find(event => event.type === 'subagent_completed');
+    assert.equal(completed.outcome, 'partial');
+    assert.equal(completed.stopReason, 'tool-call-limit');
+    assert.equal(completed.toolCalls, 16);
+    assert.equal(completed.providerCalls, 6);
+    assert.equal(childCalls, 6);
+  });
+});
+
+test('subagent soft token budget reserves one final no-tool synthesis', async () => {
+  await withTempDirectory(async directory => {
+    let parentCalls = 0;
+    let childCalls = 0;
+    const childRequests = [];
+    const provider = {
+      async chat() {
+        parentCalls += 1;
+        return parentCalls === 1
+          ? {
+              message: {
+                role: 'assistant',
+                content: '',
+                toolCalls: [{
+                  id: 'soft-token-delegate',
+                  name: 'Delegate',
+                  input: { role: 'explore', task: 'bounded token review' }
+                }]
+              }
+            }
+          : { message: { role: 'assistant', content: 'parent done' } };
+      },
+      getInfo: info,
+      fork() {
+        return {
+          async chat(request) {
+            childCalls += 1;
+            childRequests.push(request);
+            if (request.tools.length === 0) {
+              return {
+                message: {
+                  role: 'assistant',
+                  content: 'soft token budget report'
+                },
+                usage: {
+                  inputTokens: 800,
+                  outputTokens: 200,
+                  totalTokens: 1_000
+                }
+              };
+            }
+            return {
+              message: {
+                role: 'assistant',
+                content: 'Evidence gathered before token synthesis.',
+                toolCalls: [{
+                  id: 'soft-token-status',
+                  name: 'GitStatus',
+                  input: {}
+                }]
+              },
+              usage: {
+                inputTokens: 95_000,
+                outputTokens: 2_000,
+                totalTokens: 97_000
+              }
+            };
+          },
+          getInfo: info
+        };
+      }
+    };
+    const engine = new QueryEngine({
+      provider,
+      workspaceRoot: directory,
+      extensions: fakeExtensionRuntime(true),
+      audit: false
+    });
+
+    const { events, result } = await collect(engine.runTurn('soft tokens'));
+    assert.equal(result.status, 'completed');
+    assert.equal(childCalls, 2);
+    assert.equal(childRequests[0].tools.length > 0, true);
+    assert.deepEqual(childRequests[1].tools, []);
+    const completed = events.find(event => event.type === 'subagent_completed');
+    assert.equal(completed.outcome, 'partial');
+    assert.equal(completed.stopReason, 'soft-token-limit');
+    assert.equal(completed.toolCalls, 1);
+    assert.equal(completed.providerCalls, 2);
+  });
+});
+
+test('subagent hard token budget returns bounded partial evidence without tools', async () => {
+  await withTempDirectory(async directory => {
+    let parentCalls = 0;
+    let childCalls = 0;
+    const provider = {
+      async chat() {
+        parentCalls += 1;
+        return parentCalls === 1
+          ? {
+              message: {
+                role: 'assistant',
+                content: '',
+                toolCalls: [{
+                  id: 'token-budget-delegate',
+                  name: 'Delegate',
+                  input: { role: 'review', task: 'review safely' }
+                }]
+              }
+            }
+          : { message: { role: 'assistant', content: 'parent used partial' } };
+      },
+      getInfo: info,
+      fork() {
+        return {
+          async chat() {
+            childCalls += 1;
+            return {
+              message: {
+                role: 'assistant',
+                content: 'Partial evidence gathered before the hard stop.',
+                toolCalls: [{
+                  id: 'blocked-after-hard-token',
+                  name: 'GitStatus',
+                  input: {}
+                }]
+              },
+              usage: {
+                inputTokens: 127_000,
+                outputTokens: 2_000,
+                totalTokens: 129_000
+              }
+            };
+          },
+          getInfo: info
+        };
+      }
+    };
+    const engine = new QueryEngine({
+      provider,
+      workspaceRoot: directory,
+      extensions: fakeExtensionRuntime(true),
+      audit: false
+    });
+
+    const { events, result } = await collect(engine.runTurn('hard budget'));
+    assert.equal(result.status, 'completed');
+    const completed = events.find(event => event.type === 'subagent_completed');
+    assert.equal(completed.outcome, 'partial');
+    assert.equal(completed.stopReason, 'hard-token-limit');
+    assert.equal(completed.toolCalls, 0);
+    assert.equal(completed.providerCalls, 1);
+    assert.equal(childCalls, 1);
+    const delegateResult = events.find(event =>
+      event.type === 'tool_completed' && event.toolName === 'Delegate'
+    );
+    assert.match(delegateResult.result, /Partial evidence gathered/);
   });
 });
 

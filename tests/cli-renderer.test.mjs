@@ -57,7 +57,7 @@ test('stream-json extension events expose status metadata but no private payload
     }),
     event('hook_completed', {
       hook: 'policy',
-      event: 'PreToolUse',
+      event: 'SubagentStop',
       source: 'project',
       outcome: 'success',
       durationMs: 3
@@ -67,11 +67,17 @@ test('stream-json extension events expose status metadata but no private payload
       outcome: 'success',
       durationMs: 12,
       toolCalls: 2,
+      providerCalls: 3,
+      stopReason: 'completed',
+      reportTruncated: false,
       usage: { inputTokens: 20, outputTokens: 4 }
     })
   ];
   const serialized = events.map(serializeAgentEvent).join('\n');
-  assert.doesNotMatch(serialized, /task|transcript|report|headers|result/);
+  assert.doesNotMatch(
+    serialized,
+    /"(?:task|transcript|report|headers|result)"\s*:/
+  );
   assert.equal(
     serialized.split('\n').every(line => JSON.parse(line).schemaVersion === 1),
     true

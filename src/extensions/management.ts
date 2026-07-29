@@ -2,12 +2,14 @@ import { isAbsolute } from 'node:path';
 import {
   loadRawHookConfig,
   loadRawMcpConfig,
+  inspectProjectExtensions,
   saveRawHookConfig,
   saveRawMcpConfig,
   validateHookConfig,
   validateHookName,
   validateMcpServerConfig,
-  validateMcpServerName
+  validateMcpServerName,
+  validateQualifiedMcpToolName
 } from './config.js';
 import { ExtensionRuntime } from './runtime.js';
 import { inspectWorkspaceTrust } from './trust.js';
@@ -98,7 +100,11 @@ function redactedHttpTarget(value: string): string {
 }
 
 function listMcpEntries(workspaceRoot: string): Array<Record<string, unknown>> {
-  const trusted = inspectWorkspaceTrust(workspaceRoot).trusted;
+  const project = inspectProjectExtensions(workspaceRoot);
+  const trusted = inspectWorkspaceTrust(
+    workspaceRoot,
+    project.digest
+  ).trusted;
   const entries: Array<Record<string, unknown>> = [];
   for (const scope of ['user', 'project'] as const) {
     let config;
@@ -193,6 +199,54 @@ export async function manageMcp(
   const name = validateMcpServerName(requireName(request.name, `mcp ${action}`));
   const config = loadRawMcpConfig(scope, request.workspaceRoot);
 
+  if (action === 'policy') {
+    const toolName = request.command[0];
+    const policy = request.command[1];
+    if (!toolName || !policy || request.command.length !== 2) {
+      throw new Error(
+        'mcp policy requires <server> <tool> execute|disabled|reset'
+      );
+    }
+    const qualifiedName = validateQualifiedMcpToolName(
+      `${name}__${toolName}`
+    );
+    if (
+      policy !== 'execute' &&
+      policy !== 'disabled' &&
+      policy !== 'reset'
+    ) {
+      throw new Error('MCP tool policy must be execute, disabled, or reset');
+    }
+    const toolPolicies = {
+      ...(config.syzzz?.toolPolicies ?? {})
+    };
+    if (policy === 'reset') {
+      delete toolPolicies[qualifiedName];
+    } else {
+      toolPolicies[qualifiedName] = policy;
+    }
+    config.syzzz = Object.keys(toolPolicies).length > 0
+      ? { toolPolicies }
+      : undefined;
+    saveRawMcpConfig(scope, request.workspaceRoot, config);
+    return {
+      json: {
+        action: 'policy',
+        server: name,
+        tool: toolName,
+        policy,
+        scope
+      },
+      text:
+        `${policy === 'reset' ? 'Reset' : 'Set'} MCP policy for ` +
+        `${qualifiedName}${policy === 'reset' ? '' : ` to ${policy}`} ` +
+        `[${scope}].` +
+        (scope === 'project'
+          ? ' Project extensions require /trust review after this change.'
+          : '')
+    };
+  }
+
   if (action === 'add') {
     if (config.mcpServers[name]) {
       throw new Error(`MCP server already exists in ${scope} scope: ${name}`);
@@ -236,6 +290,16 @@ export async function manageMcp(
       throw new Error(`MCP server does not exist in ${scope} scope: ${name}`);
     }
     delete config.mcpServers[name];
+    if (config.syzzz?.toolPolicies) {
+      const remaining = Object.fromEntries(
+        Object.entries(config.syzzz.toolPolicies).filter(
+          ([qualifiedName]) => !qualifiedName.startsWith(`${name}__`)
+        )
+      );
+      config.syzzz = Object.keys(remaining).length > 0
+        ? { toolPolicies: remaining }
+        : undefined;
+    }
     saveRawMcpConfig(scope, request.workspaceRoot, config);
     return {
       json: { action: 'removed', name, scope },
@@ -258,11 +322,17 @@ export async function manageMcp(
     };
   }
 
-  throw new Error('mcp action must be list, add, remove, enable, disable, or doctor');
+  throw new Error(
+    'mcp action must be list, add, remove, enable, disable, policy, or doctor'
+  );
 }
 
 function listHookEntries(workspaceRoot: string): Array<Record<string, unknown>> {
-  const trusted = inspectWorkspaceTrust(workspaceRoot).trusted;
+  const project = inspectProjectExtensions(workspaceRoot);
+  const trusted = inspectWorkspaceTrust(
+    workspaceRoot,
+    project.digest
+  ).trusted;
   const entries: Array<Record<string, unknown>> = [];
   for (const scope of ['user', 'project'] as const) {
     let file;

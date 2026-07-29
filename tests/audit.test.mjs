@@ -136,6 +136,9 @@ test('audit records only allowlisted metadata', () => {
     outcome: 'success',
     durationMs: 25,
     toolCalls: 3,
+    providerCalls: 4,
+    stopReason: 'completed',
+    reportTruncated: false,
     usage: { inputTokens: 20, outputTokens: 10 },
     report: 'PRIVATE REPORT'
   }), 'workspace-hash');
@@ -162,6 +165,9 @@ test('audit records only allowlisted metadata', () => {
     outcome: 'success',
     durationMs: 25,
     toolCalls: 3,
+    providerCalls: 4,
+    stopReason: 'completed',
+    reportTruncated: false,
     usage: { inputTokens: 20, outputTokens: 10 }
   });
 });

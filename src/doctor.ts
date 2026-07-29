@@ -160,11 +160,14 @@ export async function runDoctor(
   const extensionPaths = getExtensionConfigPaths(workspaceRoot);
   const extensionConfiguration = loadExtensionConfiguration(workspaceRoot);
   const projectInspection = inspectProjectExtensions(workspaceRoot);
-  const trustInspection = inspectWorkspaceTrust(workspaceRoot);
-  const extensionWarnings = [
+  const trustInspection = inspectWorkspaceTrust(
+    workspaceRoot,
+    projectInspection.digest
+  );
+  const extensionWarnings = [...new Set([
     ...extensionConfiguration.warnings,
     ...projectInspection.warnings
-  ];
+  ])];
   check(
     checks,
     'MCP configuration',
@@ -184,7 +187,9 @@ export async function runDoctor(
     projectConfigurationPresent
       ? trustInspection.trusted
         ? 'Project extensions are active for this canonical workspace path'
-        : 'Project extension files are present but inactive'
+        : trustInspection.trustState === 'review-required'
+          ? 'Project extension definition changed and requires /trust review'
+          : 'Project extension files are present but inactive'
       : 'No project extension files are present'
   );
 

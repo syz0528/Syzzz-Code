@@ -49,13 +49,15 @@ function fakeFactory(options = {}) {
     listCalls: 0,
     callCalls: 0,
     closes: 0,
-    changed: undefined
+    changed: undefined,
+    lifecycle: []
   };
   return {
     state,
-    factory: async ({ onToolsChanged }) => {
+    factory: async ({ onToolsChanged, onClose, onError }) => {
       state.connections += 1;
       state.changed = onToolsChanged;
+      state.lifecycle.push({ onClose, onError });
       return {
         async listTools() {
           state.listCalls += 1;
@@ -114,6 +116,116 @@ test('MCP discovery is lazy, qualified, paginated, and refreshes on list_changed
   assert.equal(fake.state.listCalls, 2);
   await manager.close();
   assert.equal(fake.state.closes, 1);
+});
+
+test('local MCP policies only tighten tools and contradictory hints fail closed', async () => {
+  const fake = fakeFactory({
+    tools: [
+      tool('read_data', true),
+      {
+        ...tool('conflicted', true),
+        annotations: {
+          readOnlyHint: true,
+          destructiveHint: true
+        }
+      },
+      tool('forced', true)
+    ]
+  });
+  const manager = new McpManager({
+    workspaceRoot: process.cwd(),
+    servers: [server()],
+    toolPolicies: [{
+      qualifiedName: 'fixture__read_data',
+      policy: 'disabled',
+      sources: ['user']
+    }, {
+      qualifiedName: 'fixture__forced',
+      policy: 'execute',
+      sources: ['project']
+    }],
+    connectionFactory: fake.factory
+  });
+  const signal = new AbortController().signal;
+
+  const search = await manager.search({}, signal);
+  assert.deepEqual(
+    search.tools.map(entry => entry.qualifiedName),
+    ['fixture__conflicted', 'fixture__forced']
+  );
+  await assert.rejects(
+    manager.resolveTool('fixture__read_data', signal),
+    error => error.code === 'policy_denied'
+  );
+  const inspection = await manager.inspectServer('fixture', signal);
+  const conflicted = inspection.tools.find(entry =>
+    entry.qualifiedName === 'fixture__conflicted'
+  );
+  const disabled = inspection.tools.find(entry =>
+    entry.qualifiedName === 'fixture__read_data'
+  );
+  const forced = inspection.tools.find(entry =>
+    entry.qualifiedName === 'fixture__forced'
+  );
+  assert.equal(disabled.risk, 'disabled');
+  assert.equal(disabled.riskSource, 'local-policy');
+  assert.deepEqual(disabled.policySources, ['user']);
+  assert.equal(conflicted.risk, 'execute');
+  assert.match(conflicted.annotationWarning, /conflicts/);
+  assert.equal(forced.risk, 'execute');
+  assert.equal(forced.riskSource, 'local-policy');
+  assert.deepEqual(forced.policySources, ['project']);
+  await manager.close();
+});
+
+test('MCP lifecycle callbacks discard stale generations and reconnect lazily', async () => {
+  const fake = fakeFactory();
+  const manager = new McpManager({
+    workspaceRoot: process.cwd(),
+    servers: [server()],
+    connectionFactory: fake.factory
+  });
+  const signal = new AbortController().signal;
+
+  await manager.search({}, signal);
+  assert.equal(fake.state.connections, 1);
+  fake.state.lifecycle[0].onError(new Error('network warning'));
+  assert.equal(manager.getStatuses()[0].state, 'error');
+  assert.equal(manager.getStatuses()[0].toolCount, 0);
+  assert.equal(fake.state.closes, 1);
+  fake.state.lifecycle[0].onClose();
+  assert.equal(manager.getStatuses()[0].state, 'error');
+
+  await manager.search({}, signal);
+  assert.equal(fake.state.connections, 2);
+  assert.equal(manager.getStatuses()[0].state, 'ready');
+  fake.state.lifecycle[0].onClose();
+  assert.equal(manager.getStatuses()[0].state, 'ready');
+  await manager.close();
+});
+
+test('a connection failure is not replayed and the next action reconnects', async () => {
+  const fake = fakeFactory({
+    callError: new Error('connection lost')
+  });
+  const manager = new McpManager({
+    workspaceRoot: process.cwd(),
+    servers: [server()],
+    connectionFactory: fake.factory
+  });
+  const signal = new AbortController().signal;
+
+  await assert.rejects(
+    manager.call('fixture__read_data', { value: 'one' }, signal),
+    error => error.code === 'connection'
+  );
+  assert.equal(fake.state.callCalls, 1);
+  assert.equal(manager.getStatuses()[0].state, 'error');
+  assert.equal(manager.getStatuses()[0].errorCode, 'connection');
+  await manager.search({}, signal);
+  assert.equal(fake.state.connections, 2);
+  assert.equal(fake.state.callCalls, 1);
+  await manager.close();
 });
 
 test('MCP calls validate input, do not retry, and mark bounded output untrusted', async () => {

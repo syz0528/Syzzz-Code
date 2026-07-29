@@ -30,7 +30,9 @@ Syzzz Code 的目标是让模型能力始终经过本地 Runtime 的模式、权
 ~/.syzzz-code/trusted-workspaces.json
 ```
 
-信任后，项目配置在重启或 reload 后的变化不再重复询问。必须把 workspace trust 理解为“允许该项目配置启动本地程序或连接远端服务”，而不是普通工具审批。它不等于 `acceptEdits` 或 `fullAccess`。
+信任记录 V2 同时绑定规范化 workspace 路径和经过验证、补全默认值后的项目扩展配置 SHA-256。摘要覆盖 MCP、Hook 和项目工具策略定义，但不包含解析后的 Secret。配置变化、损坏、缺失或 legacy V1 信任迁移都会进入 `review-required`：项目 MCP 立即断开，项目 Hooks 立即禁用，重新 `/trust` 后才可恢复。
+
+`/trust` 在显示配置和用户确认后重新读取摘要，避免确认期间配置变化。该机制审查的是扩展定义，不会追踪被引用脚本或 executable 文件内容的后续变化，也不是普通工具审批。它不等于 `acceptEdits` 或 `fullAccess`。
 
 `/untrust` 会立即断开项目 MCP、禁用项目 Hooks 并移除路径信任。用户级 `mcp.json` 和 `hooks.json` 由用户直接维护，因此不依赖 workspace trust。
 
@@ -40,9 +42,11 @@ Syzzz Code 的目标是让模型能力始终经过本地 Runtime 的模式、权
 - stdio 只继承系统运行所需环境变量和配置中明确列出的变量；Provider 配置声明的凭证环境变量即使被扩展显式引用也会拒绝。
 - Streamable HTTP 必须使用 HTTPS；只有 loopback 可使用 HTTP；重定向被禁止。
 - HTTP 自定义头必须通过 `${ENV_NAME}` 引用环境变量。当前不实现 OAuth。
-- `readOnlyHint:true` 映射为只读工具；缺失、为 false 或无法解析时映射为执行型工具并 fail closed。
+- 本地 `execute | disabled` 策略只能收紧远端声明；用户与项目冲突时取更严格结果。
+- `disabled` 工具不会被发现，直接调用也会 fail closed，任何权限模式都不能绕过。
+- 无本地策略时，仅 `readOnlyHint:true` 且 `destructiveHint !== true` 映射为只读工具；缺失、冲突或无法解析时映射为执行型工具并 fail closed。
 - `readOnlyHint` 是受信 Server 的声明，不是 Syzzz 对远端实现的证明。
-- MCP 调用不自动重试，避免重复副作用。
+- MCP 调用不自动重试，避免重复副作用；连接或协议错误会丢弃连接，下一次独立操作才惰性重连。
 - 工具目录和结果均有硬上限；正常结果和远端错误都会标记为不可信外部数据。
 - 图片、音频、二进制和 resource link 不会自动读取。
 
@@ -55,8 +59,9 @@ Hook 是用户明确授权的本地代码，以当前操作系统用户权限运
 - `PreTurn` 可看到当前用户消息。
 - 工具 Hook 可看到对应工具输入。
 - `PostToolUse` 只接收 outcome 和脱敏 metadata，不接收原始工具结果。
+- `PreCompact | PostCompact` 只接收 reason、token、passes 和耗时；`SubagentStart | SubagentStop` 只接收角色、outcome、耗时、工具数、usage 和停止原因。
 - Provider Key 不会进入 Hook payload；Provider 配置声明的凭证环境变量即使被 Hook 显式引用也会拒绝。
-- 只有 `PreToolUse` 可以返回 `continue | deny`。
+- 只有 `PreToolUse` 可以返回 `continue | deny`；压缩与 Subagent Hook 都是不能拒绝或改变状态的被动通知。
 - Hook 的拒绝理由只在本地展示，Provider 只收到固定的策略拒绝结果。Hook 不能授权、修改工具输入、注入模型上下文、改变工作模式或提升权限。
 - `PreToolUse` 拒绝会关闭当前回合后续工具访问；同批次未执行调用被跳过，Provider 只能在无工具状态下说明拒绝，不能换用其他工具绕过。
 - 非 `PreToolUse` Hook 的失败不会改变回合终态；终态 Hook 受 2 秒总预算约束。
@@ -70,8 +75,10 @@ Hook 是用户明确授权的本地代码，以当前操作系统用户权限运
 - 固定 `ask + safe`；
 - 不提供 Write、Edit、Patch、Shell、MCP、Hooks 或 Delegate；
 - 每个父回合最多 2 次，只允许一层且串行执行；
-- 每次最多 6 个工具轮次、120 秒、32K context window 和 20 KiB 最终报告；
-- 达到 6 轮或约 90 秒时关闭工具并保留一次最终总结机会；Delegate 失败后父 Agent 不在同一回合重复调查；
+- 每次最多 6 个工具轮次、16 个工具调用、7 个 Provider 请求、32K context window 和 20 KiB 最终报告；
+- 90 秒与 96K 累计 token 是软预算，120 秒与 128K 累计 token 是硬预算；
+- 达到软预算时至多保留一次无工具总结，证据不足或预算不足时返回带停止原因的 `partial`；达到硬预算或取消后禁止追加 Provider 请求；
+- Delegate 完成后父 Agent 不在同一回合重复同一只读调查，除非报告明确证据不足；
 - 与父回合共享取消信号；
 - 不保存完整 transcript。
 
@@ -92,6 +99,7 @@ Subagent 使用当前 Provider 和 model 的隔离 fork，因此委派任务和�
 ## 已知限制
 
 - Shell、MCP stdio 和 Hooks 都不是 OS sandbox。
+- Trust V2 不会对被配置引用的脚本或 executable 做内容锁定。
 - Windows ACL 当前只能提示未自动验证，不能证明本地文件仅当前用户可读。
 - 文件最终 hash 复核到原子 rename 之间仍有极小 TOCTOU 窗口。
 - 当前不支持 OAuth、Keychain、磁盘加密、云端审计、旧 SSE、后台 Hook 或写入型 Subagent。

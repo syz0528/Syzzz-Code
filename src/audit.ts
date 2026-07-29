@@ -284,6 +284,9 @@ export function toAuditRecord(
         transport: event.transport,
         state: event.state,
         toolCount: event.toolCount,
+        ...(event.negotiatedProtocolVersion
+          ? { negotiatedProtocolVersion: event.negotiatedProtocolVersion }
+          : {}),
         ...(event.errorCode ? { errorCode: event.errorCode } : {})
       };
     case 'hook_started':
@@ -310,6 +313,13 @@ export function toAuditRecord(
         outcome: event.outcome,
         durationMs: event.durationMs,
         toolCalls: event.toolCalls,
+        ...(event.providerCalls === undefined
+          ? {}
+          : { providerCalls: event.providerCalls }),
+        ...(event.stopReason ? { stopReason: event.stopReason } : {}),
+        ...(event.reportTruncated === undefined
+          ? {}
+          : { reportTruncated: event.reportTruncated }),
         ...(event.usage ? { usage: event.usage } : {}),
         ...(event.errorCode ? { errorCode: event.errorCode } : {})
       };

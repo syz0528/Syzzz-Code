@@ -20,6 +20,12 @@ function emitMcpStatuses(
       transport: status.transport,
       state: status.state,
       toolCount: status.toolCount,
+      ...(status.negotiatedProtocolVersion
+        ? { negotiatedProtocolVersion: status.negotiatedProtocolVersion }
+        : {}),
+      ...(status.lastConnectedAt
+        ? { lastConnectedAt: status.lastConnectedAt }
+        : {}),
       ...(status.errorCode ? { errorCode: status.errorCode } : {})
     });
   }

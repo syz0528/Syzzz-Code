@@ -185,6 +185,36 @@ test('safe mode offers only allow-once for side-effect MCP tools', async () => {
   assert.deepEqual(approvalRequest.choices, ['allow-once', 'deny']);
 });
 
+test('fullAccess cannot bypass a locally disabled MCP tool', async () => {
+  const executions = [];
+  const manager = makeManager(executions);
+  await manager.replaceServers(
+    manager.getServerConfigurations(),
+    [{
+      qualifiedName: 'fixture__read_data',
+      policy: 'disabled',
+      sources: ['user']
+    }]
+  );
+  const engine = new QueryEngine({
+    provider: makeProvider('read_data'),
+    tools: createMcpTools(manager),
+    mode: 'code',
+    permissionMode: 'fullAccess',
+    audit: false
+  });
+  const { events, result } = await collect(engine.runTurn('read'));
+
+  assert.equal(result.status, 'completed');
+  assert.deepEqual(executions, []);
+  const completed = events.find(event =>
+    event.type === 'tool_completed' && event.toolName === 'McpCall'
+  );
+  assert.equal(completed.outcome, 'error');
+  assert.match(completed.result, /disabled by local policy/);
+  await manager.close();
+});
+
 test('remote MCP failures remain bounded and explicitly untrusted', async () => {
   const manager = new McpManager({
     workspaceRoot: process.cwd(),

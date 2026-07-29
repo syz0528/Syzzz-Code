@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { z } from 'zod';
 import { ContextManager } from '../dist/context-manager.js';
 import { QueryEngine } from '../dist/engine.js';
+import { HookRunner } from '../dist/extensions/hooks.js';
 import { ProviderError } from '../dist/providers/errors.js';
 
 function providerInfo(contextWindowTokens = 65_536) {
@@ -117,6 +118,63 @@ test('auto compaction summarizes old history without exposing summary text', asy
   ));
 });
 
+test('compaction and turn sampling share the Provider call budget', async () => {
+  let normalCalls = 0;
+  let summaryCalls = 0;
+  const provider = {
+    async chat(request) {
+      if (request.systemPrompt.includes('Compress the supplied conversation')) {
+        summaryCalls += 1;
+        return {
+          message: {
+            role: 'assistant',
+            content: 'The earlier response contained bounded test context.'
+          }
+        };
+      }
+      normalCalls += 1;
+      return {
+        message: {
+          role: 'assistant',
+          content: 'Large answer '.repeat(500)
+        }
+      };
+    },
+    getInfo() {
+      return providerInfo(2_500);
+    }
+  };
+  const engine = new QueryEngine({
+    provider,
+    tools: [],
+    audit: false,
+    maxProviderCalls: 1,
+    context: smallContextOptions()
+  });
+
+  await engine.chat('seed Provider budget history');
+  const { events, result } = await collectTurn(engine.runTurn('continue'));
+
+  assert.equal(result.status, 'failed');
+  assert.equal(result.error.code, 'provider-call-limit');
+  assert.equal(summaryCalls, 1);
+  assert.equal(normalCalls, 1);
+  assert.equal(
+    events.filter(event =>
+      event.type === 'provider_request_started' &&
+      event.purpose === 'compaction'
+    ).length,
+    1
+  );
+  assert.equal(
+    events.some(event =>
+      event.type === 'provider_request_started' &&
+      event.purpose === 'turn'
+    ),
+    false
+  );
+});
+
 test('manual compaction emits manual events and commits only the reduced history', async () => {
   let normalCalls = 0;
   let summaryCalls = 0;
@@ -143,10 +201,49 @@ test('manual compaction emits manual events and commits only the reduced history
       return providerInfo(2_500);
     }
   };
+  const hooks = new HookRunner([
+    {
+      source: 'user',
+      trusted: true,
+      config: {
+        name: 'before-compact',
+        event: 'PreCompact',
+        command: process.execPath,
+        args: ['-e', ''],
+        matcher: 'manual',
+        timeoutMs: 1_000,
+        onError: 'continue',
+        env: {},
+        enabled: true
+      }
+    },
+    {
+      source: 'user',
+      trusted: true,
+      config: {
+        name: 'after-compact',
+        event: 'PostCompact',
+        command: process.execPath,
+        args: ['-e', ''],
+        matcher: 'manual',
+        timeoutMs: 1_000,
+        onError: 'continue',
+        env: {},
+        enabled: true
+      }
+    }
+  ]);
+  const compactHookInvocations = [];
+  const runCompactHook = hooks.run.bind(hooks);
+  hooks.run = async function* (invocation, signal) {
+    compactHookInvocations.push(structuredClone(invocation));
+    return yield* runCompactHook(invocation, signal);
+  };
   const engine = new QueryEngine({
     provider,
     tools: [],
     audit: false,
+    extensions: { hooks },
     context: smallContextOptions()
   });
 
@@ -164,6 +261,37 @@ test('manual compaction emits manual events and commits only the reduced history
   assert.ok(events.some(event =>
     event.type === 'compaction_completed' && event.reason === 'manual'
   ));
+  const order = events.map(event =>
+    event.type === 'hook_started'
+      ? `${event.type}:${event.event}`
+      : event.type
+  );
+  assert.ok(
+    order.indexOf('compaction_started') <
+    order.indexOf('hook_started:PreCompact')
+  );
+  assert.ok(
+    order.indexOf('hook_started:PreCompact') <
+    order.indexOf('compaction_completed')
+  );
+  assert.ok(
+    order.indexOf('compaction_completed') <
+    order.indexOf('hook_started:PostCompact')
+  );
+  const preCompactInvocation = compactHookInvocations.find(
+    invocation => invocation.event === 'PreCompact'
+  );
+  const postCompactInvocation = compactHookInvocations.find(
+    invocation => invocation.event === 'PostCompact'
+  );
+  assert.deepEqual(
+    Object.keys(preCompactInvocation.payload).sort(),
+    ['beforeTokens', 'passes', 'reason']
+  );
+  assert.deepEqual(
+    Object.keys(postCompactInvocation.payload).sort(),
+    ['afterTokens', 'beforeTokens', 'durationMs', 'passes', 'reason']
+  );
   assert.notDeepEqual(engine.getMessages(), before);
   assert.ok(engine.getMessages().some(message =>
     message.role === 'user' && message.kind === 'compaction-summary'

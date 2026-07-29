@@ -141,6 +141,71 @@ test('PreToolUse matcher can deny an operation and cannot modify its input', asy
   });
 });
 
+test('compaction and subagent Hooks are passive, match subjects, and expose status', async () => {
+  await withTempDirectory(async directory => {
+    const output = path.join(directory, 'passive.jsonl');
+    const code = [
+      "let input='';",
+      "process.stdin.on('data',chunk=>input+=chunk);",
+      "process.stdin.on('end',()=>{",
+      "require('node:fs').appendFileSync(process.argv[1],input);",
+      "process.stdout.write(JSON.stringify({decision:'deny'}));",
+      "});"
+    ].join('');
+    const events = [
+      ['pre-compact', 'PreCompact', 'manual'],
+      ['post-compact', 'PostCompact', 'manual'],
+      ['subagent-start', 'SubagentStart', 'explore'],
+      ['subagent-stop', 'SubagentStop', 'explore']
+    ];
+    const runner = new HookRunner(events.map(([name, event, matcher]) =>
+      resolvedHook({
+        name,
+        event,
+        matcher,
+        code,
+        args: [output]
+      })
+    ));
+
+    for (const [, event, subject] of events) {
+      const run = await collectGenerator(runner.run(
+        invocation(event, directory, {
+          subject,
+          payload: event.includes('Compact')
+            ? { reason: subject, beforeTokens: 10, afterTokens: 5 }
+            : {
+                subagentId: 'bounded-id',
+                role: subject,
+                outcome: 'success',
+                toolCalls: 2
+              }
+        }),
+        new AbortController().signal
+      ));
+      assert.equal(run.result.decision, 'continue');
+      assert.equal(run.events.at(-1).outcome, 'success');
+    }
+
+    const payloads = (await readFile(output, 'utf8'))
+      .trim()
+      .split('\n')
+      .map(line => JSON.parse(line));
+    assert.deepEqual(
+      payloads.map(entry => entry.event),
+      events.map(([, event]) => event)
+    );
+    assert.equal(JSON.stringify(payloads).includes('summary'), false);
+    assert.equal(JSON.stringify(payloads).includes('report'), false);
+    const status = runner.getStatus();
+    assert.equal(status.entries.length, 4);
+    assert.equal(status.entries.every(entry =>
+      entry.lastOutcome === 'success' &&
+      typeof entry.lastDurationMs === 'number'
+    ), true);
+  });
+});
+
 test('Hook failures continue by default and fail closed only when configured', async () => {
   await withTempDirectory(async directory => {
     const failingCode = 'process.exitCode=9';

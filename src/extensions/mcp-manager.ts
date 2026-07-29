@@ -20,7 +20,9 @@ import {
 import type {
   McpServerConfig,
   McpServerStatus,
+  McpToolPolicy,
   ResolvedMcpServerConfig,
+  ResolvedMcpToolPolicy,
   StdioMcpServerConfig
 } from './types.js';
 
@@ -68,6 +70,7 @@ export type McpErrorCode =
   | 'timeout'
   | 'cancelled'
   | 'validation'
+  | 'policy_denied'
   | 'remote_error'
   | 'output_limit';
 
@@ -95,6 +98,10 @@ export interface McpCatalogTool {
     openWorldHint?: boolean;
   };
   risk: 'read' | 'execute';
+  riskSource: 'remote-annotation' | 'default' | 'local-policy';
+  policy?: McpToolPolicy;
+  policySources?: Array<'user' | 'project'>;
+  annotationWarning?: string;
   raw: Tool;
 }
 
@@ -123,6 +130,18 @@ export interface McpCallOutput {
   metadata: Record<string, unknown>;
 }
 
+export interface McpServerInspection {
+  status: McpServerStatus;
+  tools: Array<{
+    qualifiedName: string;
+    risk: 'read' | 'execute' | 'disabled';
+    riskSource: McpCatalogTool['riskSource'];
+    policy?: McpToolPolicy;
+    policySources?: Array<'user' | 'project'>;
+    annotationWarning?: string;
+  }>;
+}
+
 export interface McpConnection {
   listTools(signal: AbortSignal): Promise<Tool[]>;
   callTool(
@@ -141,6 +160,8 @@ export interface McpConnectionFactoryOptions {
   forbiddenEnvironmentNames: readonly string[];
   onToolsChanged: () => void;
   onStderr: (chunk: string) => void;
+  onClose: () => void;
+  onError: (error: Error) => void;
 }
 
 export type McpConnectionFactory = (
@@ -157,11 +178,15 @@ interface ServerRuntime {
   connectPromise?: Promise<McpConnection>;
   errorCode?: McpErrorCode;
   stderr: string;
+  generation: number;
+  protocolVersion?: string;
+  lastConnectedAt?: string;
 }
 
 export interface McpManagerOptions {
   workspaceRoot: string;
   servers: ResolvedMcpServerConfig[];
+  toolPolicies?: ResolvedMcpToolPolicy[];
   forbiddenEnvironmentNames?: Iterable<string>;
   connectionFactory?: McpConnectionFactory;
 }
@@ -364,6 +389,8 @@ async function createSdkConnection(
       }
     }
   );
+  client.onclose = options.onClose;
+  client.onerror = options.onError;
 
   try {
     await client.connect(transport, {
@@ -438,6 +465,14 @@ function normalizeMcpError(error: unknown, signal?: AbortSignal): McpError {
   const lowered = message.toLowerCase();
   const code: McpErrorCode = lowered.includes('timeout')
     ? 'timeout'
+    : (
+        lowered.includes('connection') ||
+        lowered.includes('network') ||
+        lowered.includes('socket') ||
+        lowered.includes('closed') ||
+        lowered.includes('econn')
+      )
+      ? 'connection'
     : lowered.includes('invalid') || lowered.includes('schema')
       ? 'protocol'
       : 'remote_error';
@@ -446,7 +481,8 @@ function normalizeMcpError(error: unknown, signal?: AbortSignal): McpError {
 
 function validateCatalogTool(
   serverName: string,
-  value: Tool
+  value: Tool,
+  policy?: ResolvedMcpToolPolicy
 ): McpCatalogTool | undefined {
   if (
     typeof value.name !== 'string' ||
@@ -478,14 +514,40 @@ function validateCatalogTool(
           : {})
       }
     : undefined;
+  const qualifiedName = `${serverName}__${value.name}`;
+  const annotationConflict =
+    annotations?.readOnlyHint === true &&
+    annotations?.destructiveHint === true;
+  const risk = policy?.policy === 'execute'
+    ? 'execute'
+    : annotations?.readOnlyHint === true && !annotationConflict
+      ? 'read'
+      : 'execute';
   return {
-    qualifiedName: `${serverName}__${value.name}`,
+    qualifiedName,
     serverName,
     name: value.name,
     description,
     inputSchema: value.inputSchema as Record<string, unknown>,
     ...(annotations ? { annotations } : {}),
-    risk: annotations?.readOnlyHint === true ? 'read' : 'execute',
+    risk,
+    riskSource: policy?.policy === 'execute'
+      ? 'local-policy'
+      : risk === 'read'
+        ? 'remote-annotation'
+        : 'default',
+    ...(policy
+      ? {
+          policy: policy.policy,
+          policySources: [...policy.sources]
+        }
+      : {}),
+    ...(annotationConflict
+      ? {
+          annotationWarning:
+            'readOnlyHint conflicts with destructiveHint; treated as execute'
+        }
+      : {}),
     raw: value
   };
 }
@@ -608,6 +670,7 @@ export class McpManager {
   private readonly connectionFactory: McpConnectionFactory;
   private readonly forbiddenEnvironmentNames: readonly string[];
   private runtimes = new Map<string, ServerRuntime>();
+  private toolPolicies = new Map<string, ResolvedMcpToolPolicy>();
 
   constructor(options: McpManagerOptions) {
     this.workspaceRoot = options.workspaceRoot;
@@ -615,13 +678,23 @@ export class McpManager {
     this.forbiddenEnvironmentNames = [
       ...new Set(options.forbiddenEnvironmentNames ?? [])
     ];
+    this.toolPolicies = new Map(
+      (options.toolPolicies ?? []).map(policy => [
+        policy.qualifiedName,
+        {
+          ...policy,
+          sources: [...policy.sources]
+        }
+      ])
+    );
     this.runtimes = new Map(
       options.servers.map(server => [
         server.name,
         {
           server,
           state: server.config.enabled ? 'disconnected' : 'disabled',
-          stderr: ''
+          stderr: '',
+          generation: 0
         }
       ])
     );
@@ -635,6 +708,12 @@ export class McpManager {
       state: runtime.server.config.enabled ? runtime.state : 'disabled',
       toolCount: runtime.catalog?.length ?? 0,
       protocolMode: runtime.server.config.protocolMode,
+      ...(runtime.protocolVersion
+        ? { negotiatedProtocolVersion: runtime.protocolVersion }
+        : {}),
+      ...(runtime.lastConnectedAt
+        ? { lastConnectedAt: runtime.lastConnectedAt }
+        : {}),
       ...(runtime.errorCode ? { errorCode: runtime.errorCode } : {})
     }));
   }
@@ -643,15 +722,85 @@ export class McpManager {
     return [...this.runtimes.values()].map(runtime => runtime.server);
   }
 
-  async replaceServers(servers: ResolvedMcpServerConfig[]): Promise<void> {
+  getToolPolicies(): ResolvedMcpToolPolicy[] {
+    return [...this.toolPolicies.values()].map(policy => ({
+      ...policy,
+      sources: [...policy.sources]
+    }));
+  }
+
+  async inspectServer(
+    name: string,
+    signal: AbortSignal
+  ): Promise<McpServerInspection> {
+    const runtime = this.requireRuntime(name);
+    const catalog = await this.ensureCatalog(runtime, signal);
+    const status = this.getStatuses().find(entry => entry.name === name);
+    if (!status) {
+      throw new McpError('not_found', `Unknown MCP server: ${name}`);
+    }
+    const tools: McpServerInspection['tools'] = catalog.map(tool => ({
+      qualifiedName: tool.qualifiedName,
+      risk: tool.risk,
+      riskSource: tool.riskSource,
+      ...(tool.policy ? { policy: tool.policy } : {}),
+      ...(tool.policySources
+        ? { policySources: [...tool.policySources] }
+        : {}),
+      ...(tool.annotationWarning
+        ? { annotationWarning: tool.annotationWarning }
+        : {})
+    }));
+    const visibleNames = new Set(tools.map(tool => tool.qualifiedName));
+    for (const policy of this.toolPolicies.values()) {
+      if (
+        !policy.qualifiedName.startsWith(`${name}__`) ||
+        visibleNames.has(policy.qualifiedName)
+      ) {
+        continue;
+      }
+      tools.push({
+        qualifiedName: policy.qualifiedName,
+        risk: policy.policy,
+        riskSource: 'local-policy',
+        policy: policy.policy,
+        policySources: [...policy.sources]
+      });
+    }
+    tools.sort((left, right) =>
+      left.qualifiedName.localeCompare(right.qualifiedName)
+    );
+    return {
+      status,
+      tools
+    };
+  }
+
+  async replaceServers(
+    servers: ResolvedMcpServerConfig[],
+    toolPolicies: ResolvedMcpToolPolicy[] = []
+  ): Promise<void> {
     const previous = [...this.runtimes.values()];
+    for (const runtime of previous) {
+      runtime.generation += 1;
+    }
+    this.toolPolicies = new Map(
+      toolPolicies.map(policy => [
+        policy.qualifiedName,
+        {
+          ...policy,
+          sources: [...policy.sources]
+        }
+      ])
+    );
     this.runtimes = new Map(
       servers.map(server => [
         server.name,
         {
           server,
           state: server.config.enabled ? 'disconnected' : 'disabled',
-          stderr: ''
+          stderr: '',
+          generation: 0
         }
       ])
     );
@@ -714,13 +863,21 @@ export class McpManager {
     const lines = shown.map(tool => {
       const header = `${tool.qualifiedName} [${tool.risk}]`;
       if (detail === 'names') {
-        return header;
+        return tool.annotationWarning
+          ? `${header}\n[Warning: ${tool.annotationWarning}]`
+          : header;
       }
       if (detail === 'schema') {
         return `${header}\n${tool.description || '(no description)'}\n` +
+          `${tool.annotationWarning
+            ? `[Warning: ${tool.annotationWarning}]\n`
+            : ''}` +
           `Input schema: ${JSON.stringify(tool.inputSchema)}`;
       }
-      return `${header}\n${tool.description || '(no description)'}`;
+      return `${header}\n${tool.description || '(no description)'}` +
+        `${tool.annotationWarning
+          ? `\n[Warning: ${tool.annotationWarning}]`
+          : ''}`;
     });
     if (errors.length > 0) {
       lines.push(
@@ -762,6 +919,13 @@ export class McpManager {
     qualifiedName: string,
     signal: AbortSignal
   ): Promise<McpCatalogTool> {
+    const configuredPolicy = this.toolPolicies.get(qualifiedName);
+    if (configuredPolicy?.policy === 'disabled') {
+      throw new McpError(
+        'policy_denied',
+        `MCP tool is disabled by local policy: ${qualifiedName}`
+      );
+    }
     const separator = qualifiedName.indexOf('__');
     if (separator <= 0) {
       throw new McpError(
@@ -812,13 +976,16 @@ export class McpManager {
     } catch (error) {
       const normalized = normalizeMcpError(error, signal);
       if (
-        runtime.server.config.type === 'stdio' &&
-        (normalized.code === 'timeout' || normalized.code === 'cancelled')
+        normalized.code === 'connection' ||
+        normalized.code === 'protocol' ||
+        normalized.code === 'timeout' ||
+        normalized.code === 'cancelled'
       ) {
+        const cancelled = normalized.code === 'cancelled';
         await this.disconnectRuntime(
           runtime,
-          normalized.code === 'timeout' ? 'error' : 'disconnected',
-          normalized.code === 'timeout' ? 'timeout' : undefined
+          cancelled ? 'disconnected' : 'error',
+          cancelled ? undefined : normalized.code
         );
       }
       if (normalized.code === 'cancelled') {
@@ -830,12 +997,14 @@ export class McpManager {
 
   async reconnect(name: string, signal: AbortSignal): Promise<void> {
     const runtime = this.requireRuntime(name);
+    runtime.generation += 1;
     await runtime.connection?.close().catch(() => undefined);
     runtime.connection = undefined;
     runtime.connectPromise = undefined;
     runtime.catalog = undefined;
     runtime.catalogBytes = undefined;
     runtime.errorCode = undefined;
+    runtime.protocolVersion = undefined;
     runtime.state = runtime.server.config.enabled ? 'disconnected' : 'disabled';
     if (runtime.server.config.enabled) {
       await this.ensureCatalog(runtime, signal);
@@ -870,11 +1039,13 @@ export class McpManager {
   async close(): Promise<void> {
     const runtimes = [...this.runtimes.values()];
     await Promise.all(runtimes.map(async runtime => {
+      runtime.generation += 1;
       await runtime.connection?.close().catch(() => undefined);
       runtime.connection = undefined;
       runtime.connectPromise = undefined;
       runtime.catalog = undefined;
       runtime.catalogBytes = undefined;
+      runtime.protocolVersion = undefined;
       runtime.state = runtime.server.config.enabled ? 'disconnected' : 'disabled';
     }));
   }
@@ -897,10 +1068,13 @@ export class McpManager {
     if (runtime.connection) {
       return runtime.connection;
     }
-    if (!runtime.connectPromise) {
+    let pendingConnection = runtime.connectPromise;
+    if (!pendingConnection) {
       runtime.state = 'connecting';
       runtime.errorCode = undefined;
-      runtime.connectPromise = this.connectionFactory({
+      const generation = runtime.generation + 1;
+      runtime.generation = generation;
+      pendingConnection = this.connectionFactory({
         server: runtime.server,
         workspaceRoot: this.workspaceRoot,
         forbiddenEnvironmentNames: this.forbiddenEnvironmentNames,
@@ -910,21 +1084,65 @@ export class McpManager {
         },
         onStderr: chunk => {
           runtime.stderr = boundedStderr(runtime.stderr, chunk);
+        },
+        onClose: () => {
+          if (runtime.generation !== generation) {
+            return;
+          }
+          runtime.generation += 1;
+          runtime.connection = undefined;
+          runtime.connectPromise = undefined;
+          runtime.catalog = undefined;
+          runtime.catalogBytes = undefined;
+          runtime.protocolVersion = undefined;
+          runtime.state = runtime.server.config.enabled
+            ? 'disconnected'
+            : 'disabled';
+        },
+        onError: () => {
+          if (runtime.generation !== generation) {
+            return;
+          }
+          const connection = runtime.connection;
+          runtime.generation += 1;
+          runtime.connection = undefined;
+          runtime.connectPromise = undefined;
+          runtime.catalog = undefined;
+          runtime.catalogBytes = undefined;
+          runtime.protocolVersion = undefined;
+          runtime.errorCode = 'connection';
+          runtime.state = 'error';
+          void connection?.close().catch(() => undefined);
         }
       }, signal).then(connection => {
+        if (runtime.generation !== generation) {
+          void connection.close().catch(() => undefined);
+          throw new McpError(
+            'connection',
+            `Stale MCP connection discarded for ${runtime.server.name}`
+          );
+        }
         runtime.connection = connection;
         runtime.state = 'ready';
+        runtime.protocolVersion = connection.protocolVersion;
+        runtime.lastConnectedAt = new Date().toISOString();
         runtime.connectPromise = undefined;
         return connection;
       }).catch(error => {
         const normalized = normalizeMcpError(error, signal);
+        if (runtime.generation !== generation) {
+          throw normalized;
+        }
         runtime.errorCode = normalized.code;
         runtime.state = 'error';
         runtime.connectPromise = undefined;
         throw normalized;
       });
+      if (runtime.generation === generation) {
+        runtime.connectPromise = pendingConnection;
+      }
     }
-    return withAbort(runtime.connectPromise, signal);
+    return withAbort(pendingConnection, signal);
   }
 
   private async ensureCatalog(
@@ -943,13 +1161,16 @@ export class McpManager {
       runtime.errorCode = normalized.code;
       runtime.state = 'error';
       if (
-        runtime.server.config.type === 'stdio' &&
-        (normalized.code === 'timeout' || normalized.code === 'cancelled')
+        normalized.code === 'connection' ||
+        normalized.code === 'protocol' ||
+        normalized.code === 'timeout' ||
+        normalized.code === 'cancelled'
       ) {
+        const cancelled = normalized.code === 'cancelled';
         await this.disconnectRuntime(
           runtime,
-          normalized.code === 'timeout' ? 'error' : 'disconnected',
-          normalized.code === 'timeout' ? 'timeout' : undefined
+          cancelled ? 'disconnected' : 'error',
+          cancelled ? undefined : normalized.code
         );
       }
       throw normalized;
@@ -966,7 +1187,17 @@ export class McpManager {
     const seen = new Set<string>();
     let catalogBytes = 0;
     const catalog = rawTools.flatMap(value => {
-      const tool = validateCatalogTool(runtime.server.name, value);
+      const qualifiedName =
+        `${runtime.server.name}__${typeof value.name === 'string' ? value.name : ''}`;
+      const policy = this.toolPolicies.get(qualifiedName);
+      if (policy?.policy === 'disabled') {
+        return [];
+      }
+      const tool = validateCatalogTool(
+        runtime.server.name,
+        value,
+        policy
+      );
       if (!tool || seen.has(tool.qualifiedName)) {
         return [];
       }
@@ -1013,10 +1244,12 @@ export class McpManager {
     errorCode?: McpErrorCode
   ): Promise<void> {
     const connection = runtime.connection;
+    runtime.generation += 1;
     runtime.connection = undefined;
     runtime.connectPromise = undefined;
     runtime.catalog = undefined;
     runtime.catalogBytes = undefined;
+    runtime.protocolVersion = undefined;
     runtime.state = state;
     runtime.errorCode = errorCode;
     await connection?.close().catch(() => undefined);

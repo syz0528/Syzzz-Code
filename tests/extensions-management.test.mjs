@@ -114,6 +114,34 @@ test('MCP management supports lifecycle operations without printing secrets', ()
     assertSucceeded(enabled);
     assert.equal(JSON.parse(enabled.stdout).action, 'enable');
 
+    const policy = runCli(home, workspace, [
+      'mcp',
+      'policy',
+      'fixture',
+      'mutate',
+      'disabled',
+      '--json'
+    ]);
+    assertSucceeded(policy);
+    assert.deepEqual(JSON.parse(policy.stdout), {
+      action: 'policy',
+      server: 'fixture',
+      tool: 'mutate',
+      policy: 'disabled',
+      scope: 'user'
+    });
+
+    const resetPolicy = runCli(home, workspace, [
+      'mcp',
+      'policy',
+      'fixture',
+      'mutate',
+      'reset',
+      '--json'
+    ]);
+    assertSucceeded(resetPolicy);
+    assert.equal(JSON.parse(resetPolicy.stdout).policy, 'reset');
+
     const removed = runCli(home, workspace, [
       'mcp',
       'remove',
@@ -122,6 +150,44 @@ test('MCP management supports lifecycle operations without printing secrets', ()
     ]);
     assertSucceeded(removed);
     assert.equal(JSON.parse(removed.stdout).action, 'removed');
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('extensions status is offline, structured, and does not expose secrets', () => {
+  const root = mkdtempSync(join(tmpdir(), 'syzzz-extension-status-'));
+  const home = join(root, 'home');
+  const workspace = join(root, 'workspace');
+  mkdirSync(join(home, '.syzzz-code'), { recursive: true });
+  mkdirSync(workspace, { recursive: true });
+  writeFileSync(
+    join(home, '.syzzz-code', 'mcp.json'),
+    JSON.stringify({
+      mcpServers: {
+        fixture: {
+          command: process.execPath,
+          env: { TOKEN: '${MCP_SOURCE_SECRET}' }
+        }
+      }
+    }),
+    'utf8'
+  );
+  try {
+    const result = runCli(home, workspace, [
+      'extensions',
+      'status',
+      '--json'
+    ]);
+    assertSucceeded(result);
+    const status = JSON.parse(result.stdout);
+    assert.equal(status.trustState, 'untrusted');
+    assert.equal(status.mcp.configured, 1);
+    assert.equal(status.mcp.servers[0].state, 'disconnected');
+    assert.doesNotMatch(
+      result.stdout,
+      /resolved-but-never-printed|MCP_SOURCE_SECRET/
+    );
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
@@ -233,4 +299,5 @@ test('CLI help exposes MCP and Hook management commands', () => {
   assertSucceeded(result);
   assert.match(result.stdout, /\bmcp\b/);
   assert.match(result.stdout, /\bhooks\b/);
+  assert.match(result.stdout, /\bextensions\b/);
 });

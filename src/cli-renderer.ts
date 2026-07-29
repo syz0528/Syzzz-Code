@@ -257,7 +257,11 @@ export class HumanEventRenderer {
         if (event.outcome !== 'success') {
           this.writeLine(chalk.yellow(
             `Subagent ${event.role} ${event.outcome}` +
-            `${event.errorCode ? ` (${event.errorCode})` : ''}`
+            `${event.stopReason
+              ? ` (${event.stopReason})`
+              : event.errorCode
+                ? ` (${event.errorCode})`
+                : ''}`
           ));
         }
         break;

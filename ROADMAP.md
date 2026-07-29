@@ -2,8 +2,8 @@
 
 **制定日期：** 2026-06-16
 **最近更新：** 2026-07-29
-**适用基线：** `1.0.0` / Phase 3 冻结提交 `029e718`
-**当前入口：** Phase 5 已完成实现与自动化验证，等待人工扩展 dogfood
+**适用基线：** `1.0.0` / Phase 4 冻结提交 `3d2b8e6`
+**当前入口：** Phase 5.1 已完成实现与自动化验证，状态为 **Validated**，等待人工扩展 dogfood
 
 > 路线图描述实施顺序和验收边界。当前代码事实以 [`README.md`](README.md) 和 [`CURRENT_STATUS.md`](CURRENT_STATUS.md) 为准。
 
@@ -608,13 +608,13 @@ RepoMap 按需调用，不自动注入每个 prompt。
 
 ## 10. Phase 5：可信扩展运行时、MCP Broker 与受限委派
 
-**状态：** 实现和自动化验证完成，等待人工 dogfood，尚未 Frozen。
+**状态：** Phase 5.0 Core 已建立非冻结检查点；Phase 5.1 加固实现与自动化验证完成，状态为 **Validated**，等待人工 dogfood，尚未 Frozen。
 
 ### 目标
 
 在统一权限、事件、上下文和会话系统之上扩展生态，同时确保外部能力不能绕过已有安全边界。
 
-### 10.1 Phase 5.0：可信 MCP Broker
+### 10.1 Phase 5.0 Core-A：可信 MCP Broker
 
 - [x] 精确锁定 `@modelcontextprotocol/client@2.0.0`；
 - [x] 路径级 workspace trust 与原子信任记录；
@@ -629,7 +629,7 @@ RepoMap 按需调用，不自动注入每个 prompt。
 - [x] MCP 调用不重试，结果和错误标记为不可信外部数据；
 - [x] `syzzz mcp ...`、`/mcp`、`/trust` 与 `/untrust`。
 
-### 10.2 Phase 5.1：可信命令 Hooks
+### 10.2 Phase 5.0 Core-B：可信命令 Hooks
 
 - [x] `PreTurn | PreToolUse | PostToolUse | TurnCompleted | TurnFailed | TurnCancelled`；
 - [x] 用户优先、项目随后、项目同名覆盖；
@@ -641,7 +641,7 @@ RepoMap 按需调用，不自动注入每个 prompt。
 - [x] 终态 Hook 在唯一 turn 终态之前结束，失败不改变既定结果；
 - [x] `syzzz hooks ...` 与 `/hooks`。
 
-### 10.3 Phase 5.2：只读 Subagent
+### 10.3 Phase 5.0 Core-C：只读 Subagent
 
 - [x] `Delegate({role:'explore'|'review',task})`；
 - [x] Provider 隔离 fork，不支持 fork 时不暴露 Delegate；
@@ -654,7 +654,19 @@ RepoMap 按需调用，不自动注入每个 prompt。
 - [x] 不输出或持久化完整 Subagent transcript；
 - [x] `/agents on|off` 与 `subagents.enabled`。
 
-### 10.4 克制边界
+### 10.4 Phase 5.1：扩展信任闭环、MCP 策略与受限委派加固
+
+- [x] Workspace Trust V2 使用规范化配置摘要，legacy V1 和配置变化进入 `review-required`；
+- [x] 确认期二次摘要校验，配置变化、损坏或缺失立即停用项目扩展；
+- [x] MCP `execute | disabled` 本地收紧策略、冲突 annotation fail closed 和检查命令；
+- [x] MCP `onclose/onerror` 状态清理、调用不重放和下一次独立操作惰性重连；
+- [x] `/extensions`、离线 `extensions status --json`、逐 MCP/Hook 状态与准确 reload 结果；
+- [x] `PreCompact | PostCompact | SubagentStart | SubagentStop` 被动 Hook 及 payload 隐私；
+- [x] Subagent 工具调用、Provider 请求、软硬时间和 token 预算；
+- [x] `partial`、`stopReason`、Provider 调用数和报告截断事件语义；
+- [x] Phase 5.0 Core 非冻结检查点 `000bcaa`。
+
+### 10.5 克制边界
 
 本阶段明确不实现：
 
@@ -666,15 +678,15 @@ RepoMap 按需调用，不自动注入每个 prompt。
 
 ### Phase 5 退出条件
 
-- [x] 238 项自动化测试全部通过；
+- [x] 253 项自动化测试全部通过；
 - [x] stdio legacy/modern 与 Streamable HTTP 传输级回归；
-- [x] MCP 工具不能绕过模式、权限与审批；
+- [x] MCP 工具不能绕过模式、权限、审批或 disabled 策略；
 - [x] Hooks 具有确定顺序、失败策略和进程上限；
-- [x] Subagent 的预算、权限、深度和生命周期受父任务控制；
+- [x] Subagent 的工具、Provider、token、时间、权限、深度和生命周期受父任务控制；
 - [x] NDJSON、审计和会话隐私边界有自动化回归；
 - [x] README、CURRENT_STATUS、SECURITY 与扩展指南同步；
 - [x] 生产依赖审计、npm 包 allowlist、diff-check 与离线 doctor 通过；
-- [ ] 使用真实终端与 Provider 完成 Phase 5 dogfood；
+- [ ] 使用真实终端与 Provider 完成 Phase 5.1 dogfood；
 - [ ] 人工验收通过后标记 **Frozen** 并推送分支。
 
 ## 11. Phase 6：持续评测、发布与工程治理
@@ -825,7 +837,10 @@ RepoMap 按需调用，不自动注入每个 prompt。
 - [x] 完成 MCP Broker、stdio/HTTP、legacy/modern 与动态风险；
 - [x] 完成有序 Hooks、失败策略、环境脱敏和进程限制；
 - [x] 完成只读 Subagent、Provider fork、预算和父级取消；
-- [x] 扩展自动化套件到 238 项；
+- [x] 完成 Phase 5.0 Core 非冻结检查点；
+- [x] 完成 Trust V2、MCP 策略与连接生命周期加固；
+- [x] 完成扩展状态、生命周期 Hook 与 Subagent 预算闭环；
+- [x] 扩展自动化套件到 253 项；
 - [x] 新增 SECURITY 与扩展使用文档。
 
 ### 当前验收
@@ -833,13 +848,13 @@ RepoMap 按需调用，不自动注入每个 prompt。
 - [x] 全量自动化回归通过；
 - [x] 官方 v2 stdio 与本地 Streamable HTTP 传输回归通过；
 - [x] 环境、NDJSON、审计和管理输出脱敏回归通过；
-- [ ] 完成真实 DeepSeek 的 MCP、Hook 和 Subagent dogfood；
+- [ ] 完成真实 DeepSeek 的 Trust V2、MCP 策略/重连、Hook 和 Subagent 预算 dogfood；
 - [ ] 完成用户人工验收；
 - [ ] 标记 Phase 5 Frozen 并推送 `codex/phase5-extensions`。
 
 ### 下一阶段入口
 
-Phase 5 人工验收通过后进入 Phase 6，重点转向持续评测、跨平台 CI、发布和工程治理，不在 Phase 5 继续扩展生态能力。
+Phase 5.1 人工验收通过并统一冻结 Phase 5 后进入 Phase 6，重点转向持续评测、跨平台 CI、发布和工程治理，不在 Phase 5 继续扩展生态能力。
 
 ## 15. 路线图完成标准
 
