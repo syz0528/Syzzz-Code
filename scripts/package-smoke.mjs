@@ -102,7 +102,10 @@ try {
     }
   );
 
-  const installedRoot = join(prefix, 'node_modules', packageJson.name);
+  const installedRoot =
+    process.platform === 'win32'
+      ? join(prefix, 'node_modules', packageJson.name)
+      : join(prefix, 'lib', 'node_modules', packageJson.name);
   const installedCli = join(installedRoot, 'dist', 'index.js');
   const shim =
     process.platform === 'win32' ? join(prefix, 'syzzz.cmd') : join(prefix, 'bin', 'syzzz');

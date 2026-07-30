@@ -145,41 +145,30 @@ export async function resolveWorkspacePath(
 
   validateWorkspacePathSyntax(inputPath);
 
-  const realWorkspaceRoot = await realpath(resolve(workspaceRoot));
-  const candidatePath = resolve(realWorkspaceRoot, inputPath);
-
-  if (!isWithinDirectory(realWorkspaceRoot, candidatePath)) {
-    throw new WorkspacePathError(
-      `Path is outside the workspace: ${inputPath}`,
-      'OUTSIDE_WORKSPACE'
-    );
-  }
-
-  const relativePath = relative(realWorkspaceRoot, candidatePath);
-  if (isSensitiveRelativePath(relativePath)) {
+  const lexicalWorkspaceRoot = resolve(workspaceRoot);
+  const realWorkspaceRoot = await realpath(lexicalWorkspaceRoot);
+  const candidatePath = resolve(lexicalWorkspaceRoot, inputPath);
+  const lexicallyWithinWorkspace =
+    isWithinDirectory(lexicalWorkspaceRoot, candidatePath) ||
+    isWithinDirectory(realWorkspaceRoot, candidatePath);
+  const relativePath = relative(lexicalWorkspaceRoot, candidatePath);
+  if (lexicallyWithinWorkspace && isSensitiveRelativePath(relativePath)) {
     throw new WorkspacePathError(
       `Access to sensitive path is blocked: ${inputPath}`,
       'SENSITIVE_PATH'
     );
   }
 
-  let resolvedSecurityTarget: string;
-  try {
-    resolvedSecurityTarget = await realpath(candidatePath);
-  } catch (error) {
-    const errorCode =
-      error && typeof error === 'object' && 'code' in error ? String(error.code) : undefined;
-    if (errorCode !== 'ENOENT' || access === 'read') {
-      throw error;
-    }
-
-    const existingAncestor = await findNearestExistingAncestor(candidatePath);
-    resolvedSecurityTarget = await realpath(existingAncestor);
-  }
+  const existingAncestor = await findNearestExistingAncestor(candidatePath);
+  const resolvedAncestor = await realpath(existingAncestor);
+  const unresolvedSuffix = relative(existingAncestor, candidatePath);
+  const resolvedSecurityTarget = resolve(resolvedAncestor, unresolvedSuffix);
 
   if (!isWithinDirectory(realWorkspaceRoot, resolvedSecurityTarget)) {
     throw new WorkspacePathError(
-      `Path escapes the workspace through a symbolic link or junction: ${inputPath}`,
+      lexicallyWithinWorkspace
+        ? `Path escapes the workspace through a symbolic link or junction: ${inputPath}`
+        : `Path is outside the workspace: ${inputPath}`,
       'OUTSIDE_WORKSPACE'
     );
   }
@@ -190,6 +179,10 @@ export async function resolveWorkspacePath(
       `Access to sensitive path through a symbolic link or junction is blocked: ${inputPath}`,
       'SENSITIVE_PATH'
     );
+  }
+
+  if (access === 'read') {
+    await realpath(candidatePath);
   }
 
   return candidatePath;

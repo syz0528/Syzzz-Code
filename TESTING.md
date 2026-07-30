@@ -18,7 +18,7 @@ npm run check
 
 `npm run check` 是本地综合门槛；`smoke:package` 额外安装真实 tarball，耗时更长。Windows 进程、会话锁与 MCP 生命周期可用 `npm run test:stability` 连续执行三轮，任一轮失败都会立即终止。
 
-2026-07-30 的 Phase 6 本地基线为：277/277 项测试、覆盖率最新测得 Lines 83.61%、Branches 76.04%、Functions 86.57%、离线 Provider 契约 37/37、离线 Eval 7/7，以及真实 tarball 安装 smoke 全部通过。
+2026-07-30 的 Phase 6 本地基线为：278/278 项测试、覆盖率最新测得 Lines 83.59%、Branches 76.04%、Functions 86.57%、离线 Provider 契约 37/37、离线 Eval 7/7，以及真实 tarball 安装 smoke 全部通过。
 
 ## 自动化层级
 

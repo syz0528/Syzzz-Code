@@ -93,6 +93,32 @@ test('keeps file access inside the workspace and blocks sensitive paths', async 
   });
 });
 
+test('workspace aliases retain stable relative tool paths after security canonicalization', async (t) => {
+  const root = await mkdtemp(join(tmpdir(), 'syzzz-workspace-alias-'));
+  const actualRoot = join(root, 'actual');
+  const aliasRoot = join(root, 'alias');
+  try {
+    await mkdir(join(actualRoot, 'src'), { recursive: true });
+    await writeFile(join(actualRoot, 'src', 'index.ts'), 'export const value = 1;\n', 'utf8');
+    try {
+      await symlink(actualRoot, aliasRoot, process.platform === 'win32' ? 'junction' : 'dir');
+    } catch (error) {
+      t.skip(`directory aliases are unavailable: ${error.code ?? 'unknown error'}`);
+      return;
+    }
+
+    assert.equal(
+      await resolveWorkspacePath('src/index.ts', aliasRoot, 'read'),
+      join(aliasRoot, 'src', 'index.ts')
+    );
+    const listed = await listDirectoryTool.execute({}, createContext(aliasRoot));
+    assert.match(listed.content, /dir\s+src/u);
+    assert.doesNotMatch(listed.content, /\.\.[\\/]/u);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test('rejects unsafe Windows path syntax without blocking normal drive paths', () => {
   assert.doesNotThrow(() => validateWorkspacePathSyntax('C:\\workspace\\src\\index.ts', 'win32'));
   assert.doesNotThrow(() => validateWorkspacePathSyntax('NUL.txt', 'linux'));
