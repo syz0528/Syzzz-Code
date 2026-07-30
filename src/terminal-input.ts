@@ -40,9 +40,7 @@ export interface SuggestionProvider {
 }
 
 export type TerminalReadResult =
-  | { type: 'line'; value: string }
-  | { type: 'interrupt' }
-  | { type: 'eof' };
+  { type: 'line'; value: string } | { type: 'interrupt' } | { type: 'eof' };
 
 export interface TerminalReadOptions {
   prompt: string;
@@ -138,17 +136,10 @@ export class TerminalInputController {
   private fallbackReaders: Array<(result: TerminalReadResult) => void> = [];
   private closed = false;
 
-  constructor(
-    input: TtyReadable = process.stdin,
-    output: TtyWritable = process.stdout
-  ) {
+  constructor(input: TtyReadable = process.stdin, output: TtyWritable = process.stdout) {
     this.input = input;
     this.output = output;
-    this.enhanced = Boolean(
-      input.isTTY &&
-      output.isTTY &&
-      typeof input.setRawMode === 'function'
-    );
+    this.enhanced = Boolean(input.isTTY && output.isTTY && typeof input.setRawMode === 'function');
 
     if (this.enhanced) {
       emitKeypressEvents(this.input);
@@ -168,7 +159,7 @@ export class TerminalInputController {
         this.fallbackResults.push(result);
       }
     };
-    this.fallback.on('line', line => {
+    this.fallback.on('line', (line) => {
       deliver({ type: 'line', value: line });
     });
     this.fallback.on('SIGINT', () => deliver({ type: 'interrupt' }));
@@ -188,9 +179,7 @@ export class TerminalInputController {
     if (options.signal?.aborted) {
       throw new OperationAbortedError();
     }
-    return this.enhanced
-      ? this.readEnhanced(options)
-      : this.readFallback(options);
+    return this.enhanced ? this.readEnhanced(options) : this.readFallback(options);
   }
 
   close(): void {
@@ -356,8 +345,8 @@ export class TerminalInputController {
           return;
         }
 
-        const provider = options.suggestionProviders?.find(candidate =>
-          candidate.match(value, cursor) !== null
+        const provider = options.suggestionProviders?.find(
+          (candidate) => candidate.match(value, cursor) !== null
         );
         const request = provider?.match(value, cursor);
         if (!provider || !request) {
@@ -368,31 +357,25 @@ export class TerminalInputController {
         const generation = ++suggestionsGeneration;
         const controller = new AbortController();
         suggestionsController = controller;
-        Promise.resolve(provider.suggest(request, controller.signal)).then(items => {
-          if (
-            settled ||
-            controller.signal.aborted ||
-            generation !== suggestionsGeneration
-          ) {
-            return;
-          }
-          suggestions = items.length > 0
-            ? { items, selected: 0 }
-            : undefined;
-          render();
-        }).catch(error => {
-          if (!controller.signal.aborted && !settled) {
-            suggestions = undefined;
+        Promise.resolve(provider.suggest(request, controller.signal))
+          .then((items) => {
+            if (settled || controller.signal.aborted || generation !== suggestionsGeneration) {
+              return;
+            }
+            suggestions = items.length > 0 ? { items, selected: 0 } : undefined;
             render();
-          }
-          void error;
-        });
+          })
+          .catch((error) => {
+            if (!controller.signal.aborted && !settled) {
+              suggestions = undefined;
+              render();
+            }
+            void error;
+          });
         render();
       };
       const replaceWithSuggestion = (item: SuggestionItem) => {
-        value = value.slice(0, item.replaceStart) +
-          item.insertText +
-          value.slice(item.replaceEnd);
+        value = value.slice(0, item.replaceStart) + item.insertText + value.slice(item.replaceEnd);
         cursor = item.replaceStart + item.insertText.length;
         historyIndex = this.history.length;
         dismissedValue = undefined;
@@ -418,9 +401,7 @@ export class TerminalInputController {
           historyDraft = value;
         }
         historyIndex = Math.max(0, Math.min(nextIndex, this.history.length));
-        value = historyIndex === this.history.length
-          ? historyDraft
-          : this.history[historyIndex];
+        value = historyIndex === this.history.length ? historyDraft : this.history[historyIndex];
         cursor = value.length;
         dismissedValue = undefined;
         refreshSuggestions();

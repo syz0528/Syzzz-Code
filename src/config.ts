@@ -164,10 +164,7 @@ function validateBaseURL(value: unknown, fieldPath: string): string {
   return baseURL.replace(/\/$/, '');
 }
 
-function validateEnvironmentVariable(
-  value: unknown,
-  fieldPath: string
-): string | undefined {
+function validateEnvironmentVariable(value: unknown, fieldPath: string): string | undefined {
   if (value === undefined || value === '') {
     return undefined;
   }
@@ -225,9 +222,7 @@ function validateContextConfig(value: unknown): ContextConfig {
     Number(value.defaultWindowTokens) < 16_384 ||
     Number(value.defaultWindowTokens) > 2_000_000
   ) {
-    throw new Error(
-      'context.defaultWindowTokens must be an integer between 16384 and 2000000'
-    );
+    throw new Error('context.defaultWindowTokens must be an integer between 16384 and 2000000');
   }
   return {
     autoCompact: value.autoCompact,
@@ -265,19 +260,11 @@ export function validateConfig(value: unknown): Config {
   if (!isRecord(value)) {
     throw new Error('configuration root must be an object');
   }
-  if (
-    value.schemaVersion !== undefined &&
-    value.schemaVersion !== CONFIG_SCHEMA_VERSION
-  ) {
-    throw new Error(
-      `unsupported configuration schemaVersion: ${String(value.schemaVersion)}`
-    );
+  if (value.schemaVersion !== undefined && value.schemaVersion !== CONFIG_SCHEMA_VERSION) {
+    throw new Error(`unsupported configuration schemaVersion: ${String(value.schemaVersion)}`);
   }
 
-  const currentProvider = requireNonEmptyString(
-    value.currentProvider,
-    'currentProvider'
-  );
+  const currentProvider = requireNonEmptyString(value.currentProvider, 'currentProvider');
   if (!isRecord(value.providers)) {
     throw new Error('providers must be an object');
   }
@@ -288,32 +275,19 @@ export function validateConfig(value: unknown): Config {
     if (!isRecord(providerValue)) {
       throw new Error(`${providerPath} must be an object`);
     }
-    const type = requireNonEmptyString(
-      providerValue.type,
-      `${providerPath}.type`
-    );
+    const type = requireNonEmptyString(providerValue.type, `${providerPath}.type`);
     if (type !== 'anthropic' && type !== 'openai-compatible') {
-      throw new Error(
-        `${providerPath}.type must be "anthropic" or "openai-compatible"`
-      );
+      throw new Error(`${providerPath}.type must be "anthropic" or "openai-compatible"`);
     }
-    if (
-      !Array.isArray(providerValue.models) ||
-      providerValue.models.length === 0
-    ) {
+    if (!Array.isArray(providerValue.models) || providerValue.models.length === 0) {
       throw new Error(`${providerPath}.models must contain at least one model`);
     }
     const models = providerValue.models.map((model, index) =>
       requireNonEmptyString(model, `${providerPath}.models[${index}]`)
     );
-    const model = requireNonEmptyString(
-      providerValue.model,
-      `${providerPath}.model`
-    );
+    const model = requireNonEmptyString(providerValue.model, `${providerPath}.model`);
     if (!models.includes(model)) {
-      throw new Error(
-        `${providerPath}.model must be included in ${providerPath}.models`
-      );
+      throw new Error(`${providerPath}.model must be included in ${providerPath}.models`);
     }
     if (!isRecord(providerValue.env)) {
       throw new Error(`${providerPath}.env must be an object`);
@@ -325,9 +299,7 @@ export function validateConfig(value: unknown): Config {
         throw new Error(`${providerPath}.modelContextWindows must be an object`);
       }
       modelContextWindows = {};
-      for (const [modelId, windowTokens] of Object.entries(
-        providerValue.modelContextWindows
-      )) {
+      for (const [modelId, windowTokens] of Object.entries(providerValue.modelContextWindows)) {
         if (!models.includes(modelId)) {
           throw new Error(
             `${providerPath}.modelContextWindows.${modelId} is not a configured model`
@@ -357,24 +329,15 @@ export function validateConfig(value: unknown): Config {
       models,
       ...(modelContextWindows ? { modelContextWindows } : {}),
       env: {
-        BASE_URL: validateBaseURL(
-          providerValue.env.BASE_URL,
-          `${providerPath}.env.BASE_URL`
-        ),
-        API_KEY: typeof providerValue.env.API_KEY === 'string'
-          ? providerValue.env.API_KEY
-          : '',
-        ...(apiKeyEnvironment
-          ? { API_KEY_ENV: apiKeyEnvironment }
-          : {})
+        BASE_URL: validateBaseURL(providerValue.env.BASE_URL, `${providerPath}.env.BASE_URL`),
+        API_KEY: typeof providerValue.env.API_KEY === 'string' ? providerValue.env.API_KEY : '',
+        ...(apiKeyEnvironment ? { API_KEY_ENV: apiKeyEnvironment } : {})
       }
     };
   }
 
   if (!providers[currentProvider]) {
-    throw new Error(
-      `currentProvider "${currentProvider}" does not exist in providers`
-    );
+    throw new Error(`currentProvider "${currentProvider}" does not exist in providers`);
   }
   return {
     schemaVersion: CONFIG_SCHEMA_VERSION,
@@ -443,8 +406,7 @@ export function ensureConfigDir(): void {
 
 function backupConfig(suffix = 'bak'): string {
   ensureConfigDir();
-  const backupPath =
-    `${CONFIG_FILE}.${Date.now()}.${randomUUID()}.${suffix}`;
+  const backupPath = `${CONFIG_FILE}.${Date.now()}.${randomUUID()}.${suffix}`;
   copyFileSync(CONFIG_FILE, backupPath);
   try {
     chmodSync(backupPath, 0o600);
@@ -474,16 +436,14 @@ export function inspectConfig(): ConfigInspection {
     raw.schemaVersion !== CONFIG_SCHEMA_VERSION
   ) {
     const version =
-      typeof raw.schemaVersion === 'number' &&
-      Number.isSafeInteger(raw.schemaVersion)
+      typeof raw.schemaVersion === 'number' && Number.isSafeInteger(raw.schemaVersion)
         ? String(raw.schemaVersion)
         : 'unknown';
     return {
       status: 'unsupported',
       path: CONFIG_FILE,
       version,
-      reason:
-        `configuration schemaVersion ${version} is not supported by this build`
+      reason: `configuration schemaVersion ${version} is not supported by this build`
     };
   }
   try {
@@ -514,14 +474,14 @@ export function loadConfig(): Config {
   if (inspection.status === 'unsupported') {
     throw new Error(
       `Configuration at ${CONFIG_FILE} uses unsupported schemaVersion ` +
-      `${inspection.version}. Upgrade Syzzz Code before opening this config; ` +
-      'it was not modified.'
+        `${inspection.version}. Upgrade Syzzz Code before opening this config; ` +
+        'it was not modified.'
     );
   }
   if (inspection.status === 'invalid') {
     throw new Error(
       `Invalid configuration at ${CONFIG_FILE}: ${inspection.reason}. ` +
-      'Run "syzzz doctor" for repair guidance.'
+        'Run "syzzz doctor" for repair guidance.'
     );
   }
   if (inspection.legacy) {
@@ -534,16 +494,13 @@ export function loadConfig(): Config {
 export function saveConfig(config: Config): void {
   ensureConfigDir();
   const validatedConfig = validateConfig(config);
-  const temporaryFile =
-    `${CONFIG_FILE}.${process.pid}.${randomUUID()}.tmp`;
+  const temporaryFile = `${CONFIG_FILE}.${process.pid}.${randomUUID()}.tmp`;
   let descriptor: number | undefined;
   try {
     descriptor = openSync(temporaryFile, 'wx', 0o600);
-    writeFileSync(
-      descriptor,
-      `${JSON.stringify(validatedConfig, null, 2)}\n`,
-      { encoding: 'utf8' }
-    );
+    writeFileSync(descriptor, `${JSON.stringify(validatedConfig, null, 2)}\n`, {
+      encoding: 'utf8'
+    });
     fsyncSync(descriptor);
     closeSync(descriptor);
     descriptor = undefined;
@@ -569,7 +526,7 @@ export function repairConfig(): ConfigRepairResult {
   if (inspection.status === 'unsupported') {
     throw new Error(
       `Refusing to overwrite unsupported configuration schemaVersion ` +
-      `${inspection.version}; upgrade Syzzz Code instead`
+        `${inspection.version}; upgrade Syzzz Code instead`
     );
   }
   if (inspection.status === 'valid') {
@@ -610,9 +567,7 @@ export function getCurrentProviderConfig(): ProviderConfigItem {
   const config = loadConfig();
   const current = config.providers[config.currentProvider];
   if (!current) {
-    throw new Error(
-      `Provider ${config.currentProvider} not found in configuration`
-    );
+    throw new Error(`Provider ${config.currentProvider} not found in configuration`);
   }
   return current;
 }

@@ -2,10 +2,7 @@ import chalk from 'chalk';
 import ora from 'ora';
 import type { QueryEngine, ChatOptions } from './engine.js';
 import type { AgentEvent, TurnResult } from './events.js';
-import {
-  consumeAgentTurn,
-  HumanEventRenderer
-} from './cli-renderer.js';
+import { consumeAgentTurn, HumanEventRenderer } from './cli-renderer.js';
 import {
   COMMAND_CATEGORIES,
   COMMAND_CATEGORY_LABELS,
@@ -16,12 +13,7 @@ import {
   type CommandDefinition,
   type CommandExecutionResult
 } from './interactive-commands.js';
-import {
-  AGENT_MODES,
-  DEFAULT_AGENT_MODE,
-  agentModeDescription,
-  type AgentMode
-} from './modes.js';
+import { AGENT_MODES, DEFAULT_AGENT_MODE, agentModeDescription, type AgentMode } from './modes.js';
 import {
   DEFAULT_PERMISSION_MODE,
   formatPermissionModesHelp,
@@ -30,10 +22,7 @@ import {
   permissionModeTitle,
   type PermissionMode
 } from './permissions/mode.js';
-import {
-  TerminalInputController,
-  type TerminalReadResult
-} from './terminal-input.js';
+import { TerminalInputController } from './terminal-input.js';
 import type { SessionController } from './session-controller.js';
 import type { ToolApprovalRequest } from './types.js';
 import { isAbortError, OperationAbortedError } from './tools/abort.js';
@@ -80,10 +69,7 @@ export interface InteractiveSessionOptions {
   availableModels?: readonly string[];
   persistStreamOutput?: (enabled: boolean) => void | Promise<void>;
   persistSubagentsEnabled?: (enabled: boolean) => void | Promise<void>;
-  persistModel?: (
-    model: string,
-    providerId: string
-  ) => void | Promise<void>;
+  persistModel?: (model: string, providerId: string) => void | Promise<void>;
   session?: SessionController;
   getProviderOptions?: () => readonly InteractiveProviderOption[];
   activateProvider?: (
@@ -100,14 +86,19 @@ interface InteractiveCommandContext {
   availableModels: readonly string[];
   persistStreamOutput?: (enabled: boolean) => void | Promise<void>;
   persistSubagentsEnabled?: (enabled: boolean) => void | Promise<void>;
-  persistModel?: (
-    model: string,
-    providerId: string
-  ) => void | Promise<void>;
+  persistModel?: (model: string, providerId: string) => void | Promise<void>;
   session?: SessionController;
   getProviderOptions?: () => readonly InteractiveProviderOption[];
   activateProvider?: InteractiveSessionOptions['activateProvider'];
   modelsForProvider?: (providerId: string) => readonly string[];
+}
+
+function requireSession(commandContext: InteractiveCommandContext): SessionController {
+  const session = commandContext.session;
+  if (!session) {
+    throw new Error('Session commands are unavailable in the current process');
+  }
+  return session;
 }
 
 function formatApprovalRequest(request: ToolApprovalRequest): string {
@@ -116,9 +107,10 @@ function formatApprovalRequest(request: ToolApprovalRequest): string {
     request.description
   ];
   if (request.preview) {
-    const preview = request.preview.length <= MAX_APPROVAL_PREVIEW_CHARACTERS
-      ? request.preview
-      : `${request.preview.slice(0, MAX_APPROVAL_PREVIEW_CHARACTERS)}\n[Preview truncated]`;
+    const preview =
+      request.preview.length <= MAX_APPROVAL_PREVIEW_CHARACTERS
+        ? request.preview
+        : `${request.preview.slice(0, MAX_APPROVAL_PREVIEW_CHARACTERS)}\n[Preview truncated]`;
     lines.push('', preview);
   }
   return lines.join('\n');
@@ -137,22 +129,15 @@ function setEnginePermissionMode(engine: QueryEngine, mode: PermissionMode): voi
 }
 
 function getProviderInfo(engine: QueryEngine) {
-  return typeof engine.getProviderInfo === 'function'
-    ? engine.getProviderInfo()
-    : undefined;
+  return typeof engine.getProviderInfo === 'function' ? engine.getProviderInfo() : undefined;
 }
 
-function buildPrompt(
-  agentMode: AgentMode,
-  permissionMode: PermissionMode
-): string {
+function buildPrompt(agentMode: AgentMode, permissionMode: PermissionMode): string {
   return chalk.blue(`You [${agentMode}|${permissionMode}]: `);
 }
 
 function getEngineMode(engine: QueryEngine): AgentMode {
-  return typeof engine.getMode === 'function'
-    ? engine.getMode()
-    : DEFAULT_AGENT_MODE;
+  return typeof engine.getMode === 'function' ? engine.getMode() : DEFAULT_AGENT_MODE;
 }
 
 function setEngineMode(engine: QueryEngine, mode: AgentMode): void {
@@ -164,7 +149,7 @@ function setEngineMode(engine: QueryEngine, mode: AgentMode): void {
 
 function permissionChoices(engine: QueryEngine): readonly CommandChoice[] {
   const currentMode = getEnginePermissionMode(engine);
-  return (['safe', 'acceptEdits', 'fullAccess'] as const).map(mode => ({
+  return (['safe', 'acceptEdits', 'fullAccess'] as const).map((mode) => ({
     value: mode,
     label: permissionModeTitle(mode),
     description: permissionModeDescription(mode),
@@ -191,17 +176,19 @@ async function handlePermissionsCommand(
     return;
   }
   if (nextMode === currentMode) {
-    console.log(chalk.green(
-      `\nPermission mode is already ${permissionModeTitle(nextMode)} (${nextMode}).\n`
-    ));
+    console.log(
+      chalk.green(`\nPermission mode is already ${permissionModeTitle(nextMode)} (${nextMode}).\n`)
+    );
     return;
   }
 
   if (nextMode === 'fullAccess') {
     console.log(chalk.red('\nWARNING: Full Access disables approval prompts for this session.'));
-    console.log(chalk.yellow(
-      'File tools remain workspace-bound, but Shell can still affect the whole account.'
-    ));
+    console.log(
+      chalk.yellow(
+        'File tools remain workspace-bound, but Shell can still affect the whole account.'
+      )
+    );
     console.log(chalk.yellow('Type y to confirm. Any other input cancels.'));
     const confirmation = await terminal.readLine({
       prompt: chalk.red('Enable Full Access for this session? [y/N]: '),
@@ -211,19 +198,16 @@ async function handlePermissionsCommand(
       console.log(chalk.yellow('\nCancelling the current operation...'));
       throw new OperationAbortedError('Permission command cancelled');
     }
-    if (
-      confirmation.type !== 'line' ||
-      confirmation.value.trim().toLowerCase() !== 'y'
-    ) {
+    if (confirmation.type !== 'line' || confirmation.value.trim().toLowerCase() !== 'y') {
       console.log(chalk.yellow('\nFull Access not enabled. Permission mode unchanged.\n'));
       return;
     }
   }
 
   setEnginePermissionMode(engine, nextMode);
-  console.log(chalk.green(
-    `\nPermission mode set to ${permissionModeTitle(nextMode)} (${nextMode}).`
-  ));
+  console.log(
+    chalk.green(`\nPermission mode set to ${permissionModeTitle(nextMode)} (${nextMode}).`)
+  );
   console.log(chalk.gray('This setting applies only to the current process session.\n'));
 }
 
@@ -264,7 +248,7 @@ function streamChoices(context: InteractiveCommandContext): readonly CommandChoi
 
 function modelChoices(context: InteractiveCommandContext): readonly CommandChoice[] {
   const currentModel = getProviderInfo(context.engine)?.model;
-  return context.availableModels.map(model => ({
+  return context.availableModels.map((model) => ({
     value: model,
     description: model === currentModel ? 'Current model' : undefined,
     current: model === currentModel
@@ -274,28 +258,23 @@ function modelChoices(context: InteractiveCommandContext): readonly CommandChoic
 function formatStatus(context: InteractiveCommandContext): string {
   const status = context.engine.getStatus();
   const sessionStatus = context.session?.getStatus();
-  const extensions = (
-    status as { extensions?: typeof status.extensions }
-  ).extensions;
-  const contextPercent = status.context.contextWindowTokens > 0
-    ? Math.min(
-      100,
-      Math.round(
-        status.context.estimatedInputTokens /
-        status.context.contextWindowTokens *
-        100
-      )
-    )
-    : 0;
+  const extensions = (status as { extensions?: typeof status.extensions }).extensions;
+  const contextPercent =
+    status.context.contextWindowTokens > 0
+      ? Math.min(
+          100,
+          Math.round(
+            (status.context.estimatedInputTokens / status.context.contextWindowTokens) * 100
+          )
+        )
+      : 0;
   const lines = [
     'Session status',
     `  Session:      ${status.sessionId}`,
     `  Workspace:    ${status.workspaceRoot}`,
     `  Provider:     ${status.provider.name} (${status.provider.type})`,
     `  Model:        ${status.provider.model}`,
-    ...(status.lastReportedModel
-      ? [`  Reported:     ${status.lastReportedModel}`]
-      : []),
+    ...(status.lastReportedModel ? [`  Reported:     ${status.lastReportedModel}`] : []),
     `  Work mode:    ${status.mode}`,
     `  Permissions:  ${status.permissionMode}`,
     `  Context:      ${status.context.estimatedInputTokens} / ` +
@@ -316,18 +295,22 @@ function formatStatus(context: InteractiveCommandContext): string {
             (extensions.inactiveProject?.hooks
               ? ` / ${extensions.inactiveProject.hooks} project inactive`
               : ''),
-          `  Subagents:    ${!extensions.subagents.enabled
-            ? 'off'
-            : extensions.subagents.available
-              ? 'available'
-              : 'Provider unsupported'}`,
-          `  Trust:        ${extensions.trustState === 'trusted'
-            ? 'workspace definition trusted'
-            : extensions.trustState === 'review-required'
-              ? 'review required'
-              : extensions.projectConfigurationPresent
-                ? 'project extensions inactive'
-                : 'no project extensions'}`
+          `  Subagents:    ${
+            !extensions.subagents.enabled
+              ? 'off'
+              : extensions.subagents.available
+                ? 'available'
+                : 'Provider unsupported'
+          }`,
+          `  Trust:        ${
+            extensions.trustState === 'trusted'
+              ? 'workspace definition trusted'
+              : extensions.trustState === 'review-required'
+                ? 'review required'
+                : extensions.projectConfigurationPresent
+                  ? 'project extensions inactive'
+                  : 'no project extensions'
+          }`
         ]
       : []),
     ...(sessionStatus
@@ -349,9 +332,7 @@ function formatStatus(context: InteractiveCommandContext): string {
 }
 
 function formatExtensionReload(
-  result: Awaited<ReturnType<
-    NonNullable<ReturnType<QueryEngine['getExtensionRuntime']>>['reload']
-  >>
+  result: Awaited<ReturnType<NonNullable<ReturnType<QueryEngine['getExtensionRuntime']>>['reload']>>
 ): string {
   const lines = [
     `Trust: ${result.trustState}`,
@@ -361,18 +342,13 @@ function formatExtensionReload(
       `${result.hooks.configured} configured, ${result.hooks.error} error`
   ];
   if (result.warnings.length > 0) {
-    lines.push(
-      'Warnings:',
-      ...result.warnings.map(warning => `  ${warning}`)
-    );
+    lines.push('Warnings:', ...result.warnings.map((warning) => `  ${warning}`));
   }
   return lines.join('\n');
 }
 
 function formatExtensionDetails(
-  status: ReturnType<
-    NonNullable<ReturnType<QueryEngine['getExtensionRuntime']>>['getStatus']
-  >
+  status: ReturnType<NonNullable<ReturnType<QueryEngine['getExtensionRuntime']>>['getStatus']>
 ): string {
   const lines = [
     'Extensions',
@@ -382,26 +358,23 @@ function formatExtensionDetails(
   for (const server of status.mcp.servers) {
     lines.push(
       `    ${server.name}: ${server.state}, ${server.toolCount} tools, ` +
-      `${server.protocolMode}` +
-      `${server.negotiatedProtocolVersion
-        ? ` -> ${server.negotiatedProtocolVersion}`
-        : ''} [${server.source}]` +
-      `${server.errorCode ? ` (${server.errorCode})` : ''}`
+        `${server.protocolMode}` +
+        `${
+          server.negotiatedProtocolVersion ? ` -> ${server.negotiatedProtocolVersion}` : ''
+        } [${server.source}]` +
+        `${server.errorCode ? ` (${server.errorCode})` : ''}`
     );
   }
   lines.push(
-    `  Hooks: ${status.hooks.enabled} enabled / ` +
-      `${status.hooks.configured} configured`
+    `  Hooks: ${status.hooks.enabled} enabled / ` + `${status.hooks.configured} configured`
   );
   for (const hook of status.hooks.entries) {
     lines.push(
       `    ${hook.name}: ${hook.event}, ` +
-      `${hook.enabled ? 'enabled' : 'disabled'} [${hook.source}]` +
-      `${hook.lastOutcome ? `, last ${hook.lastOutcome}` : ''}` +
-      `${hook.lastDurationMs === undefined
-        ? ''
-        : ` in ${Math.round(hook.lastDurationMs)}ms`}` +
-      `${hook.lastErrorCode ? ` (${hook.lastErrorCode})` : ''}`
+        `${hook.enabled ? 'enabled' : 'disabled'} [${hook.source}]` +
+        `${hook.lastOutcome ? `, last ${hook.lastOutcome}` : ''}` +
+        `${hook.lastDurationMs === undefined ? '' : ` in ${Math.round(hook.lastDurationMs)}ms`}` +
+        `${hook.lastErrorCode ? ` (${hook.lastErrorCode})` : ''}`
     );
   }
   const budgets = status.subagents.budgets;
@@ -412,15 +385,10 @@ function formatExtensionDetails(
       `tools ${budgets.maxToolCalls}, Provider calls ${budgets.maxProviderCalls}`,
     `    ${budgets.softTokenBudget}/${budgets.hardTokenBudget} tokens, ` +
       `${budgets.softTimeoutMs / 1000}/${budgets.hardTimeoutMs / 1000}s`,
-    ...(budgets.lastStopReason
-      ? [`    last stop: ${budgets.lastStopReason}`]
-      : [])
+    ...(budgets.lastStopReason ? [`    last stop: ${budgets.lastStopReason}`] : [])
   );
   if (status.warnings.length > 0) {
-    lines.push(
-      '  Warnings:',
-      ...status.warnings.map(warning => `    ${warning}`)
-    );
+    lines.push('  Warnings:', ...status.warnings.map((warning) => `    ${warning}`));
   }
   return lines.join('\n');
 }
@@ -430,9 +398,9 @@ function syncSessionContext(context: InteractiveCommandContext): void {
     return;
   }
   context.engine = context.session.engine;
-  context.availableModels = context.modelsForProvider?.(
-    context.session.providerId
-  ) ?? [context.engine.getProviderInfo().model];
+  context.availableModels = context.modelsForProvider?.(context.session.providerId) ?? [
+    context.engine.getProviderInfo().model
+  ];
 }
 
 async function confirmDiscardIfNeeded(
@@ -447,36 +415,28 @@ async function confirmDiscardIfNeeded(
     return true;
   }
   const answer = await context.terminal.readLine({
-    prompt: chalk.yellow(
-      'Current session has unsaved changes. Discard them? [y/N]: '
-    ),
+    prompt: chalk.yellow('Current session has unsaved changes. Discard them? [y/N]: '),
     signal
   });
   if (answer.type === 'interrupt') {
     throw new OperationAbortedError('Session switch cancelled');
   }
-  return answer.type === 'line' &&
-    answer.value.trim().toLowerCase() === 'y';
+  return answer.type === 'line' && answer.value.trim().toLowerCase() === 'y';
 }
 
-function findConfiguredModel(
-  models: readonly string[],
-  requested: string
-): string | undefined {
+function findConfiguredModel(models: readonly string[], requested: string): string | undefined {
   const normalized = requested.trim().toLowerCase();
-  return models.find(model => model.toLowerCase() === normalized);
+  return models.find((model) => model.toLowerCase() === normalized);
 }
 
-function providerChoices(
-  context: InteractiveCommandContext
-): readonly CommandChoice[] {
+function providerChoices(context: InteractiveCommandContext): readonly CommandChoice[] {
   const currentProviderId = context.session?.providerId;
-  return (context.getProviderOptions?.() ?? []).map(provider => ({
+  return (context.getProviderOptions?.() ?? []).map((provider) => ({
     value: provider.id,
     label: provider.name,
     description: provider.available
       ? `${provider.model}${provider.id === currentProviderId ? ' (current)' : ''}`
-      : provider.unavailableReason ?? 'Credentials are not configured',
+      : (provider.unavailableReason ?? 'Credentials are not configured'),
     current: provider.id === currentProviderId
   }));
 }
@@ -502,12 +462,8 @@ async function chooseFromNumberedList<T>(
     return undefined;
   }
   const normalized = answer.value.trim();
-  const selectedIndex = normalized
-    ? Number.parseInt(normalized, 10) - 1
-    : 0;
-  return Number.isInteger(selectedIndex) &&
-    selectedIndex >= 0 &&
-    selectedIndex < values.length
+  const selectedIndex = normalized ? Number.parseInt(normalized, 10) - 1 : 0;
+  return Number.isInteger(selectedIndex) && selectedIndex >= 0 && selectedIndex < values.length
     ? values[selectedIndex]
     : undefined;
 }
@@ -519,16 +475,14 @@ function formatCommandsHelp(
   const lines = ['Available commands:'];
   const commands = registry.search('', context);
   for (const category of COMMAND_CATEGORIES) {
-    const categoryCommands = commands.filter(
-      command => command.category === category
-    );
+    const categoryCommands = commands.filter((command) => command.category === category);
     if (categoryCommands.length === 0) {
       continue;
     }
     lines.push('', `${COMMAND_CATEGORY_LABELS[category]}:`);
     for (const command of categoryCommands) {
       const aliases = command.aliases?.length
-        ? ` (aliases: ${command.aliases.map(alias => `/${alias}`).join(', ')})`
+        ? ` (aliases: ${command.aliases.map((alias) => `/${alias}`).join(', ')})`
         : '';
       const hint = command.argumentHint ? ` ${command.argumentHint}` : '';
       lines.push(`  /${command.name}${hint}${aliases}`);
@@ -539,9 +493,7 @@ function formatCommandsHelp(
   return lines.join('\n');
 }
 
-function createCommandRegistry(
-  context: InteractiveCommandContext
-): CommandRegistry<InteractiveCommandContext> {
+function createCommandRegistry(): CommandRegistry<InteractiveCommandContext> {
   const registry = new CommandRegistry<InteractiveCommandContext>();
   const register = (command: CommandDefinition<InteractiveCommandContext>) =>
     registry.register(command);
@@ -557,9 +509,7 @@ function createCommandRegistry(
         setEngineMode(commandContext.engine, mode);
         await commandContext.session?.stateChanged();
         console.log(chalk.green(`\nWork mode set to ${mode}.\n`));
-        return argument
-          ? { submitMessage: argument }
-          : 'continue';
+        return argument ? { submitMessage: argument } : 'continue';
       }
     });
   }
@@ -582,21 +532,17 @@ function createCommandRegistry(
     priority: COMMAND_PRIORITIES.new,
     description: 'Start a new session while preserving the current saved session.',
     argumentHint: '[title]',
-    isEnabled: commandContext => Boolean(commandContext.session),
-    async execute(
-      argument,
-      commandContext,
-      signal
-    ): Promise<CommandExecutionResult> {
-      if (!await confirmDiscardIfNeeded(commandContext, signal)) {
+    isEnabled: (commandContext) => Boolean(commandContext.session),
+    async execute(argument, commandContext, signal): Promise<CommandExecutionResult> {
+      if (!(await confirmDiscardIfNeeded(commandContext, signal))) {
         console.log(chalk.yellow('\nNew session cancelled.\n'));
         return 'continue';
       }
-      const result = await commandContext.session!.newSession(argument);
+      const result = await requireSession(commandContext).newSession(argument);
       syncSessionContext(commandContext);
-      console.log(chalk.green(
-        `\nStarted session ${result.sessionId.slice(0, 8)} (${result.title}).\n`
-      ));
+      console.log(
+        chalk.green(`\nStarted session ${result.sessionId.slice(0, 8)} (${result.title}).\n`)
+      );
       if (result.warning) {
         console.log(chalk.yellow(`${result.warning}\n`));
       }
@@ -610,16 +556,13 @@ function createCommandRegistry(
     priority: COMMAND_PRIORITIES.resume,
     description: 'Resume a saved session in the current workspace.',
     argumentHint: '[id-or-prefix]',
-    isEnabled: commandContext => Boolean(commandContext.session),
-    async execute(
-      argument,
-      commandContext,
-      signal
-    ): Promise<CommandExecutionResult> {
+    isEnabled: (commandContext) => Boolean(commandContext.session),
+    async execute(argument, commandContext, signal): Promise<CommandExecutionResult> {
       let selection = argument;
       if (!selection) {
-        const sessions = (await commandContext.session!.list())
-          .filter(session => session.available);
+        const sessions = (await requireSession(commandContext).list()).filter(
+          (session) => session.available
+        );
         if (sessions.length === 0) {
           console.log(chalk.yellow('\nNo saved sessions for this workspace.\n'));
           return 'continue';
@@ -640,15 +583,13 @@ function createCommandRegistry(
         }
         selection = selected.sessionId;
       }
-      if (!await confirmDiscardIfNeeded(commandContext, signal)) {
+      if (!(await confirmDiscardIfNeeded(commandContext, signal))) {
         console.log(chalk.yellow('\nResume cancelled.\n'));
         return 'continue';
       }
-      const result = await commandContext.session!.resume(selection);
+      const result = await requireSession(commandContext).resume(selection);
       syncSessionContext(commandContext);
-      console.log(chalk.green(
-        `\nResumed ${result.title} [${result.sessionId.slice(0, 8)}].`
-      ));
+      console.log(chalk.green(`\nResumed ${result.title} [${result.sessionId.slice(0, 8)}].`));
       console.log(chalk.gray('Permission mode reset to safe.\n'));
       if (result.warning) {
         console.log(chalk.yellow(`${result.warning}\n`));
@@ -663,16 +604,13 @@ function createCommandRegistry(
     priority: COMMAND_PRIORITIES.rename,
     description: 'Rename the current session.',
     argumentHint: '<title>',
-    isEnabled: commandContext => Boolean(commandContext.session),
-    async execute(
-      argument,
-      commandContext
-    ): Promise<CommandExecutionResult> {
+    isEnabled: (commandContext) => Boolean(commandContext.session),
+    async execute(argument, commandContext): Promise<CommandExecutionResult> {
       if (!argument) {
         console.log(chalk.red('\nUse: /rename <title>\n'));
         return 'continue';
       }
-      await commandContext.session!.rename(argument);
+      await requireSession(commandContext).rename(argument);
       console.log(chalk.green(`\nSession renamed to ${argument.trim()}.\n`));
       return 'continue';
     }
@@ -683,15 +621,10 @@ function createCommandRegistry(
     category: 'session',
     priority: COMMAND_PRIORITIES.save,
     description: 'Persist the current session immediately.',
-    isEnabled: commandContext => Boolean(commandContext.session),
-    async execute(
-      _argument,
-      commandContext
-    ): Promise<CommandExecutionResult> {
-      const metadata = await commandContext.session!.save();
-      console.log(chalk.green(
-        `\nSaved ${metadata.title} [${metadata.sessionId.slice(0, 8)}].\n`
-      ));
+    isEnabled: (commandContext) => Boolean(commandContext.session),
+    async execute(_argument, commandContext): Promise<CommandExecutionResult> {
+      const metadata = await requireSession(commandContext).save();
+      console.log(chalk.green(`\nSaved ${metadata.title} [${metadata.sessionId.slice(0, 8)}].\n`));
       return 'continue';
     }
   });
@@ -701,11 +634,7 @@ function createCommandRegistry(
     category: 'session',
     priority: COMMAND_PRIORITIES.compact,
     description: 'Compact the current conversation context now.',
-    async execute(
-      _argument,
-      commandContext,
-      signal
-    ): Promise<CommandExecutionResult> {
+    async execute(_argument, commandContext, signal): Promise<CommandExecutionResult> {
       if (typeof commandContext.engine.compactContext !== 'function') {
         throw new Error('The current engine does not support manual compaction');
       }
@@ -733,14 +662,16 @@ function createCommandRegistry(
       }
       if (result.status === 'completed') {
         await commandContext.session?.stateChanged();
-        console.log(chalk.green(
-          `\nContext compacted ${result.beforeTokens} -> ` +
-          `${result.afterTokens} tokens (${result.compactions} pass(es)).\n`
-        ));
+        console.log(
+          chalk.green(
+            `\nContext compacted ${result.beforeTokens} -> ` +
+              `${result.afterTokens} tokens (${result.compactions} pass(es)).\n`
+          )
+        );
       } else if (result.status === 'skipped') {
-        console.log(chalk.yellow(
-          `\nContext compaction skipped: ${result.reason.replaceAll('_', ' ')}.\n`
-        ));
+        console.log(
+          chalk.yellow(`\nContext compaction skipped: ${result.reason.replaceAll('_', ' ')}.\n`)
+        );
       } else if (result.status === 'cancelled') {
         throw new OperationAbortedError(result.reason);
       } else {
@@ -757,12 +688,8 @@ function createCommandRegistry(
     description: 'Switch to another configured Provider.',
     argumentHint: '[provider]',
     choices: providerChoices,
-    isEnabled: commandContext => Boolean(commandContext.activateProvider),
-    async execute(
-      argument,
-      commandContext,
-      signal
-    ): Promise<CommandExecutionResult> {
+    isEnabled: (commandContext) => Boolean(commandContext.activateProvider),
+    async execute(argument, commandContext, signal): Promise<CommandExecutionResult> {
       let providerId = argument?.trim();
       const providers = commandContext.getProviderOptions?.() ?? [];
       if (!providerId) {
@@ -782,32 +709,38 @@ function createCommandRegistry(
         }
         providerId = selected.id;
       }
+      if (!providerId) {
+        throw new Error('Provider selection did not return a provider identifier');
+      }
       const configured = providers.find(
-        provider => provider.id.toLowerCase() === providerId!.toLowerCase()
+        (provider) => provider.id.toLowerCase() === providerId.toLowerCase()
       );
       if (!configured) {
         console.log(chalk.red(`\nUnknown provider: ${providerId}\n`));
         return 'continue';
       }
       if (!configured.available) {
-        console.log(chalk.red(
-          `\nProvider is unavailable: ` +
-          `${configured.unavailableReason ?? 'credentials are missing'}\n`
-        ));
+        console.log(
+          chalk.red(
+            `\nProvider is unavailable: ` +
+              `${configured.unavailableReason ?? 'credentials are missing'}\n`
+          )
+        );
         return 'continue';
       }
-      const activated = await commandContext.activateProvider!(
-        configured.id,
-        commandContext.engine
-      );
-      await commandContext.session?.setProviderReference(
-        activated.providerId
-      );
+      const activateProvider = commandContext.activateProvider;
+      if (!activateProvider) {
+        throw new Error('Provider switching is unavailable in the current process');
+      }
+      const activated = await activateProvider(configured.id, commandContext.engine);
+      await commandContext.session?.setProviderReference(activated.providerId);
       commandContext.availableModels = activated.models;
-      console.log(chalk.green(
-        `\nProvider switched to ${configured.name} ` +
-        `(${commandContext.engine.getProviderInfo().model}).\n`
-      ));
+      console.log(
+        chalk.green(
+          `\nProvider switched to ${configured.name} ` +
+            `(${commandContext.engine.getProviderInfo().model}).\n`
+        )
+      );
       return 'continue';
     }
   });
@@ -821,9 +754,9 @@ function createCommandRegistry(
     choices: streamChoices,
     async execute(argument, commandContext): Promise<CommandExecutionResult> {
       if (!argument) {
-        console.log(chalk.cyan(
-          `\nStream display is ${commandContext.streamOutput ? 'on' : 'off'}.`
-        ));
+        console.log(
+          chalk.cyan(`\nStream display is ${commandContext.streamOutput ? 'on' : 'off'}.`)
+        );
         console.log(chalk.gray('Use: /stream on | /stream off\n'));
         return 'continue';
       }
@@ -842,9 +775,7 @@ function createCommandRegistry(
       await commandContext.persistStreamOutput?.(enabled);
       commandContext.streamOutput = enabled;
       console.log(chalk.green(`\nStream display set to ${normalized}.`));
-      console.log(chalk.gray(
-        'Provider streaming and AgentEvent delivery remain enabled.\n'
-      ));
+      console.log(chalk.gray('Provider streaming and AgentEvent delivery remain enabled.\n'));
       return 'continue';
     }
   });
@@ -855,12 +786,8 @@ function createCommandRegistry(
     priority: COMMAND_PRIORITIES.permissions,
     description: 'View or change the session permission mode.',
     argumentHint: '[safe|acceptEdits|fullAccess]',
-    choices: commandContext => permissionChoices(commandContext.engine),
-    async execute(
-      argument,
-      commandContext,
-      signal
-    ): Promise<CommandExecutionResult> {
+    choices: (commandContext) => permissionChoices(commandContext.engine),
+    async execute(argument, commandContext, signal): Promise<CommandExecutionResult> {
       await handlePermissionsCommand(
         commandContext.engine,
         argument,
@@ -877,17 +804,16 @@ function createCommandRegistry(
     priority: COMMAND_PRIORITIES.extensions,
     description: 'Show or reload the complete extension runtime.',
     argumentHint: '[reload]',
-    isEnabled: commandContext =>
+    isEnabled: (commandContext) =>
       typeof commandContext.engine.getExtensionRuntime === 'function' &&
       Boolean(commandContext.engine.getExtensionRuntime()),
-    choices: () => [{
-      value: 'reload',
-      description: 'Re-evaluate trust and reload MCP and Hooks'
-    }],
-    async execute(
-      argument,
-      commandContext
-    ): Promise<CommandExecutionResult> {
+    choices: () => [
+      {
+        value: 'reload',
+        description: 'Re-evaluate trust and reload MCP and Hooks'
+      }
+    ],
+    async execute(argument, commandContext): Promise<CommandExecutionResult> {
       const runtime = commandContext.engine.getExtensionRuntime?.();
       if (!runtime) {
         console.log(chalk.yellow('\nExtension runtime is unavailable.\n'));
@@ -904,9 +830,7 @@ function createCommandRegistry(
         console.log(chalk.red('\nUse: /extensions [reload]\n'));
         return 'continue';
       }
-      console.log(chalk.cyan('\n' + formatExtensionDetails(
-        runtime.getStatus()
-      ) + '\n'));
+      console.log(chalk.cyan('\n' + formatExtensionDetails(runtime.getStatus()) + '\n'));
       return 'continue';
     }
   });
@@ -917,31 +841,27 @@ function createCommandRegistry(
     priority: COMMAND_PRIORITIES.mcp,
     description: 'Show, reload, or reconnect configured MCP servers.',
     argumentHint: '[reload|reconnect <server>|inspect <server>]',
-    isEnabled: commandContext =>
+    isEnabled: (commandContext) =>
       typeof commandContext.engine.getExtensionRuntime === 'function' &&
       Boolean(commandContext.engine.getExtensionRuntime()),
-    choices: commandContext => {
+    choices: (commandContext) => {
       const runtime = commandContext.engine.getExtensionRuntime?.();
       const servers = runtime?.mcp.getStatuses() ?? [];
       return [
         { value: 'reload', description: 'Reload extension configuration' },
-        ...servers.map(server => ({
+        ...servers.map((server) => ({
           value: `inspect ${server.name}`,
           label: `inspect ${server.name}`,
           description: 'Show effective MCP tool risks and policies'
         })),
-        ...servers.map(server => ({
+        ...servers.map((server) => ({
           value: `reconnect ${server.name}`,
           label: `reconnect ${server.name}`,
           description: `${server.state}; ${server.toolCount} tools`
         }))
       ];
     },
-    async execute(
-      argument,
-      commandContext,
-      signal
-    ): Promise<CommandExecutionResult> {
+    async execute(argument, commandContext, signal): Promise<CommandExecutionResult> {
       const runtime = commandContext.engine.getExtensionRuntime?.();
       if (!runtime) {
         console.log(chalk.yellow('\nExtension runtime is unavailable.\n'));
@@ -964,10 +884,12 @@ function createCommandRegistry(
         console.log(chalk.cyan(`\nMCP ${name}\n`));
         console.log(
           `  State: ${inspection.status.state}\n` +
-          `  Protocol: ${inspection.status.protocolMode}` +
-          `${inspection.status.negotiatedProtocolVersion
-            ? ` -> ${inspection.status.negotiatedProtocolVersion}`
-            : ''}\n`
+            `  Protocol: ${inspection.status.protocolMode}` +
+            `${
+              inspection.status.negotiatedProtocolVersion
+                ? ` -> ${inspection.status.negotiatedProtocolVersion}`
+                : ''
+            }\n`
         );
         if (inspection.tools.length === 0) {
           console.log(chalk.gray('  No enabled tools.\n'));
@@ -976,11 +898,9 @@ function createCommandRegistry(
         for (const tool of inspection.tools) {
           console.log(
             `  ${tool.qualifiedName}: ${tool.risk} ` +
-            `(${tool.riskSource})` +
-            `${tool.policy ? ` policy=${tool.policy}` : ''}` +
-            `${tool.policySources
-              ? ` [${tool.policySources.join('+')}]`
-              : ''}`
+              `(${tool.riskSource})` +
+              `${tool.policy ? ` policy=${tool.policy}` : ''}` +
+              `${tool.policySources ? ` [${tool.policySources.join('+')}]` : ''}`
           );
           if (tool.annotationWarning) {
             console.log(chalk.yellow(`    ${tool.annotationWarning}`));
@@ -1012,8 +932,8 @@ function createCommandRegistry(
       for (const status of statuses) {
         console.log(
           `  ${status.name.padEnd(20)} ${status.state.padEnd(12)} ` +
-          `${status.transport.padEnd(5)} ${status.toolCount} tools ` +
-          `[${status.source}]`
+            `${status.transport.padEnd(5)} ${status.toolCount} tools ` +
+            `[${status.source}]`
         );
       }
       console.log('');
@@ -1027,17 +947,16 @@ function createCommandRegistry(
     priority: COMMAND_PRIORITIES.hooks,
     description: 'Show or reload configured command Hooks.',
     argumentHint: '[reload]',
-    isEnabled: commandContext =>
+    isEnabled: (commandContext) =>
       typeof commandContext.engine.getExtensionRuntime === 'function' &&
       Boolean(commandContext.engine.getExtensionRuntime()),
-    choices: () => [{
-      value: 'reload',
-      description: 'Reload MCP and Hook configuration'
-    }],
-    async execute(
-      argument,
-      commandContext
-    ): Promise<CommandExecutionResult> {
+    choices: () => [
+      {
+        value: 'reload',
+        description: 'Reload MCP and Hook configuration'
+      }
+    ],
+    async execute(argument, commandContext): Promise<CommandExecutionResult> {
       const runtime = commandContext.engine.getExtensionRuntime?.();
       if (!runtime) {
         console.log(chalk.yellow('\nExtension runtime is unavailable.\n'));
@@ -1064,8 +983,8 @@ function createCommandRegistry(
       for (const hook of status.entries) {
         console.log(
           `  ${hook.name}: ${hook.event}, ` +
-          `${hook.enabled ? 'enabled' : 'disabled'} [${hook.source}]` +
-          `${hook.lastOutcome ? `, last ${hook.lastOutcome}` : ''}`
+            `${hook.enabled ? 'enabled' : 'disabled'} [${hook.source}]` +
+            `${hook.lastOutcome ? `, last ${hook.lastOutcome}` : ''}`
         );
       }
       console.log('');
@@ -1079,12 +998,11 @@ function createCommandRegistry(
     priority: COMMAND_PRIORITIES.agents,
     description: 'Show or toggle bounded read-only subagents.',
     argumentHint: '[on|off]',
-    isEnabled: commandContext =>
+    isEnabled: (commandContext) =>
       typeof commandContext.engine.getExtensionRuntime === 'function' &&
       Boolean(commandContext.engine.getExtensionRuntime()),
-    choices: commandContext => {
-      const status = commandContext.engine.getExtensionRuntime?.()
-        ?.getStatus().subagents;
+    choices: (commandContext) => {
+      const status = commandContext.engine.getExtensionRuntime?.()?.getStatus().subagents;
       return [
         {
           value: 'on',
@@ -1100,10 +1018,7 @@ function createCommandRegistry(
         }
       ];
     },
-    async execute(
-      argument,
-      commandContext
-    ): Promise<CommandExecutionResult> {
+    async execute(argument, commandContext): Promise<CommandExecutionResult> {
       const runtime = commandContext.engine.getExtensionRuntime?.();
       if (!runtime) {
         console.log(chalk.yellow('\nExtension runtime is unavailable.\n'));
@@ -1115,23 +1030,20 @@ function createCommandRegistry(
         console.log(chalk.cyan('\nRead-only subagents\n'));
         console.log(`  Configured: ${status.enabled ? 'on' : 'off'}`);
         console.log(
-          `  Current Provider: ${runtime.supportsSubagents()
-            ? 'supported'
-            : 'unsupported'}\n`
+          `  Current Provider: ${runtime.supportsSubagents() ? 'supported' : 'unsupported'}\n`
         );
         const budgets = status.budgets;
         console.log(
           `  Budget: ${budgets.maxToolRounds} rounds / ` +
-          `${budgets.maxToolCalls} tools / ` +
-          `${budgets.maxProviderCalls} Provider calls`
+            `${budgets.maxToolCalls} tools / ` +
+            `${budgets.maxProviderCalls} Provider calls`
         );
         console.log(
-          `  Tokens: ${budgets.softTokenBudget} soft / ` +
-          `${budgets.hardTokenBudget} hard`
+          `  Tokens: ${budgets.softTokenBudget} soft / ` + `${budgets.hardTokenBudget} hard`
         );
         console.log(
           `  Time:   ${budgets.softTimeoutMs / 1000}s soft / ` +
-          `${budgets.hardTimeoutMs / 1000}s hard`
+            `${budgets.hardTimeoutMs / 1000}s hard`
         );
         if (budgets.lastStopReason) {
           console.log(`  Last stop: ${budgets.lastStopReason}`);
@@ -1146,9 +1058,7 @@ function createCommandRegistry(
       const enabled = normalized === 'on';
       await commandContext.persistSubagentsEnabled?.(enabled);
       runtime.setSubagentsEnabled(enabled);
-      console.log(chalk.green(
-        `\nRead-only subagents ${enabled ? 'enabled' : 'disabled'}.\n`
-      ));
+      console.log(chalk.green(`\nRead-only subagents ${enabled ? 'enabled' : 'disabled'}.\n`));
       return 'continue';
     }
   });
@@ -1158,14 +1068,10 @@ function createCommandRegistry(
     category: 'extensions',
     priority: COMMAND_PRIORITIES.trust,
     description: 'Trust project MCP servers and Hooks for this workspace path.',
-    isEnabled: commandContext =>
+    isEnabled: (commandContext) =>
       typeof commandContext.engine.getExtensionRuntime === 'function' &&
       Boolean(commandContext.engine.getExtensionRuntime()),
-    async execute(
-      _argument,
-      commandContext,
-      signal
-    ): Promise<CommandExecutionResult> {
+    async execute(_argument, commandContext, signal): Promise<CommandExecutionResult> {
       const runtime = commandContext.engine.getExtensionRuntime?.();
       if (!runtime) {
         return 'continue';
@@ -1175,9 +1081,7 @@ function createCommandRegistry(
       if (status.workspaceTrusted) {
         const loadedDigest = runtime.getConfiguration().projectDigest;
         if (preview.digest === loadedDigest) {
-          console.log(chalk.green(
-            '\nThis workspace extension definition is already trusted.\n'
-          ));
+          console.log(chalk.green('\nThis workspace extension definition is already trusted.\n'));
           return 'continue';
         }
         await runtime.reload();
@@ -1185,31 +1089,29 @@ function createCommandRegistry(
       }
       if (!preview.valid || preview.warnings.length > 0 || !preview.digest) {
         console.log(chalk.red('\nProject extension configuration is invalid:'));
-        preview.warnings.forEach(warning => console.log(`  ${warning}`));
+        preview.warnings.forEach((warning) => console.log(`  ${warning}`));
         console.log(chalk.gray('\nFix the configuration before trusting it.\n'));
         return 'continue';
       }
       if (preview.lines.length === 0) {
-        console.log(chalk.yellow(
-          '\nNo project MCP or Hooks configuration was found.\n'
-        ));
+        console.log(chalk.yellow('\nNo project MCP or Hooks configuration was found.\n'));
         return 'continue';
       }
       console.log(chalk.yellow('\nWARNING: Trusting project extensions'));
       console.log(
         'The following local commands or remote endpoints can run with your ' +
-        'user account privileges:'
+          'user account privileges:'
       );
-      preview.lines.forEach(line => console.log(`  ${line}`));
+      preview.lines.forEach((line) => console.log(`  ${line}`));
       console.log(`  Review digest: ${preview.digest.slice(0, 12)}`);
       console.log('');
       console.log(
         'Trust is bound to this canonical workspace path and reviewed extension ' +
-        'definition. A configuration change requires another review.'
+          'definition. A configuration change requires another review.'
       );
       console.log(
         'Referenced programs can still change independently. This does not change ' +
-        'Agent mode or permission mode, and it is not an OS sandbox.'
+          'Agent mode or permission mode, and it is not an OS sandbox.'
       );
       const answer = await commandContext.terminal.readLine({
         prompt: chalk.yellow('Trust project extensions for this workspace? [y/N]: '),
@@ -1218,10 +1120,7 @@ function createCommandRegistry(
       if (answer.type === 'interrupt') {
         throw new OperationAbortedError('Workspace trust cancelled');
       }
-      if (
-        answer.type !== 'line' ||
-        (answer.value !== 'y' && answer.value !== 'Y')
-      ) {
+      if (answer.type !== 'line' || (answer.value !== 'y' && answer.value !== 'Y')) {
         console.log(chalk.yellow('\nWorkspace trust cancelled.\n'));
         return 'continue';
       }
@@ -1236,18 +1135,13 @@ function createCommandRegistry(
     category: 'extensions',
     priority: COMMAND_PRIORITIES.untrust,
     description: 'Disable project extensions and remove workspace trust.',
-    isEnabled: commandContext =>
+    isEnabled: (commandContext) =>
       typeof commandContext.engine.getExtensionRuntime === 'function' &&
       Boolean(commandContext.engine.getExtensionRuntime()),
-    async execute(
-      _argument,
-      commandContext
-    ): Promise<CommandExecutionResult> {
+    async execute(_argument, commandContext): Promise<CommandExecutionResult> {
       const runtime = commandContext.engine.getExtensionRuntime?.();
       await runtime?.untrustWorkspace();
-      console.log(chalk.green(
-        '\nProject MCP servers disconnected and project Hooks disabled.\n'
-      ));
+      console.log(chalk.green('\nProject MCP servers disconnected and project Hooks disabled.\n'));
       return 'continue';
     }
   });
@@ -1262,13 +1156,11 @@ function createCommandRegistry(
     async execute(argument, commandContext): Promise<CommandExecutionResult> {
       const providerInfo = getProviderInfo(commandContext.engine);
       if (!argument) {
-        console.log(chalk.cyan(
-          `\nCurrent model: ${providerInfo?.model ?? 'unknown'}`
-        ));
+        console.log(chalk.cyan(`\nCurrent model: ${providerInfo?.model ?? 'unknown'}`));
         if (commandContext.availableModels.length > 0) {
-          console.log(chalk.gray(
-            `Configured models: ${commandContext.availableModels.join(', ')}`
-          ));
+          console.log(
+            chalk.gray(`Configured models: ${commandContext.availableModels.join(', ')}`)
+          );
         }
         console.log(chalk.gray('Use: /model <configured-model>\n'));
         return 'continue';
@@ -1277,9 +1169,9 @@ function createCommandRegistry(
       const nextModel = findConfiguredModel(commandContext.availableModels, argument);
       if (!nextModel) {
         console.log(chalk.red(`\nModel is not configured for this provider: ${argument}`));
-        console.log(chalk.gray(
-          `Available: ${commandContext.availableModels.join(', ') || 'none'}\n`
-        ));
+        console.log(
+          chalk.gray(`Available: ${commandContext.availableModels.join(', ') || 'none'}\n`)
+        );
         return 'continue';
       }
       const previousModel = providerInfo?.model;
@@ -1293,10 +1185,7 @@ function createCommandRegistry(
 
       commandContext.engine.setModel(nextModel);
       try {
-        await commandContext.persistModel?.(
-          nextModel,
-          commandContext.session?.providerId ?? ''
-        );
+        await commandContext.persistModel?.(nextModel, commandContext.session?.providerId ?? '');
         await commandContext.session?.stateChanged();
       } catch (error) {
         if (previousModel) {
@@ -1350,9 +1239,9 @@ async function executeSlashCommand(
     const suggestions = registry.closest(parsed.name, context);
     console.log(chalk.red(`\nUnknown command: /${parsed.name}`));
     if (suggestions.length > 0) {
-      console.log(chalk.gray(
-        `Did you mean: ${suggestions.map(name => `/${name}`).join(', ')}?\n`
-      ));
+      console.log(
+        chalk.gray(`Did you mean: ${suggestions.map((name) => `/${name}`).join(', ')}?\n`)
+      );
     }
     return 'continue';
   }
@@ -1378,14 +1267,12 @@ async function requestApproval(
     console.log(chalk.yellow('\nCancelling the current operation...'));
     throw new OperationAbortedError('Approval cancelled');
   }
-  const normalizedAnswer = answer.type === 'line'
-    ? answer.value.trim().toLowerCase()
-    : undefined;
+  const normalizedAnswer = answer.type === 'line' ? answer.value.trim().toLowerCase() : undefined;
   return normalizedAnswer === 'y'
-    ? 'allow-once' as const
+    ? ('allow-once' as const)
     : allowsEditSession && normalizedAnswer === 'a'
-      ? 'allow-edits-session' as const
-      : 'deny' as const;
+      ? ('allow-edits-session' as const)
+      : ('deny' as const);
 }
 
 export async function runInteractiveSession(
@@ -1398,14 +1285,18 @@ export async function runInteractiveSession(
   }
   if (options.session) {
     const sessionStatus = options.session.getStatus();
-    console.log(chalk.gray(
-      `Session ${sessionStatus.sessionId.slice(0, 8)} | ` +
-      `autosave ${sessionStatus.autoSave ? 'on' : 'off'}`
-    ));
-    console.log(chalk.gray(
-      `Session saves are stored locally in ` +
-      `${options.session.sessionStore.workspaceDirectory}`
-    ));
+    console.log(
+      chalk.gray(
+        `Session ${sessionStatus.sessionId.slice(0, 8)} | ` +
+          `autosave ${sessionStatus.autoSave ? 'on' : 'off'}`
+      )
+    );
+    console.log(
+      chalk.gray(
+        `Session saves are stored locally in ` +
+          `${options.session.sessionStore.workspaceDirectory}`
+      )
+    );
   }
   console.log(chalk.cyan('\nSyzzz Code - Interactive Mode'));
   console.log(chalk.gray('Type your message and press Enter. Press Ctrl+C twice to exit.'));
@@ -1416,8 +1307,7 @@ export async function runInteractiveSession(
     engine,
     terminal,
     streamOutput: options.streamOutput ?? true,
-    availableModels: options.availableModels ??
-      (providerInfo?.model ? [providerInfo.model] : []),
+    availableModels: options.availableModels ?? (providerInfo?.model ? [providerInfo.model] : []),
     persistStreamOutput: options.persistStreamOutput,
     persistSubagentsEnabled: options.persistSubagentsEnabled,
     persistModel: options.persistModel,
@@ -1426,11 +1316,8 @@ export async function runInteractiveSession(
     activateProvider: options.activateProvider,
     modelsForProvider: options.modelsForProvider
   };
-  const commandRegistry = createCommandRegistry(commandContext);
-  const slashSuggestions = createSlashSuggestionProvider(
-    commandRegistry,
-    () => commandContext
-  );
+  const commandRegistry = createCommandRegistry();
+  const slashSuggestions = createSlashSuggestionProvider(commandRegistry, () => commandContext);
 
   let lastInterruptAt = 0;
   let isClosed = false;
@@ -1517,9 +1404,7 @@ export async function runInteractiveSession(
           }
         }
       } else {
-        message = trimmedInput.startsWith('//')
-          ? trimmedInput.slice(1)
-          : trimmedInput;
+        message = trimmedInput.startsWith('//') ? trimmedInput.slice(1) : trimmedInput;
       }
 
       const spinner = ora({ text: 'Thinking...', discardStdin: false }).start();
@@ -1536,10 +1421,9 @@ export async function runInteractiveSession(
           message,
           {
             signal: turnAbortController.signal,
-            requestApproval: (request, signal) =>
-              requestApproval(request, signal, terminal)
+            requestApproval: (request, signal) => requestApproval(request, signal, terminal)
           },
-          event => renderer.handle(event)
+          (event) => renderer.handle(event)
         );
 
         await commandContext.session?.recordTurn(message, result);

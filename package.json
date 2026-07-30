@@ -2,8 +2,23 @@
   "name": "syzzz-code",
   "version": "1.0.0",
   "description": "Syzzz Code - AI Programming Assistant",
+  "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/syz0528/Syzzz-Code.git"
+  },
+  "homepage": "https://github.com/syz0528/Syzzz-Code#readme",
+  "bugs": {
+    "url": "https://github.com/syz0528/Syzzz-Code/issues"
+  },
+  "keywords": [
+    "ai",
+    "agent",
+    "cli",
+    "coding-assistant",
+    "mcp"
+  ],
   "type": "module",
-  "main": "dist/index.js",
   "bin": {
     "syzzz": "./dist/index.js"
   },
@@ -11,19 +26,41 @@
     "dist",
     "README.md",
     "SECURITY.md",
+    "LICENSE",
+    "CHANGELOG.md",
+    "ARCHITECTURE.md",
+    "TESTING.md",
     "docs"
   ],
+  "publishConfig": {
+    "access": "public"
+  },
   "engines": {
-    "node": ">=20"
+    "node": ">=22"
   },
   "scripts": {
-    "build": "tsc",
+    "build": "node scripts/build.mjs",
+    "lint": "eslint src tests scripts eslint.config.js prettier.config.mjs",
+    "format": "prettier --write --ignore-unknown .",
+    "format:check": "prettier --check --ignore-unknown .",
     "test": "npm run build && node --test tests/*.test.mjs",
+    "test:coverage": "npm run build && node --test --experimental-test-coverage --test-coverage-include=dist/**/*.js --test-coverage-lines=82 --test-coverage-branches=74 --test-coverage-functions=84 tests/*.test.mjs",
+    "test:providers": "npm run build && node --test tests/provider-contracts.test.mjs tests/openai-stream.test.mjs tests/anthropic-provider.test.mjs tests/provider-runner.test.mjs",
     "test:context": "npm run build && node --test tests/context-manager.test.mjs tests/context-runtime.test.mjs",
+    "test:stability": "npm run build && node scripts/stability-run.mjs",
+    "eval:offline": "npm run build && node scripts/eval-runner.mjs --suite offline",
+    "eval:live": "npm run build && node scripts/eval-runner.mjs --suite live",
+    "license:check": "node scripts/license-check.mjs",
+    "secret:scan": "node scripts/secret-scan.mjs",
+    "pack:check": "npm run build && node scripts/package-check.mjs",
+    "smoke:package": "npm run build && node scripts/package-smoke.mjs",
     "smoke:context": "npm run build && node scripts/context-smoke.mjs",
+    "check": "npm run format:check && npm run lint && npm test && npm run test:coverage && npm run eval:offline && npm run license:check && npm run secret:scan && npm run pack:check",
+    "release:verify": "npm run check && npm run smoke:package && node scripts/release-verify.mjs",
     "start": "node dist/index.js",
     "dev": "tsx src/index.ts",
-    "prepack": "npm run build"
+    "prepack": "npm run build",
+    "prepublishOnly": "npm run release:verify"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.32.1",
@@ -40,9 +77,15 @@
     "zod": "^4.4.3"
   },
   "devDependencies": {
+    "@eslint/js": "^10.0.1",
     "@modelcontextprotocol/server": "2.0.0",
-    "@types/node": "^20.11.0",
+    "@types/node": "^22.20.1",
     "@types/picomatch": "^4.0.3",
-    "tsx": "^4.7.0"
+    "eslint": "^10.8.0",
+    "globals": "^17.8.0",
+    "prettier": "^3.9.6",
+    "tsx": "^4.7.0",
+    "typescript-eslint": "^8.65.0",
+    "yaml": "^2.9.0"
   }
 }

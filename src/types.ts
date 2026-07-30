@@ -5,10 +5,7 @@ import type { PermissionMode } from './permissions/mode.js';
 
 export type ToolRisk = 'read' | 'write' | 'execute';
 
-export type ToolApprovalChoice =
-  | 'allow-once'
-  | 'allow-edits-session'
-  | 'deny';
+export type ToolApprovalChoice = 'allow-once' | 'allow-edits-session' | 'deny';
 
 export interface ToolResult<Output = unknown> {
   content: string;
@@ -65,36 +62,17 @@ export interface ToolDefinition {
   risk: ToolRisk;
   approval: 'never' | 'always';
   modeAccess?: 'risk-derived' | 'all-modes';
-  resolvePolicy?: (
-    input: unknown,
-    context: ToolContext
-  ) => Promise<ResolvedToolPolicy>;
-  prepareApproval?: (
-    input: unknown,
-    context: ToolContext
-  ) => Promise<ToolApprovalDetails>;
-  execute: (
-    input: unknown,
-    context: ToolContext
-  ) => Promise<ToolResult>;
+  resolvePolicy?: (input: unknown, context: ToolContext) => Promise<ResolvedToolPolicy>;
+  prepareApproval?: (input: unknown, context: ToolContext) => Promise<ToolApprovalDetails>;
+  execute: (input: unknown, context: ToolContext) => Promise<ToolResult>;
 }
 
-export interface TypedToolDefinition<Input, Output = unknown>
-  extends Omit<
-    ToolDefinition,
-    'inputSchema' | 'resolvePolicy' | 'prepareApproval' | 'execute'
-  > {
+export interface TypedToolDefinition<Input, Output = unknown> extends Omit<
+  ToolDefinition,
+  'inputSchema' | 'resolvePolicy' | 'prepareApproval' | 'execute'
+> {
   inputSchema: ZodType<Input>;
-  resolvePolicy?: (
-    input: Input,
-    context: ToolContext
-  ) => Promise<ResolvedToolPolicy>;
-  prepareApproval?: (
-    input: Input,
-    context: ToolContext
-  ) => Promise<ToolApprovalDetails>;
-  execute: (
-    input: Input,
-    context: ToolContext
-  ) => Promise<ToolResult<Output>>;
+  resolvePolicy?: (input: Input, context: ToolContext) => Promise<ResolvedToolPolicy>;
+  prepareApproval?: (input: Input, context: ToolContext) => Promise<ToolApprovalDetails>;
+  execute: (input: Input, context: ToolContext) => Promise<ToolResult<Output>>;
 }

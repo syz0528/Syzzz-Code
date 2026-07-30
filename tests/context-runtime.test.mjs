@@ -60,9 +60,7 @@ test('auto compaction summarizes old history without exposing summary text', asy
       return {
         message: {
           role: 'assistant',
-          content: normalCalls === 1
-            ? 'Earlier answer '.repeat(400)
-            : 'After compaction.'
+          content: normalCalls === 1 ? 'Earlier answer '.repeat(400) : 'After compaction.'
         },
         usage: { inputTokens: 100, outputTokens: 10, totalTokens: 110 }
       };
@@ -85,37 +83,34 @@ test('auto compaction summarizes old history without exposing summary text', asy
   assert.equal(result.response, 'After compaction.');
   assert.equal(result.context.compactions, 1);
   assert.equal(summaryCalls, 1);
+  assert.equal(events.filter((event) => event.type === 'compaction_started').length, 1);
+  assert.equal(events.filter((event) => event.type === 'compaction_completed').length, 1);
   assert.equal(
-    events.filter(event => event.type === 'compaction_started').length,
-    1
-  );
-  assert.equal(
-    events.filter(event => event.type === 'compaction_completed').length,
-    1
-  );
-  assert.equal(
-    events.some(event =>
-      event.type === 'text_delta' &&
-      event.delta.includes('earlier turn supplied')
+    events.some(
+      (event) => event.type === 'text_delta' && event.delta.includes('earlier turn supplied')
     ),
     false
   );
-  assert.ok(events.some(event =>
-    event.type === 'provider_request_started' &&
-    event.purpose === 'compaction'
-  ));
-  assert.ok(events.some(event =>
-    event.type === 'context_usage_updated' &&
-    event.source === 'reported' &&
-    event.inputTokens === 100
-  ));
-  const completedCompaction = events.find(
-    event => event.type === 'compaction_completed'
+  assert.ok(
+    events.some(
+      (event) => event.type === 'provider_request_started' && event.purpose === 'compaction'
+    )
   );
+  assert.ok(
+    events.some(
+      (event) =>
+        event.type === 'context_usage_updated' &&
+        event.source === 'reported' &&
+        event.inputTokens === 100
+    )
+  );
+  const completedCompaction = events.find((event) => event.type === 'compaction_completed');
   assert.ok(completedCompaction.afterTokens < completedCompaction.beforeTokens);
-  assert.ok(engine.getMessages().some(message =>
-    message.role === 'user' && message.kind === 'compaction-summary'
-  ));
+  assert.ok(
+    engine
+      .getMessages()
+      .some((message) => message.role === 'user' && message.kind === 'compaction-summary')
+  );
 });
 
 test('compaction and turn sampling share the Provider call budget', async () => {
@@ -160,17 +155,13 @@ test('compaction and turn sampling share the Provider call budget', async () => 
   assert.equal(summaryCalls, 1);
   assert.equal(normalCalls, 1);
   assert.equal(
-    events.filter(event =>
-      event.type === 'provider_request_started' &&
-      event.purpose === 'compaction'
+    events.filter(
+      (event) => event.type === 'provider_request_started' && event.purpose === 'compaction'
     ).length,
     1
   );
   assert.equal(
-    events.some(event =>
-      event.type === 'provider_request_started' &&
-      event.purpose === 'turn'
-    ),
+    events.some((event) => event.type === 'provider_request_started' && event.purpose === 'turn'),
     false
   );
 });
@@ -255,47 +246,42 @@ test('manual compaction emits manual events and commits only the reduced history
   assert.equal(result.compactions, 1);
   assert.equal(summaryCalls, 1);
   assert.ok(result.afterTokens < result.beforeTokens);
-  assert.ok(events.some(event =>
-    event.type === 'compaction_started' && event.reason === 'manual'
-  ));
-  assert.ok(events.some(event =>
-    event.type === 'compaction_completed' && event.reason === 'manual'
-  ));
-  const order = events.map(event =>
-    event.type === 'hook_started'
-      ? `${event.type}:${event.event}`
-      : event.type
+  assert.ok(
+    events.some((event) => event.type === 'compaction_started' && event.reason === 'manual')
   );
   assert.ok(
-    order.indexOf('compaction_started') <
-    order.indexOf('hook_started:PreCompact')
+    events.some((event) => event.type === 'compaction_completed' && event.reason === 'manual')
   );
-  assert.ok(
-    order.indexOf('hook_started:PreCompact') <
-    order.indexOf('compaction_completed')
+  const order = events.map((event) =>
+    event.type === 'hook_started' ? `${event.type}:${event.event}` : event.type
   );
-  assert.ok(
-    order.indexOf('compaction_completed') <
-    order.indexOf('hook_started:PostCompact')
-  );
+  assert.ok(order.indexOf('compaction_started') < order.indexOf('hook_started:PreCompact'));
+  assert.ok(order.indexOf('hook_started:PreCompact') < order.indexOf('compaction_completed'));
+  assert.ok(order.indexOf('compaction_completed') < order.indexOf('hook_started:PostCompact'));
   const preCompactInvocation = compactHookInvocations.find(
-    invocation => invocation.event === 'PreCompact'
+    (invocation) => invocation.event === 'PreCompact'
   );
   const postCompactInvocation = compactHookInvocations.find(
-    invocation => invocation.event === 'PostCompact'
+    (invocation) => invocation.event === 'PostCompact'
   );
-  assert.deepEqual(
-    Object.keys(preCompactInvocation.payload).sort(),
-    ['beforeTokens', 'passes', 'reason']
-  );
-  assert.deepEqual(
-    Object.keys(postCompactInvocation.payload).sort(),
-    ['afterTokens', 'beforeTokens', 'durationMs', 'passes', 'reason']
-  );
+  assert.deepEqual(Object.keys(preCompactInvocation.payload).sort(), [
+    'beforeTokens',
+    'passes',
+    'reason'
+  ]);
+  assert.deepEqual(Object.keys(postCompactInvocation.payload).sort(), [
+    'afterTokens',
+    'beforeTokens',
+    'durationMs',
+    'passes',
+    'reason'
+  ]);
   assert.notDeepEqual(engine.getMessages(), before);
-  assert.ok(engine.getMessages().some(message =>
-    message.role === 'user' && message.kind === 'compaction-summary'
-  ));
+  assert.ok(
+    engine
+      .getMessages()
+      .some((message) => message.role === 'user' && message.kind === 'compaction-summary')
+  );
 });
 
 test('cancelling manual compaction rolls back partial multi-pass state', async () => {
@@ -380,9 +366,7 @@ test('compaction retries one transient summary failure inside its two-attempt bu
       return {
         message: {
           role: 'assistant',
-          content: normalCalls === 1
-            ? 'Earlier answer '.repeat(400)
-            : 'Continued.'
+          content: normalCalls === 1 ? 'Earlier answer '.repeat(400) : 'Continued.'
         }
       };
     },
@@ -403,15 +387,15 @@ test('compaction retries one transient summary failure inside its two-attempt bu
 
   assert.equal(result.status, 'completed');
   assert.equal(summaryAttempts, 2);
-  assert.ok(events.some(event =>
-    event.type === 'retry_scheduled' &&
-    event.purpose === 'compaction' &&
-    event.nextAttempt === 2
-  ));
-  assert.equal(
-    events.filter(event => event.type === 'compaction_completed').length,
-    1
+  assert.ok(
+    events.some(
+      (event) =>
+        event.type === 'retry_scheduled' &&
+        event.purpose === 'compaction' &&
+        event.nextAttempt === 2
+    )
   );
+  assert.equal(events.filter((event) => event.type === 'compaction_completed').length, 1);
 });
 
 test('context_exceeded performs one forced compaction before retrying', async () => {
@@ -459,14 +443,16 @@ test('context_exceeded performs one forced compaction before retrying', async ()
   assert.equal(result.response, 'Recovered.');
   assert.equal(summaryCalls, 1);
   assert.equal(normalCalls, 3);
-  assert.ok(events.some(event =>
-    event.type === 'provider_request_failed' &&
-    event.error.code === 'context_exceeded'
-  ));
-  assert.ok(events.some(event =>
-    event.type === 'compaction_started' &&
-    event.reason === 'context_exceeded'
-  ));
+  assert.ok(
+    events.some(
+      (event) => event.type === 'provider_request_failed' && event.error.code === 'context_exceeded'
+    )
+  );
+  assert.ok(
+    events.some(
+      (event) => event.type === 'compaction_started' && event.reason === 'context_exceeded'
+    )
+  );
 });
 
 test('switching to a 16K model bounds the summary request and compacts context', async () => {
@@ -489,9 +475,7 @@ test('switching to a 16K model bounds the summary request and compacts context',
       return {
         message: {
           role: 'assistant',
-          content: normalCalls === 1
-            ? 'Large model reply '.repeat(4_000)
-            : 'Small model reply.'
+          content: normalCalls === 1 ? 'Large model reply '.repeat(4_000) : 'Small model reply.'
         }
       };
     },
@@ -521,15 +505,11 @@ test('switching to a 16K model bounds the summary request and compacts context',
 
   assert.equal(result.status, 'completed');
   assert.equal(result.response, 'Small model reply.');
-  assert.ok(events.some(event =>
-    event.type === 'compaction_started' &&
-    event.reason === 'model_switch'
-  ));
-  assert.equal(result.context.contextWindowTokens, 16_384);
-  assert.match(
-    summaryRequest.messages[0].content,
-    /Compaction input truncated deterministically/
+  assert.ok(
+    events.some((event) => event.type === 'compaction_started' && event.reason === 'model_switch')
   );
+  assert.equal(result.context.contextWindowTokens, 16_384);
+  assert.match(summaryRequest.messages[0].content, /Compaction input truncated deterministically/);
   const summaryMeasurement = new ContextManager({
     defaultWindowTokens: 65_536,
     minimumCompactableTokens: 20
@@ -539,13 +519,12 @@ test('switching to a 16K model bounds the summary request and compacts context',
     summaryRequest.tools,
     providerInfo(16_384)
   );
+  assert.ok(summaryMeasurement.estimatedInputTokens < summaryMeasurement.triggerTokens);
   assert.ok(
-    summaryMeasurement.estimatedInputTokens <
-    summaryMeasurement.triggerTokens
+    finalRequest.messages.some(
+      (message) => message.role === 'user' && message.kind === 'compaction-summary'
+    )
   );
-  assert.ok(finalRequest.messages.some(message =>
-    message.role === 'user' && message.kind === 'compaction-summary'
-  ));
 });
 
 test('a required threshold compaction failure fails closed without committing', async () => {
@@ -559,9 +538,7 @@ test('a required threshold compaction failure fails closed without committing', 
       return {
         message: {
           role: 'assistant',
-          content: normalCalls === 1
-            ? 'Earlier answer '.repeat(400)
-            : 'Continued.'
+          content: normalCalls === 1 ? 'Earlier answer '.repeat(400) : 'Continued.'
         }
       };
     },
@@ -582,7 +559,7 @@ test('a required threshold compaction failure fails closed without committing', 
 
   assert.equal(result.status, 'failed');
   assert.equal(result.error.code, 'context_compaction_failed');
-  const failed = events.find(event => event.type === 'compaction_failed');
+  const failed = events.find((event) => event.type === 'compaction_failed');
   assert.equal(failed.recoverable, false);
   assert.deepEqual(engine.getMessages(), committedHistory);
   assert.equal(normalCalls, 1);
@@ -601,9 +578,8 @@ test('three consecutive compaction failures open the session circuit', async () 
       return {
         message: {
           role: 'assistant',
-          content: normalCalls === 1
-            ? 'Earlier answer '.repeat(400)
-            : `Normal response ${normalCalls}.`
+          content:
+            normalCalls === 1 ? 'Earlier answer '.repeat(400) : `Normal response ${normalCalls}.`
         }
       };
     },
@@ -623,10 +599,7 @@ test('three consecutive compaction failures open the session circuit', async () 
     const turn = await collectTurn(engine.runTurn(`continue ${index}`));
     assert.equal(turn.result.status, 'failed');
     assert.equal(turn.result.error.code, 'context_compaction_failed');
-    assert.equal(
-      turn.events.filter(event => event.type === 'compaction_failed').length,
-      1
-    );
+    assert.equal(turn.events.filter((event) => event.type === 'compaction_failed').length, 1);
   }
 
   const afterCircuit = await collectTurn(engine.runTurn('after circuit'));
@@ -634,11 +607,11 @@ test('three consecutive compaction failures open the session circuit', async () 
   assert.equal(afterCircuit.result.error.code, 'context_compaction_failed');
   assert.equal(summaryCalls, 3);
   assert.equal(
-    afterCircuit.events.some(event => event.type === 'compaction_started'),
+    afterCircuit.events.some((event) => event.type === 'compaction_started'),
     false
   );
   assert.equal(
-    afterCircuit.events.some(event => event.type === 'compaction_failed'),
+    afterCircuit.events.some((event) => event.type === 'compaction_failed'),
     true
   );
   assert.equal(normalCalls, 1);
@@ -646,7 +619,7 @@ test('three consecutive compaction failures open the session circuit', async () 
 
 test('cancelling during compaction rolls back the current turn', async () => {
   let notifyCompactionStarted;
-  const compactionStarted = new Promise(resolve => {
+  const compactionStarted = new Promise((resolve) => {
     notifyCompactionStarted = resolve;
   });
   let normalCalls = 0;
@@ -655,11 +628,9 @@ test('cancelling during compaction rolls back the current turn', async () => {
       if (request.systemPrompt.includes('Compress the supplied conversation')) {
         notifyCompactionStarted();
         return new Promise((resolve, reject) => {
-          request.signal.addEventListener(
-            'abort',
-            () => reject(new Error('cancelled')),
-            { once: true }
-          );
+          request.signal.addEventListener('abort', () => reject(new Error('cancelled')), {
+            once: true
+          });
         });
       }
       normalCalls += 1;
@@ -684,9 +655,11 @@ test('cancelling during compaction rolls back the current turn', async () => {
   await engine.chat('seed history');
   const committedHistory = structuredClone(engine.getMessages());
   const controller = new AbortController();
-  const collecting = collectTurn(engine.runTurn('cancel this', {
-    signal: controller.signal
-  }));
+  const collecting = collectTurn(
+    engine.runTurn('cancel this', {
+      signal: controller.signal
+    })
+  );
   await compactionStarted;
   controller.abort();
   const { events, result } = await collecting;
@@ -694,7 +667,7 @@ test('cancelling during compaction rolls back the current turn', async () => {
   assert.equal(result.status, 'cancelled');
   assert.equal(events.at(-1).type, 'turn_cancelled');
   assert.equal(
-    events.some(event => event.type === 'compaction_failed'),
+    events.some((event) => event.type === 'compaction_failed'),
     false
   );
   assert.deepEqual(engine.getMessages(), committedHistory);
@@ -712,15 +685,17 @@ test('tool results are bounded to 40 KiB before entering model history', async (
           message: {
             role: 'assistant',
             content: '',
-            toolCalls: [{
-              id: 'huge-1',
-              name: 'HugeResult',
-              input: {}
-            }]
+            toolCalls: [
+              {
+                id: 'huge-1',
+                name: 'HugeResult',
+                input: {}
+              }
+            ]
           }
         };
       }
-      capturedToolResult = request.messages.find(message => message.role === 'tool');
+      capturedToolResult = request.messages.find((message) => message.role === 'tool');
       return {
         message: { role: 'assistant', content: 'Done.' }
       };
@@ -731,16 +706,18 @@ test('tool results are bounded to 40 KiB before entering model history', async (
   };
   const engine = new QueryEngine({
     provider,
-    tools: [{
-      name: 'HugeResult',
-      description: 'Return a large result',
-      inputSchema: z.object({}).strict(),
-      risk: 'read',
-      approval: 'never',
-      async execute() {
-        return { content: 'x'.repeat(60 * 1024) };
+    tools: [
+      {
+        name: 'HugeResult',
+        description: 'Return a large result',
+        inputSchema: z.object({}).strict(),
+        risk: 'read',
+        approval: 'never',
+        async execute() {
+          return { content: 'x'.repeat(60 * 1024) };
+        }
       }
-    }],
+    ],
     audit: false
   });
 
@@ -749,8 +726,8 @@ test('tool results are bounded to 40 KiB before entering model history', async (
   assert.equal(result.status, 'completed');
   assert.ok(Buffer.byteLength(capturedToolResult.content, 'utf8') <= 40 * 1024);
   assert.match(capturedToolResult.content, /Tool output truncated/);
-  const completed = events.find(event =>
-    event.type === 'tool_completed' && event.toolName === 'HugeResult'
+  const completed = events.find(
+    (event) => event.type === 'tool_completed' && event.toolName === 'HugeResult'
   );
   assert.equal(completed.metadata.outputTruncated, true);
   assert.equal(completed.metadata.originalBytes, 60 * 1024);
@@ -768,11 +745,13 @@ test('a 16K model dynamically budgets a large tool result before the next reques
           message: {
             role: 'assistant',
             content: '',
-            toolCalls: [{
-              id: 'huge-16k',
-              name: 'HugeResult',
-              input: {}
-            }]
+            toolCalls: [
+              {
+                id: 'huge-16k',
+                name: 'HugeResult',
+                input: {}
+              }
+            ]
           }
         };
       }
@@ -787,25 +766,25 @@ test('a 16K model dynamically budgets a large tool result before the next reques
   };
   const engine = new QueryEngine({
     provider,
-    tools: [{
-      name: 'HugeResult',
-      description: 'Return a large result',
-      inputSchema: z.object({}).strict(),
-      risk: 'read',
-      approval: 'never',
-      async execute() {
-        return { content: 'x'.repeat(60 * 1024) };
+    tools: [
+      {
+        name: 'HugeResult',
+        description: 'Return a large result',
+        inputSchema: z.object({}).strict(),
+        risk: 'read',
+        approval: 'never',
+        async execute() {
+          return { content: 'x'.repeat(60 * 1024) };
+        }
       }
-    }],
+    ],
     audit: false
   });
 
   const { events, result } = await collectTurn(engine.runTurn('run'));
 
   assert.equal(result.status, 'completed');
-  const toolResult = secondRequest.messages.find(
-    message => message.role === 'tool'
-  );
+  const toolResult = secondRequest.messages.find((message) => message.role === 'tool');
   assert.ok(toolResult);
   assert.ok(Buffer.byteLength(toolResult.content, 'utf8') < 40 * 1024);
   const measurement = new ContextManager().measure(
@@ -815,14 +794,14 @@ test('a 16K model dynamically budgets a large tool result before the next reques
     info
   );
   assert.ok(measurement.estimatedInputTokens < measurement.triggerTokens);
-  const completed = events.find(event =>
-    event.type === 'tool_completed' && event.toolName === 'HugeResult'
+  const completed = events.find(
+    (event) => event.type === 'tool_completed' && event.toolName === 'HugeResult'
   );
   assert.equal(completed.metadata.outputTruncated, true);
   assert.equal(completed.metadata.contextBudgeted, true);
   assert.ok(completed.metadata.contextBudgetBytes < 40 * 1024);
   assert.equal(
-    events.some(event => event.type === 'compaction_started'),
+    events.some((event) => event.type === 'compaction_started'),
     false
   );
 });
@@ -849,11 +828,13 @@ test('an oversized newest tool group is compacted atomically before reuse', asyn
           message: {
             role: 'assistant',
             content: '',
-            toolCalls: [{
-              id: 'oversized-call',
-              name: 'LargeInput',
-              input: { payload: `HEAD-${'x'.repeat(60 * 1024)}-TAIL` }
-            }]
+            toolCalls: [
+              {
+                id: 'oversized-call',
+                name: 'LargeInput',
+                input: { payload: `HEAD-${'x'.repeat(60 * 1024)}-TAIL` }
+              }
+            ]
           }
         };
       }
@@ -868,16 +849,18 @@ test('an oversized newest tool group is compacted atomically before reuse', asyn
   };
   const engine = new QueryEngine({
     provider,
-    tools: [{
-      name: 'LargeInput',
-      description: 'Accept a large provider-generated input',
-      inputSchema: z.object({ payload: z.string() }).strict(),
-      risk: 'read',
-      approval: 'never',
-      async execute() {
-        return { content: 'lookup complete' };
+    tools: [
+      {
+        name: 'LargeInput',
+        description: 'Accept a large provider-generated input',
+        inputSchema: z.object({ payload: z.string() }).strict(),
+        risk: 'read',
+        approval: 'never',
+        async execute() {
+          return { content: 'lookup complete' };
+        }
       }
-    }],
+    ],
     audit: false,
     context: { minimumCompactableTokens: 20 }
   });
@@ -887,36 +870,27 @@ test('an oversized newest tool group is compacted atomically before reuse', asyn
   assert.equal(result.status, 'completed');
   assert.equal(result.response, 'Finished.');
   assert.ok(summaryRequest);
-  assert.match(
-    summaryRequest.messages[0].content,
-    /Compaction input truncated deterministically/
-  );
+  assert.match(summaryRequest.messages[0].content, /Compaction input truncated deterministically/);
   const summaryMeasurement = new ContextManager({
     minimumCompactableTokens: 20
-  }).measure(
-    summaryRequest.messages,
-    summaryRequest.systemPrompt,
-    summaryRequest.tools,
-    info
-  );
-  assert.ok(
-    summaryMeasurement.estimatedInputTokens <
-    summaryMeasurement.triggerTokens
-  );
-  const started = events.find(event => event.type === 'compaction_started');
+  }).measure(summaryRequest.messages, summaryRequest.systemPrompt, summaryRequest.tools, info);
+  assert.ok(summaryMeasurement.estimatedInputTokens < summaryMeasurement.triggerTokens);
+  const started = events.find((event) => event.type === 'compaction_started');
   assert.equal(started.mode, 'intra-turn');
-  assert.ok(finalRequest.messages.some(message =>
-    message.role === 'user' && message.kind === 'compaction-summary'
-  ));
+  assert.ok(
+    finalRequest.messages.some(
+      (message) => message.role === 'user' && message.kind === 'compaction-summary'
+    )
+  );
   assert.equal(
-    finalRequest.messages.some(message => message.role === 'tool'),
+    finalRequest.messages.some((message) => message.role === 'tool'),
     false
   );
 });
 
 test('cancelling emergency tool-group compaction rolls back the turn', async () => {
   let notifyCompactionStarted;
-  const compactionStarted = new Promise(resolve => {
+  const compactionStarted = new Promise((resolve) => {
     notifyCompactionStarted = resolve;
   });
   let normalCalls = 0;
@@ -925,11 +899,9 @@ test('cancelling emergency tool-group compaction rolls back the turn', async () 
       if (request.systemPrompt.includes('Compress the supplied conversation')) {
         notifyCompactionStarted();
         return new Promise((resolve, reject) => {
-          request.signal.addEventListener(
-            'abort',
-            () => reject(new Error('cancelled')),
-            { once: true }
-          );
+          request.signal.addEventListener('abort', () => reject(new Error('cancelled')), {
+            once: true
+          });
         });
       }
       normalCalls += 1;
@@ -937,11 +909,13 @@ test('cancelling emergency tool-group compaction rolls back the turn', async () 
         message: {
           role: 'assistant',
           content: '',
-          toolCalls: [{
-            id: 'oversized-cancel',
-            name: 'LargeInput',
-            input: { payload: 'x'.repeat(60 * 1024) }
-          }]
+          toolCalls: [
+            {
+              id: 'oversized-cancel',
+              name: 'LargeInput',
+              input: { payload: 'x'.repeat(60 * 1024) }
+            }
+          ]
         }
       });
     },
@@ -951,23 +925,27 @@ test('cancelling emergency tool-group compaction rolls back the turn', async () 
   };
   const engine = new QueryEngine({
     provider,
-    tools: [{
-      name: 'LargeInput',
-      description: 'Accept a large provider-generated input',
-      inputSchema: z.object({ payload: z.string() }).strict(),
-      risk: 'read',
-      approval: 'never',
-      async execute() {
-        return { content: 'lookup complete' };
+    tools: [
+      {
+        name: 'LargeInput',
+        description: 'Accept a large provider-generated input',
+        inputSchema: z.object({ payload: z.string() }).strict(),
+        risk: 'read',
+        approval: 'never',
+        async execute() {
+          return { content: 'lookup complete' };
+        }
       }
-    }],
+    ],
     audit: false,
     context: { minimumCompactableTokens: 20 }
   });
   const controller = new AbortController();
-  const collecting = collectTurn(engine.runTurn('inspect', {
-    signal: controller.signal
-  }));
+  const collecting = collectTurn(
+    engine.runTurn('inspect', {
+      signal: controller.signal
+    })
+  );
 
   await compactionStarted;
   controller.abort();
@@ -976,7 +954,7 @@ test('cancelling emergency tool-group compaction rolls back the turn', async () 
   assert.equal(result.status, 'cancelled');
   assert.equal(events.at(-1).type, 'turn_cancelled');
   assert.equal(
-    events.some(event => event.type === 'compaction_failed'),
+    events.some((event) => event.type === 'compaction_failed'),
     false
   );
   assert.deepEqual(engine.getMessages(), []);
@@ -1030,13 +1008,10 @@ test('context still above threshold after three reductions fails closed', async 
   assert.equal(result.error.code, 'context_compaction_failed');
   assert.equal(summaryCalls, 3);
   assert.equal(normalCalls, 1);
-  assert.equal(
-    events.filter(event => event.type === 'compaction_completed').length,
-    3
+  assert.equal(events.filter((event) => event.type === 'compaction_completed').length, 3);
+  assert.ok(
+    events.some((event) => event.type === 'compaction_failed' && event.recoverable === false)
   );
-  assert.ok(events.some(event =>
-    event.type === 'compaction_failed' && event.recoverable === false
-  ));
 });
 
 test('an uncompactable oversized user message fails before provider sampling', async () => {
@@ -1059,16 +1034,14 @@ test('an uncompactable oversized user message fails before provider sampling', a
     context: smallContextOptions()
   });
 
-  const { events, result } = await collectTurn(
-    engine.runTurn('x'.repeat(10_000))
-  );
+  const { events, result } = await collectTurn(engine.runTurn('x'.repeat(10_000)));
 
   assert.equal(result.status, 'failed');
   assert.equal(result.error.code, 'context_compaction_failed');
   assert.equal(providerCalls, 0);
-  assert.ok(events.some(event =>
-    event.type === 'compaction_failed' && event.recoverable === false
-  ));
+  assert.ok(
+    events.some((event) => event.type === 'compaction_failed' && event.recoverable === false)
+  );
   assert.deepEqual(engine.getMessages(), []);
 });
 
@@ -1112,11 +1085,13 @@ test('a failed turn after a file change adds a reread receipt to the next turn',
           message: {
             role: 'assistant',
             content: '',
-            toolCalls: [{
-              id: 'write-1',
-              name: 'Write',
-              input: { path: 'src/changed.ts' }
-            }]
+            toolCalls: [
+              {
+                id: 'write-1',
+                name: 'Write',
+                input: { path: 'src/changed.ts' }
+              }
+            ]
           }
         };
       }
@@ -1136,22 +1111,24 @@ test('a failed turn after a file change adds a reread receipt to the next turn',
   };
   const engine = new QueryEngine({
     provider,
-    tools: [{
-      name: 'Write',
-      description: 'Simulate a file write',
-      inputSchema: z.object({ path: z.string() }).strict(),
-      risk: 'write',
-      approval: 'always',
-      async prepareApproval() {
-        return { description: 'write test file' };
-      },
-      async execute() {
-        return {
-          content: 'written',
-          metadata: { versionHash: 'abc123' }
-        };
+    tools: [
+      {
+        name: 'Write',
+        description: 'Simulate a file write',
+        inputSchema: z.object({ path: z.string() }).strict(),
+        risk: 'write',
+        approval: 'always',
+        async prepareApproval() {
+          return { description: 'write test file' };
+        },
+        async execute() {
+          return {
+            content: 'written',
+            metadata: { versionHash: 'abc123' }
+          };
+        }
       }
-    }],
+    ],
     permissionMode: 'fullAccess',
     audit: false
   });
@@ -1161,8 +1138,8 @@ test('a failed turn after a file change adds a reread receipt to the next turn',
   assert.deepEqual(engine.getMessages(), []);
 
   assert.equal(await engine.chat('next'), 'Re-read acknowledged.');
-  const receipt = nextTurnMessages.find(message =>
-    message.role === 'user' && message.kind === 'compaction-summary'
+  const receipt = nextTurnMessages.find(
+    (message) => message.role === 'user' && message.kind === 'compaction-summary'
   );
   assert.match(receipt.content, /side_effect_receipt/);
   assert.match(receipt.content, /src\/changed\.ts/);

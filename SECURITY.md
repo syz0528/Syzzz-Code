@@ -104,6 +104,19 @@ Subagent 使用当前 Provider 和 model 的隔离 fork，因此委派任务和�
 - 文件最终 hash 复核到原子 rename 之间仍有极小 TOCTOU 窗口。
 - 当前不支持 OAuth、Keychain、磁盘加密、云端审计、旧 SSE、后台 Hook 或写入型 Subagent。
 
+## 供应链与发布
+
+- `package.json` 是版本、CLI 名称和 npm metadata 的唯一事实源。
+- 构建前会删除 `dist`，避免已删除源码留下陈旧发布文件。
+- tarball 使用 allowlist，不包含 `src`、`tests`、`archive`、Eval fixture、本地配置、日志或会话。
+- 普通 CI 不接收 Provider Key，默认权限仅为 `contents: read`；第三方 GitHub Action 固定完整 commit SHA。
+- 发布只允许从 `main` 手动触发，并受 `npm-release` Environment 和精确确认短语保护。
+- 已存在的 npm 版本只有在 registry integrity 与本地候选 tarball 完全一致时才允许恢复 Tag/Release。
+- Eval 报告只记录脱敏指标，不保存 prompt、回答、源码、Shell 输出、Secret、reasoning 或 transcript。
+- 当前树和完整可达 Git 历史会执行高置信凭证模式扫描；测试占位符只能通过精确字面量白名单排除。
+
+首次发布计划使用一次性、短期限、最小权限 npm granular token。发布工作流在所有路径的最后尝试撤销该 token；仓库所有者仍必须在 npm 控制台复核撤销结果，并在后续版本切换到 npm Trusted Publishing/OIDC。
+
 ## 报告问题
 
 安全问题请通过仓库维护者提供的私密渠道报告，不要在公开 Issue 中粘贴 API Key、认证头、私有代码、会话快照或完整审计文件。报告应包含受影响版本、复现条件、预期边界和实际结果，并尽量使用脱敏的最小复现。

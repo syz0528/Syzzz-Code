@@ -12,9 +12,9 @@ if (descendantReady && descendantSurvived) {
     [
       '-e',
       "const fs=require('node:fs');" +
-      "fs.writeFileSync(process.argv[1],String(process.pid));" +
-      "setTimeout(()=>fs.writeFileSync(process.argv[2],'survived'),1500);" +
-      'setTimeout(()=>{},10000)',
+        'fs.writeFileSync(process.argv[1],String(process.pid));' +
+        "setTimeout(()=>fs.writeFileSync(process.argv[2],'survived'),1500);" +
+        'setTimeout(()=>{},10000)',
       descendantReady,
       descendantSurvived
     ],
@@ -53,13 +53,15 @@ function createFixtureServer() {
       annotations: { readOnlyHint: true }
     },
     async () => ({
-      content: [{
-        type: 'text',
-        text: JSON.stringify({
-          leakedProviderKey: process.env.TEST_PROVIDER_API_KEY !== undefined,
-          configuredValue: process.env.MCP_SAFE_VALUE ?? null
-        })
-      }]
+      content: [
+        {
+          type: 'text',
+          text: JSON.stringify({
+            leakedProviderKey: process.env.TEST_PROVIDER_API_KEY !== undefined,
+            configuredValue: process.env.MCP_SAFE_VALUE ?? null
+          })
+        }
+      ]
     })
   );
 

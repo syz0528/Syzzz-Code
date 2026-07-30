@@ -1,5 +1,9 @@
 node_modules/
 dist/
+coverage/
+artifacts/
+eval-results/
+*.tgz
 .env
 *.log
 .DS_Store

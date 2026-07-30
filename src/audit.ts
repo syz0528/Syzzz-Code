@@ -1,12 +1,5 @@
 import { createHash } from 'node:crypto';
-import {
-  appendFile,
-  mkdir,
-  readdir,
-  realpath,
-  rm,
-  stat
-} from 'node:fs/promises';
+import { appendFile, mkdir, readdir, realpath, rm, stat } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import type { AuditConfig } from './config.js';
@@ -60,7 +53,7 @@ async function listAuditFiles(directory: string): Promise<AuditFile[]> {
   for (const entry of entries) {
     const entryPath = join(directory, entry.name);
     if (entry.isDirectory()) {
-      files.push(...await listAuditFiles(entryPath));
+      files.push(...(await listAuditFiles(entryPath)));
       continue;
     }
     if (!entry.isFile() || !entry.name.endsWith('.jsonl')) {
@@ -93,14 +86,11 @@ export async function cleanupAuditDirectory(
   now: number = Date.now()
 ): Promise<void> {
   const normalizedCurrentFile = resolve(currentSessionFile);
-  const retentionCutoff = now - (config.retentionDays * DAY_MS);
+  const retentionCutoff = now - config.retentionDays * DAY_MS;
   let files = await listAuditFiles(directory);
 
   for (const file of files) {
-    if (
-      resolve(file.path) !== normalizedCurrentFile &&
-      file.mtimeMs < retentionCutoff
-    ) {
+    if (resolve(file.path) !== normalizedCurrentFile && file.mtimeMs < retentionCutoff) {
       await removeAuditFile(file.path);
     }
   }
@@ -108,7 +98,7 @@ export async function cleanupAuditDirectory(
   files = await listAuditFiles(directory);
   let totalBytes = files.reduce((total, file) => total + file.size, 0);
   const removableFiles = files
-    .filter(file => resolve(file.path) !== normalizedCurrentFile)
+    .filter((file) => resolve(file.path) !== normalizedCurrentFile)
     .sort((left, right) => left.mtimeMs - right.mtimeMs);
 
   for (const file of removableFiles) {
@@ -128,13 +118,8 @@ async function workspaceIdentifier(workspaceRoot: string): Promise<string> {
     // The resolved lexical path is sufficient if the workspace disappears.
   }
   const normalizedPath = canonicalPath.replaceAll('\\', '/');
-  const hashInput = process.platform === 'win32'
-    ? normalizedPath.toLowerCase()
-    : normalizedPath;
-  return createHash('sha256')
-    .update(hashInput)
-    .digest('hex')
-    .slice(0, 16);
+  const hashInput = process.platform === 'win32' ? normalizedPath.toLowerCase() : normalizedPath;
+  return createHash('sha256').update(hashInput).digest('hex').slice(0, 16);
 }
 
 function baseAuditRecord(event: AgentEvent, workspaceId: string): AuditEnvelope {
@@ -149,10 +134,7 @@ function baseAuditRecord(event: AgentEvent, workspaceId: string): AuditEnvelope 
   };
 }
 
-export function toAuditRecord(
-  event: AgentEvent,
-  workspaceId: string
-): AuditEnvelope | undefined {
+export function toAuditRecord(event: AgentEvent, workspaceId: string): AuditEnvelope | undefined {
   const base = baseAuditRecord(event, workspaceId);
   switch (event.type) {
     case 'turn_started':
@@ -313,13 +295,9 @@ export function toAuditRecord(
         outcome: event.outcome,
         durationMs: event.durationMs,
         toolCalls: event.toolCalls,
-        ...(event.providerCalls === undefined
-          ? {}
-          : { providerCalls: event.providerCalls }),
+        ...(event.providerCalls === undefined ? {} : { providerCalls: event.providerCalls }),
         ...(event.stopReason ? { stopReason: event.stopReason } : {}),
-        ...(event.reportTruncated === undefined
-          ? {}
-          : { reportTruncated: event.reportTruncated }),
+        ...(event.reportTruncated === undefined ? {} : { reportTruncated: event.reportTruncated }),
         ...(event.usage ? { usage: event.usage } : {}),
         ...(event.errorCode ? { errorCode: event.errorCode } : {})
       };
@@ -358,7 +336,7 @@ export class LocalAuditLogger implements AgentEventSink {
 
   constructor(options: AuditLoggerOptions) {
     this.enabled = options.config.retentionDays > 0;
-    this.warn = options.warn ?? (message => process.stderr.write(`${message}\n`));
+    this.warn = options.warn ?? ((message) => process.stderr.write(`${message}\n`));
     const now = options.now?.() ?? Date.now();
     const date = new Date(now);
     const baseDirectory = options.baseDirectory ?? join(homedir(), '.syzzz-code', 'audit');
@@ -370,9 +348,7 @@ export class LocalAuditLogger implements AgentEventSink {
       `${options.sessionId}.jsonl`
     );
 
-    this.pending = this.enabled
-      ? this.initialize(baseDirectory, options)
-      : Promise.resolve();
+    this.pending = this.enabled ? this.initialize(baseDirectory, options) : Promise.resolve();
   }
 
   record(event: AgentEvent): void {
@@ -380,21 +356,23 @@ export class LocalAuditLogger implements AgentEventSink {
       return;
     }
 
-    this.pending = this.pending.then(async () => {
-      if (!this.enabled) {
-        return;
-      }
-      const record = toAuditRecord(event, this.workspaceId);
-      if (!record) {
-        return;
-      }
-      await appendFile(this.filePath, `${JSON.stringify(record)}\n`, {
-        encoding: 'utf8',
-        mode: 0o600
+    this.pending = this.pending
+      .then(async () => {
+        if (!this.enabled) {
+          return;
+        }
+        const record = toAuditRecord(event, this.workspaceId);
+        if (!record) {
+          return;
+        }
+        await appendFile(this.filePath, `${JSON.stringify(record)}\n`, {
+          encoding: 'utf8',
+          mode: 0o600
+        });
+      })
+      .catch((error) => {
+        this.disableWithWarning(error);
       });
-    }).catch(error => {
-      this.disableWithWarning(error);
-    });
   }
 
   async flush(): Promise<void> {
@@ -405,10 +383,7 @@ export class LocalAuditLogger implements AgentEventSink {
     return this.filePath;
   }
 
-  private async initialize(
-    baseDirectory: string,
-    options: AuditLoggerOptions
-  ): Promise<void> {
+  private async initialize(baseDirectory: string, options: AuditLoggerOptions): Promise<void> {
     try {
       this.workspaceId = await workspaceIdentifier(options.workspaceRoot);
       await mkdir(dirname(this.filePath), { recursive: true, mode: 0o700 });

@@ -107,12 +107,12 @@ syzzz extensions status [--json]
 
 ### 2.4 风险矩阵
 
-| 本地策略或 MCP 声明 | 动态风险 | ask/plan | code + safe/acceptEdits | code + fullAccess |
-| --- | --- | --- | --- | --- |
-| `disabled` | 不可用 | 拒绝且不可发现 | 拒绝且不可发现 | 拒绝且不可发现 |
-| `execute` | `execute/always` | 拒绝 | 逐次审批 | 自动执行 |
-| 无策略；`readOnlyHint:true` 且非 destructive | `read/never` | 允许 | 允许 | 允许 |
-| 无策略；声明缺失、冲突或无法确认 | `execute/always` | 拒绝 | 逐次审批 | 自动执行 |
+| 本地策略或 MCP 声明                          | 动态风险         | ask/plan       | code + safe/acceptEdits | code + fullAccess |
+| -------------------------------------------- | ---------------- | -------------- | ----------------------- | ----------------- |
+| `disabled`                                   | 不可用           | 拒绝且不可发现 | 拒绝且不可发现          | 拒绝且不可发现    |
+| `execute`                                    | `execute/always` | 拒绝           | 逐次审批                | 自动执行          |
+| 无策略；`readOnlyHint:true` 且非 destructive | `read/never`     | 允许           | 允许                    | 允许              |
+| 无策略；声明缺失、冲突或无法确认             | `execute/always` | 拒绝           | 逐次审批                | 自动执行          |
 
 用户与项目策略冲突时取更严格结果：`disabled > execute > remote annotation`。项目策略只有在项目摘要受信时生效。风险解析失败、schema 无效、Server 不可用或审批 handler 缺失时一律 fail closed。
 
@@ -161,7 +161,7 @@ TurnCancelled
 `matcher` 使用 glob。工具事件目标为 `builtin:<name>` 或 `mcp:<server>__<tool>`；压缩事件匹配 reason；Subagent 事件匹配 `explore | review`。只有 `PreToolUse` 可以使用 `onError:"deny"` 并在 stdout 返回：
 
 ```json
-{"decision":"deny","reason":"blocked by local policy"}
+{ "decision": "deny", "reason": "blocked by local policy" }
 ```
 
 空 stdout 等价于 continue。输出包含其他字段、无效 JSON 或非法 decision 时按 Hook 失败处理。`reason` 只用于本地终端展示，不进入 Provider 的 ToolResult。Hook 不能通过返回值授权、修改工具调用或向模型注入上下文。
@@ -271,11 +271,11 @@ syzzz hooks doctor
 
 10. **隐私与恢复**
 
-   检查 `stream-json`、审计和会话快照。NDJSON 与审计不得包含 MCP 认证头、Hook payload 或 Subagent transcript；会话可以包含有界 MCP 结果和 Subagent 最终报告。重启恢复后权限必须仍重置为 safe。
+检查 `stream-json`、审计和会话快照。NDJSON 与审计不得包含 MCP 认证头、Hook payload 或 Subagent transcript；会话可以包含有界 MCP 结果和 Subagent 最终报告。重启恢复后权限必须仍重置为 safe。
 
 11. **撤销信任**
 
-   执行 `/untrust`。项目 MCP 应立即断开，项目 Hooks 应停止生效；用户级扩展保持可用。
+执行 `/untrust`。项目 MCP 应立即断开，项目 Hooks 应停止生效；用户级扩展保持可用。
 
 测试结束后移除 fixture：
 

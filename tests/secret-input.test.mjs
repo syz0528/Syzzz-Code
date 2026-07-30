@@ -9,12 +9,12 @@ function fakeTerminal() {
   const outputChunks = [];
   input.isTTY = true;
   input.isRaw = false;
-  input.setRawMode = mode => {
+  input.setRawMode = (mode) => {
     input.isRaw = mode;
     return input;
   };
   output.isTTY = true;
-  output.on('data', chunk => outputChunks.push(chunk));
+  output.on('data', (chunk) => outputChunks.push(chunk));
   return {
     input,
     output,

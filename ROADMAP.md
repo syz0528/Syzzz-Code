@@ -1,9 +1,9 @@
 # Syzzz Code 路线图
 
 **制定日期：** 2026-06-16
-**最近更新：** 2026-07-29
-**适用基线：** `1.0.0` / Phase 5.1 实现验证提交 `85b2558`
-**当前入口：** Phase 5 与 Phase 5.1 已于 2026-07-29 标记为 **Frozen**，下一阶段进入 Phase 6
+**最近更新：** 2026-07-30
+**适用基线：** `1.0.0` / Phase 5 冻结提交 `64789ec`
+**当前入口：** Phase 6 在 `codex/phase6-quality-release` 实施，尚未进入公开发布或 Frozen
 
 > 路线图描述实施顺序和验收边界。当前代码事实以 [`README.md`](README.md) 和 [`CURRENT_STATUS.md`](CURRENT_STATUS.md) 为准。
 
@@ -693,74 +693,63 @@ RepoMap 按需调用，不自动注入每个 prompt。
 
 ## 11. Phase 6：持续评测、发布与工程治理
 
-该阶段不是最后才开始的单次工作，而是随着前述阶段逐步完善。
+**基线：** `64789ec`、253 项测试、Phase 5.1 Frozen。
 
-### 11.1 测试金字塔
+**范围：** 不增加 Agent 工具或自治能力，只完成工程质量、Provider 契约、固定任务评测、跨平台 CI、候选包验证和公开发布。
 
-持续建立：
+### 11.1 Phase 6.0：工程质量基线
 
-1. Config、Tool、Context 等纯单元测试；
-2. Provider mock 合约测试；
-3. Engine/Runtime 状态机测试；
-4. CLI PTY 集成测试；
-5. 固定仓库 coding-task eval；
-6. 少量、明确隔离的真实 Provider 冒烟测试。
+- [x] Node.js 最低版本提升为 22，CI 目标为 Node 22/24；
+- [x] `package.json` 成为 CLI 与 MCP metadata 的唯一版本事实源；
+- [x] 引入 ESLint flat config、TypeScript-aware 规则和 Prettier；
+- [x] 构建前清理 `dist`，杜绝已删除源码留下陈旧发布文件；
+- [x] 使用 Node 原生覆盖率并设置 Lines 82%、Branches 74%、Functions 84%；
+- [x] 增加生产依赖许可证、Git 历史 Secret 和 Windows 稳定性检查；
+- [x] 删除未使用的静态 Provider Registry。
 
-真实 API 测试必须：
+### 11.2 Phase 6.1：Provider 契约与 Agent Eval
 
-- 默认不在 `npm test` 中执行；
-- 不读取用户正式配置；
-- 不打印密钥；
-- 明确 Provider、模型、费用和日期；
-- 分别覆盖 Anthropic 与 OpenAI-compatible 协议。
+- [x] 建立 `openai-chat-completions`、`openai-compatible-minimal`、`deepseek-reasoning` 与 `anthropic-messages` 四种离线 Profile；
+- [x] 覆盖 UTF-8、多工具碎片、usage、request ID、流式兼容恢复、错误、Retry-After、timeout、abort、畸形 SSE 和 reasoning 隔离；
+- [x] 建立七项固定 Eval：架构分析、跨文件修复、小功能、类型错误、失败恢复、安全拒绝和上下文压缩；
+- [x] 每项复制到独立临时 Git 仓库，使用 `code + safe`、精确 Shell allowlist、Node 文件权限约束和 Agent 外部语义 grader；
+- [x] Eval 报告只记录脱敏元数据，不保存 prompt、回答、源码、Shell 输出、Secret、reasoning 或 transcript；
+- [x] 使用当前 DeepSeek/OpenCode 完成强制真实 smoke；
+- [ ] 在显式凭证存在时执行官方 OpenAI/Anthropic 可选 smoke。
 
-### 11.2 CI 与发布
+当前 DeepSeek/OpenCode Live Eval 已完成整套七项隔离任务：7/7、功能成功率 100%、安全项通过、0 个基础设施错误；没有挑选单项结果。
 
-- Windows 和 Linux CI；
-- 支持的 Node.js 版本矩阵；
-- build、test、lint 和 format check；
-- coverage；
-- dependency audit；
-- secret scanning；
-- `npm pack --dry-run`；
-- 安装后 `syzzz --help` smoke test；
-- 版本号、CLI、CHANGELOG 和 Git Tag 单一来源。
+### 11.3 Phase 6.2：CI、供应链与候选包
 
-### 11.3 Coding Agent 评测
+- [x] 配置 Windows/Ubuntu × Node 22/24 测试矩阵；
+- [x] 配置 quality、Provider contracts、offline Eval、package smoke、security 与 CodeQL；
+- [x] Action 固定完整 SHA，普通 CI 只授予 `contents: read`，PR 更新取消旧流水线；
+- [x] Dependabot 分组维护 npm 与 Actions，MCP SDK 保持单独人工审查；
+- [x] tarball 检查文件 allowlist、数量、压缩/解压大小和 identity；
+- [x] 在全新 prefix 安装真实 tarball，验证全局 shim、版本、帮助、legacy 配置迁移、文本、NDJSON 和 doctor；
+- [x] 扫描当前跟踪树和完整可达 Git 历史中的高置信凭证模式；
+- [ ] GitHub Actions 在公开仓库实际运行并全部通过；
+- [ ] 在仓库设置中启用 Secret Scanning、Push Protection、Dependabot、CodeQL 与 required checks。
 
-建立可重复任务集，例如：
+### 11.4 Phase 6.3：文档与人工发布
 
-- 定位一个跨文件 bug；
-- 添加带测试的小功能；
-- 修复 TypeScript 类型错误；
-- 在不修改文件的情况下解释架构；
-- 拒绝工作区外写入；
-- 在测试失败后继续修正；
-- 在上下文接近上限时 compact 并完成任务。
+- [x] 增加 Apache-2.0 LICENSE、ARCHITECTURE、TESTING 与 CHANGELOG；
+- [x] 发布工作流只允许 `workflow_dispatch`，使用受保护的 `npm-release` Environment 和精确确认短语；
+- [x] npm 已存在版本只有在 registry integrity 与候选 tarball 一致时才能恢复 Tag/Release；
+- [x] 发布后创建 annotated Tag、GitHub Release、SHA-256 与脱敏 Eval 摘要；
+- [ ] 完成 Windows Node 22/24 候选包与完整能力 dogfood；
+- [ ] 将完整 Phase 2–6 历史 fast-forward 到 `main`；
+- [ ] 确认 npm 名称/版本、使用一次性最小权限 token 发布并立即撤销；
+- [ ] 从 npm registry 安装 `syzzz-code@1.0.0` 并复验。
 
-记录：
+### Phase 6 状态门槛
 
-- 成功率；
-- 工具调用次数；
-- token 使用；
-- 总耗时；
-- 用户审批次数；
-- 错误恢复情况；
-- 最终 diff 和测试结果。
+- **Implemented**：实现和本地自动化通过。
+- **Validated**：跨平台 CI、审计、离线 Eval和候选包通过。
+- **Release Candidate Accepted**：用户完成人工 dogfood。
+- **Frozen**：npm、Tag、GitHub Release 与 registry 安装复验完成。
 
-### 11.4 文档治理
-
-长期活跃文档保持精简：
-
-- `README.md`：用户入口和当前能力；
-- `CURRENT_STATUS.md`：当前事实、验证和技术债；
-- `ROADMAP.md`：未来阶段和验收标准；
-- `ARCHITECTURE.md`：稳定架构与 ADR；
-- `TESTING.md`：测试方法和覆盖边界；
-- `SECURITY.md`：威胁模型与安全使用方式；
-- `CHANGELOG.md`：版本变化。
-
-历史规划和旧报告进入 archive，不继续以“当前状态”形式维护。
+在最后一级之前，不得把 Phase 6 标记为 Frozen。
 
 ## 12. 暂不进入近期范围
 
@@ -784,85 +773,49 @@ RepoMap 按需调用，不自动注入每个 prompt。
 
 版本号表达交付边界，不代表日期承诺：
 
-### v1.0.0：多 Provider CLI 基线
+### v1.0.0：六阶段可信 CLI 基线
 
-- 多 Provider 协议适配；
-- 连续 CLI 对话；
-- 基础 Tool Loop；
-- 用户配置驱动的 Provider/模型切换；
-- 15 项离线测试；
-- 真实能力与安全限制文档。
+- Phase 1–5.1 的工具、事件、上下文、会话与扩展边界；
+- OpenAI-compatible 流式和 Anthropic 非流式协议；
+- 固定 Coding Agent Eval 与跨平台候选包验证；
+- Apache-2.0 公开仓库和公开 npm CLI 包；
+- 人工门控发布，不包含自动更新或遥测。
 
-### v1.1.0：安全 Tool Runtime
+### v1.x：基于真实需求的小步迭代
 
-- 结构化工具契约和错误；
-- 运行时输入校验；
-- 工作区路径边界；
-- 异步 Shell；
-- 超时、取消和审批；
-- 文件 diff 与工具安全测试。
-
-### v1.2.0：事件与 Provider 可靠性
-
-- Agent Event Stream；
-- 流式输出；
-- Provider typed errors；
-- usage、finish reason 和延迟；
-- 有限重试与执行审计。
-
-### v1.3.0：代码库上下文与可靠编辑
-
-- Glob/Grep/Range Read/Patch/Diagnostics；
-- Context Manager；
-- compaction；
-- TypeScript repo map；
-- coding-task eval。
-
-### v1.4.0：会话与终端产品化
-
-- ask/plan/code 模式；
-- 会话保存和恢复；
-- 状态、成本和上下文命令；
-- 配置迁移与 doctor；
-- 稳定 TUI。
+- 修复真实用户发现的可靠性、安全和兼容性问题；
+- 根据独立设计评估 Anthropic 流式或 OpenAI Responses API；
+- 根据需求评估 `@` 上下文、`$` Skills、LSP、MCP OAuth 和完整 TUI；
+- 不以功能数量为目标，不破坏 v1.0 已冻结的安全边界。
 
 ### v2.0.0 候选方向
 
-只有 MCP、Hooks、受限子 Agent、长期任务恢复和跨平台发布均达到稳定验收后，才评估 `v2.0.0`。
+只有出现需要不兼容配置、事件或会话协议变更的真实需求，并且迁移方案、回滚方案和跨平台验证均成熟后，才评估 `v2.0.0`。
 
 ## 14. 最近行动清单
 
 ### 已完成
 
-- [x] Phase 1 至 Phase 4 全部冻结并保留回归；
-- [x] 建立 workspace trust 与用户/项目扩展配置合并；
-- [x] 完成 MCP Broker、stdio/HTTP、legacy/modern 与动态风险；
-- [x] 完成有序 Hooks、失败策略、环境脱敏和进程限制；
-- [x] 完成只读 Subagent、Provider fork、预算和父级取消；
-- [x] 完成 Phase 5.0 Core 非冻结检查点；
-- [x] 完成 Trust V2、MCP 策略与连接生命周期加固；
-- [x] 完成扩展状态、生命周期 Hook 与 Subagent 预算闭环；
-- [x] 扩展自动化套件到 253 项；
-- [x] 新增 SECURITY 与扩展使用文档；
-- [x] 完成 11 项真实终端 dogfood 与公开远程 MCP smoke test；
-- [x] 标记 Phase 5 Frozen。
+- [x] Phase 1 至 Phase 5.1 全部冻结并保留回归；
+- [x] 建立 Phase 6 工程质量、Provider 契约和固定 Eval；
+- [x] 建立 CI、供应链、tarball 和人工发布门禁；
+- [x] 新增 LICENSE、ARCHITECTURE、TESTING 与 CHANGELOG；
+- [x] 保持 AgentEvent、Provider、工具、会话和配置公共契约不变。
 
-### 冻结验收
+### Phase 6 待验收
 
-- [x] 全量自动化回归通过；
-- [x] 官方 v2 stdio 与本地 Streamable HTTP 传输回归通过；
-- [x] 环境、NDJSON、审计和管理输出脱敏回归通过；
-- [x] 完成真实 DeepSeek 的 Trust V2、MCP 策略/重连、Hook 和 Subagent 预算 dogfood；
-- [x] 完成用户人工验收；
-- [x] 标记 Phase 5 Frozen。
+- [x] 完整本地自动化通过并标记 Implemented；
+- [ ] Windows/Linux CI 和候选包通过并标记 Validated；
+- [ ] 用户完成 RC dogfood；
+- [ ] fast-forward `main`；
+- [ ] 发布 npm、annotated Tag 和 GitHub Release；
+- [ ] registry 安装复验后标记 Frozen。
 
-### 下一阶段入口
+### 当前入口
 
-Phase 5 已冻结。Phase 6 重点转向持续评测、跨平台 CI、发布和工程治理，不在 Phase 5 继续扩展生态能力。
+推送 Phase 6 分支并运行 Windows/Linux CI 与候选包 job。CI 和人工验收未发生前，不进入发布步骤，也不追加已明确排除的 Agent 能力。
 
 ## 15. 路线图完成标准
-
-
 
 当项目最终达到本路线图所描述的成熟状态时，应具备以下特征：
 

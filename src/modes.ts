@@ -8,7 +8,7 @@ export const DEFAULT_AGENT_MODE: AgentMode = 'code';
 
 export function parseAgentMode(value: string): AgentMode | undefined {
   const normalized = value.trim().toLowerCase();
-  return AGENT_MODES.find(mode => mode === normalized);
+  return AGENT_MODES.find((mode) => mode === normalized);
 }
 
 export function agentModeDescription(mode: AgentMode): string {
@@ -26,15 +26,10 @@ export function isToolAllowedInMode(
   mode: AgentMode,
   tool: Pick<ToolDefinition, 'risk' | 'modeAccess'>
 ): boolean {
-  return mode === 'code' ||
-    tool.risk === 'read' ||
-    tool.modeAccess === 'all-modes';
+  return mode === 'code' || tool.risk === 'read' || tool.modeAccess === 'all-modes';
 }
 
-export function isToolRiskAllowedInMode(
-  mode: AgentMode,
-  risk: ToolDefinition['risk']
-): boolean {
+export function isToolRiskAllowedInMode(mode: AgentMode, risk: ToolDefinition['risk']): boolean {
   return mode === 'code' || risk === 'read';
 }
 

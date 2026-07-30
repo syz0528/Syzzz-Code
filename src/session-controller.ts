@@ -67,9 +67,7 @@ function normalizeTitle(value: string): string {
 
 function deriveTitle(message: string): string {
   const normalized = message.replace(/\s+/g, ' ').trim();
-  return normalized
-    ? normalized.slice(0, 72)
-    : DEFAULT_SESSION_TITLE;
+  return normalized ? normalized.slice(0, 72) : DEFAULT_SESSION_TITLE;
 }
 
 function messageForError(error: unknown): string {
@@ -106,20 +104,15 @@ export class SessionController {
     this.title = normalizeTitle(options.title ?? DEFAULT_SESSION_TITLE);
     this.now = options.now ?? Date.now;
     this.idFactory = options.idFactory ?? randomUUID;
-    this.warn = options.warn ??
-      (message => process.stderr.write(`${message}\n`));
+    this.warn = options.warn ?? ((message) => process.stderr.write(`${message}\n`));
     const now = new Date(this.now()).toISOString();
     this.createdAt = now;
     this.updatedAt = now;
   }
 
-  static async create(
-    options: SessionControllerOptions
-  ): Promise<SessionController> {
+  static async create(options: SessionControllerOptions): Promise<SessionController> {
     const controller = new SessionController(options);
-    controller.lease = await options.store.acquire(
-      options.engine.getSessionId()
-    );
+    controller.lease = await options.store.acquire(options.engine.getSessionId());
     controller.attachCheckpointHandler();
     return controller;
   }
@@ -143,9 +136,7 @@ export class SessionController {
       revision: this.revision,
       autoSave: this.autoSave,
       dirty: this.dirty,
-      persistence: this.autoSave
-        ? this.degraded ? 'degraded' : 'healthy'
-        : 'disabled',
+      persistence: this.autoSave ? (this.degraded ? 'degraded' : 'healthy') : 'disabled',
       ...(this.lastSavedAt ? { lastSavedAt: this.lastSavedAt } : {})
     };
   }
@@ -192,7 +183,7 @@ export class SessionController {
   }
 
   async continueLatest(): Promise<SessionSwitchResult> {
-    const latest = (await this.store.list()).find(session => session.available);
+    const latest = (await this.store.list()).find((session) => session.available);
     if (!latest) {
       throw new Error('No saved session exists for this workspace');
     }
@@ -363,16 +354,14 @@ export class SessionController {
           await this.saveState(state);
         }
       },
-      error => this.reportPersistenceFailure(error)
+      (error) => this.reportPersistenceFailure(error)
     );
     this.currentEngine.setPersistenceStatusProvider(() => {
       const status = this.getStatus();
       return {
         state: status.persistence,
         dirty: status.dirty,
-        ...(status.lastSavedAt
-          ? { lastSavedAt: status.lastSavedAt }
-          : {})
+        ...(status.lastSavedAt ? { lastSavedAt: status.lastSavedAt } : {})
       };
     });
   }
@@ -409,9 +398,7 @@ export class SessionController {
     }
   }
 
-  private async saveState(
-    engineState: QueryEngineStateV1
-  ): Promise<SessionMetadata> {
+  private async saveState(engineState: QueryEngineStateV1): Promise<SessionMetadata> {
     const status = this.currentEngine.getStatus();
     const revision = this.revision + 1;
     const updatedAt = new Date(this.now()).toISOString();
@@ -429,9 +416,7 @@ export class SessionController {
       provider: {
         id: this.currentProviderId,
         model: status.provider.model,
-        ...(status.lastReportedModel
-          ? { lastReportedModel: status.lastReportedModel }
-          : {})
+        ...(status.lastReportedModel ? { lastReportedModel: status.lastReportedModel } : {})
       },
       mode: status.mode,
       engineState,

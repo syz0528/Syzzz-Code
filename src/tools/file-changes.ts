@@ -10,10 +10,7 @@ export class FileContentError extends Error {
   constructor(
     message: string,
     readonly code:
-      | 'FILE_TOO_LARGE'
-      | 'NOT_REGULAR_FILE'
-      | 'FILE_CHANGED_DURING_READ'
-      | 'INVALID_UTF8'
+      'FILE_TOO_LARGE' | 'NOT_REGULAR_FILE' | 'FILE_CHANGED_DURING_READ' | 'INVALID_UTF8'
   ) {
     super(message);
     this.name = 'FileContentError';
@@ -42,9 +39,7 @@ export function hashContent(content: string): string {
 }
 
 function errorCode(error: unknown): string | undefined {
-  return error && typeof error === 'object' && 'code' in error
-    ? String(error.code)
-    : undefined;
+  return error && typeof error === 'object' && 'code' in error ? String(error.code) : undefined;
 }
 
 export async function readBoundedUtf8File(
@@ -107,10 +102,7 @@ export async function readBoundedUtf8File(
         ignoreBOM: true
       }).decode(contents);
     } catch {
-      throw new FileContentError(
-        `File is not valid UTF-8: ${targetPath}`,
-        'INVALID_UTF8'
-      );
+      throw new FileContentError(`File is not valid UTF-8: ${targetPath}`, 'INVALID_UTF8');
     }
 
     return {
@@ -176,8 +168,7 @@ export function parseApprovedFileChange(value: unknown): ApprovedFileChange | nu
   const candidate = value as Record<string, unknown>;
   if (
     typeof candidate.targetPath !== 'string' ||
-    (candidate.expectedContentHash !== null &&
-      typeof candidate.expectedContentHash !== 'string') ||
+    (candidate.expectedContentHash !== null && typeof candidate.expectedContentHash !== 'string') ||
     (candidate.expectedSizeBytes !== null &&
       (!Number.isSafeInteger(candidate.expectedSizeBytes) ||
         Number(candidate.expectedSizeBytes) < 0)) ||
@@ -194,15 +185,9 @@ export function parseApprovedFileChange(value: unknown): ApprovedFileChange | nu
     expectedSizeBytes: candidate.expectedSizeBytes as number | null,
     targetMode: candidate.targetMode as number | null,
     proposedContent: candidate.proposedContent,
-    ...(typeof candidate.displayPath === 'string'
-      ? { displayPath: candidate.displayPath }
-      : {}),
-    ...(typeof candidate.approvedDiff === 'string'
-      ? { approvedDiff: candidate.approvedDiff }
-      : {}),
-    ...(typeof candidate.changeCount === 'number'
-      ? { changeCount: candidate.changeCount }
-      : {})
+    ...(typeof candidate.displayPath === 'string' ? { displayPath: candidate.displayPath } : {}),
+    ...(typeof candidate.approvedDiff === 'string' ? { approvedDiff: candidate.approvedDiff } : {}),
+    ...(typeof candidate.changeCount === 'number' ? { changeCount: candidate.changeCount } : {})
   };
 }
 
@@ -256,11 +241,7 @@ export async function applyApprovedFileChange(
   let applied = false;
 
   try {
-    temporaryHandle = await open(
-      temporaryPath,
-      'wx',
-      approvedChange.targetMode ?? 0o666
-    );
+    temporaryHandle = await open(temporaryPath, 'wx', approvedChange.targetMode ?? 0o666);
     await temporaryHandle.writeFile(approvedChange.proposedContent, {
       encoding: 'utf8',
       signal
@@ -284,7 +265,7 @@ export async function applyApprovedFileChange(
       await temporaryHandle.close().catch(() => undefined);
     }
     if (!applied) {
-      await unlink(temporaryPath).catch(error => {
+      await unlink(temporaryPath).catch((error) => {
         if (errorCode(error) !== 'ENOENT') {
           throw error;
         }

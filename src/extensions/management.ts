@@ -101,10 +101,7 @@ function redactedHttpTarget(value: string): string {
 
 function listMcpEntries(workspaceRoot: string): Array<Record<string, unknown>> {
   const project = inspectProjectExtensions(workspaceRoot);
-  const trusted = inspectWorkspaceTrust(
-    workspaceRoot,
-    project.digest
-  ).trusted;
+  const trusted = inspectWorkspaceTrust(workspaceRoot, project.digest).trusted;
   const entries: Array<Record<string, unknown>> = [];
   for (const scope of ['user', 'project'] as const) {
     let config;
@@ -130,9 +127,7 @@ function listMcpEntries(workspaceRoot: string): Array<Record<string, unknown>> {
           active: scope === 'user' || trusted,
           enabled: server.enabled,
           transport: server.type,
-          target: server.type === 'stdio'
-            ? server.command
-            : redactedHttpTarget(server.url),
+          target: server.type === 'stdio' ? server.command : redactedHttpTarget(server.url),
           protocolMode: server.protocolMode
         });
       } catch (error) {
@@ -149,22 +144,24 @@ function listMcpEntries(workspaceRoot: string): Array<Record<string, unknown>> {
   return entries;
 }
 
-export async function manageMcp(
-  request: McpManagementRequest
-): Promise<ManagementResult> {
+export async function manageMcp(request: McpManagementRequest): Promise<ManagementResult> {
   const action = request.action.toLowerCase();
   if (action === 'list') {
     const entries = listMcpEntries(request.workspaceRoot);
     return {
       json: entries,
-      text: entries.length === 0
-        ? 'No MCP servers are configured.'
-        : entries.map(entry =>
-            `${String(entry.name).padEnd(20)} ` +
-            `${String(entry.transport ?? 'invalid').padEnd(7)} ` +
-            `${entry.enabled === false ? 'disabled' : entry.active ? 'active' : 'inactive'} ` +
-            `[${entry.scope}]`
-          ).join('\n')
+      text:
+        entries.length === 0
+          ? 'No MCP servers are configured.'
+          : entries
+              .map(
+                (entry) =>
+                  `${String(entry.name).padEnd(20)} ` +
+                  `${String(entry.transport ?? 'invalid').padEnd(7)} ` +
+                  `${entry.enabled === false ? 'disabled' : entry.active ? 'active' : 'inactive'} ` +
+                  `[${entry.scope}]`
+              )
+              .join('\n')
     };
   }
 
@@ -176,19 +173,20 @@ export async function manageMcp(
       forbiddenEnvironmentNames: request.forbiddenEnvironmentNames
     });
     try {
-      const statuses = await runtime.mcp.doctor(
-        request.signal,
-        request.name
-      );
+      const statuses = await runtime.mcp.doctor(request.signal, request.name);
       return {
         json: statuses,
-        text: statuses.length === 0
-          ? 'No active MCP servers are configured.'
-          : statuses.map(status =>
-              `${status.name.padEnd(20)} ${status.state.padEnd(12)} ` +
-              `${status.toolCount} tools` +
-              `${status.errorCode ? ` (${status.errorCode})` : ''}`
-            ).join('\n')
+        text:
+          statuses.length === 0
+            ? 'No active MCP servers are configured.'
+            : statuses
+                .map(
+                  (status) =>
+                    `${status.name.padEnd(20)} ${status.state.padEnd(12)} ` +
+                    `${status.toolCount} tools` +
+                    `${status.errorCode ? ` (${status.errorCode})` : ''}`
+                )
+                .join('\n')
       };
     } finally {
       await runtime.close();
@@ -203,18 +201,10 @@ export async function manageMcp(
     const toolName = request.command[0];
     const policy = request.command[1];
     if (!toolName || !policy || request.command.length !== 2) {
-      throw new Error(
-        'mcp policy requires <server> <tool> execute|disabled|reset'
-      );
+      throw new Error('mcp policy requires <server> <tool> execute|disabled|reset');
     }
-    const qualifiedName = validateQualifiedMcpToolName(
-      `${name}__${toolName}`
-    );
-    if (
-      policy !== 'execute' &&
-      policy !== 'disabled' &&
-      policy !== 'reset'
-    ) {
+    const qualifiedName = validateQualifiedMcpToolName(`${name}__${toolName}`);
+    if (policy !== 'execute' && policy !== 'disabled' && policy !== 'reset') {
       throw new Error('MCP tool policy must be execute, disabled, or reset');
     }
     const toolPolicies = {
@@ -225,9 +215,7 @@ export async function manageMcp(
     } else {
       toolPolicies[qualifiedName] = policy;
     }
-    config.syzzz = Object.keys(toolPolicies).length > 0
-      ? { toolPolicies }
-      : undefined;
+    config.syzzz = Object.keys(toolPolicies).length > 0 ? { toolPolicies } : undefined;
     saveRawMcpConfig(scope, request.workspaceRoot, config);
     return {
       json: {
@@ -241,9 +229,7 @@ export async function manageMcp(
         `${policy === 'reset' ? 'Reset' : 'Set'} MCP policy for ` +
         `${qualifiedName}${policy === 'reset' ? '' : ` to ${policy}`} ` +
         `[${scope}].` +
-        (scope === 'project'
-          ? ' Project extensions require /trust review after this change.'
-          : '')
+        (scope === 'project' ? ' Project extensions require /trust review after this change.' : '')
     };
   }
 
@@ -296,9 +282,7 @@ export async function manageMcp(
           ([qualifiedName]) => !qualifiedName.startsWith(`${name}__`)
         )
       );
-      config.syzzz = Object.keys(remaining).length > 0
-        ? { toolPolicies: remaining }
-        : undefined;
+      config.syzzz = Object.keys(remaining).length > 0 ? { toolPolicies: remaining } : undefined;
     }
     saveRawMcpConfig(scope, request.workspaceRoot, config);
     return {
@@ -308,10 +292,7 @@ export async function manageMcp(
   }
 
   if (action === 'enable' || action === 'disable') {
-    const server = rawRecord(
-      config.mcpServers[name],
-      `mcpServers.${name}`
-    );
+    const server = rawRecord(config.mcpServers[name], `mcpServers.${name}`);
     server.enabled = action === 'enable';
     validateMcpServerConfig(server, `mcpServers.${name}`);
     config.mcpServers[name] = server;
@@ -322,17 +303,12 @@ export async function manageMcp(
     };
   }
 
-  throw new Error(
-    'mcp action must be list, add, remove, enable, disable, policy, or doctor'
-  );
+  throw new Error('mcp action must be list, add, remove, enable, disable, policy, or doctor');
 }
 
 function listHookEntries(workspaceRoot: string): Array<Record<string, unknown>> {
   const project = inspectProjectExtensions(workspaceRoot);
-  const trusted = inspectWorkspaceTrust(
-    workspaceRoot,
-    project.digest
-  ).trusted;
+  const trusted = inspectWorkspaceTrust(workspaceRoot, project.digest).trusted;
   const entries: Array<Record<string, unknown>> = [];
   for (const scope of ['user', 'project'] as const) {
     let file;
@@ -373,43 +349,44 @@ function listHookEntries(workspaceRoot: string): Array<Record<string, unknown>> 
   return entries;
 }
 
-function findHookIndex(
-  hooks: unknown[],
-  name: string
-): number {
-  return hooks.findIndex(value =>
-    typeof value === 'object' &&
-    value !== null &&
-    !Array.isArray(value) &&
-    (value as { name?: unknown }).name === name
+function findHookIndex(hooks: unknown[], name: string): number {
+  return hooks.findIndex(
+    (value) =>
+      typeof value === 'object' &&
+      value !== null &&
+      !Array.isArray(value) &&
+      (value as { name?: unknown }).name === name
   );
 }
 
-export async function manageHooks(
-  request: HookManagementRequest
-): Promise<ManagementResult> {
+export async function manageHooks(request: HookManagementRequest): Promise<ManagementResult> {
   const action = request.action.toLowerCase();
   if (action === 'list' || action === 'doctor') {
     const entries = listHookEntries(request.workspaceRoot);
-    const diagnosed: Array<Record<string, unknown>> = action === 'doctor'
-      ? entries.map(entry => ({
-          ...entry,
-          executable:
-            entry.valid === false
-              ? false
-              : typeof entry.command === 'string' &&
-                (isAbsolute(entry.command) || !/[\\/]/.test(entry.command))
-        }))
-      : entries;
+    const diagnosed: Array<Record<string, unknown>> =
+      action === 'doctor'
+        ? entries.map((entry) => ({
+            ...entry,
+            executable:
+              entry.valid === false
+                ? false
+                : typeof entry.command === 'string' &&
+                  (isAbsolute(entry.command) || !/[\\/]/.test(entry.command))
+          }))
+        : entries;
     return {
       json: diagnosed,
-      text: diagnosed.length === 0
-        ? 'No Hooks are configured.'
-        : diagnosed.map(entry =>
-            `${String(entry.name ?? `index:${entry.index}`).padEnd(20)} ` +
-            `${String(entry.event ?? 'invalid').padEnd(14)} ` +
-            `${entry.active ? 'active' : 'inactive'} [${entry.scope}]`
-          ).join('\n')
+      text:
+        diagnosed.length === 0
+          ? 'No Hooks are configured.'
+          : diagnosed
+              .map(
+                (entry) =>
+                  `${String(entry.name ?? `index:${entry.index}`).padEnd(20)} ` +
+                  `${String(entry.event ?? 'invalid').padEnd(14)} ` +
+                  `${entry.active ? 'active' : 'inactive'} [${entry.scope}]`
+              )
+              .join('\n')
     };
   }
 
@@ -469,10 +446,8 @@ export async function manageHooks(
   saveRawHookConfig(scope, request.workspaceRoot, file);
   return {
     json: { action, name, scope },
-    text: `${action === 'remove'
-      ? 'Removed'
-      : action === 'enable'
-        ? 'Enabled'
-        : 'Disabled'} Hook ${name}.`
+    text: `${
+      action === 'remove' ? 'Removed' : action === 'enable' ? 'Enabled' : 'Disabled'
+    } Hook ${name}.`
   };
 }

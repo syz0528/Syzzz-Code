@@ -170,7 +170,7 @@ function createProviderWithResponses(responses) {
   provider.client = {
     chat: {
       completions: {
-        create: async request => {
+        create: async (request) => {
           requests.push(request);
           const response = responses.shift();
           if (response instanceof Error) {
@@ -223,30 +223,37 @@ test('recovers a reasoning-only stop once with thinking disabled', async () => {
 
 test('preserves reasoning metadata for tool calls without retrying', async () => {
   const { provider, requests } = createProviderWithResponses([
-    completion({
-      role: 'assistant',
-      content: '',
-      reasoning_content: 'I need to inspect the file.',
-      tool_calls: [{
-        id: 'call-2',
-        type: 'function',
-        function: {
-          name: 'Read',
-          arguments: '{"path":"package.json"}'
-        }
-      }]
-    }, 'tool_calls')
+    completion(
+      {
+        role: 'assistant',
+        content: '',
+        reasoning_content: 'I need to inspect the file.',
+        tool_calls: [
+          {
+            id: 'call-2',
+            type: 'function',
+            function: {
+              name: 'Read',
+              arguments: '{"path":"package.json"}'
+            }
+          }
+        ]
+      },
+      'tool_calls'
+    )
   ]);
 
   const result = await provider.chat(basicRequest);
 
   assert.equal(requests.length, 1);
   assert.equal(result.message.reasoningContent, 'I need to inspect the file.');
-  assert.deepEqual(result.message.toolCalls, [{
-    id: 'call-2',
-    name: 'Read',
-    input: { path: 'package.json' }
-  }]);
+  assert.deepEqual(result.message.toolCalls, [
+    {
+      id: 'call-2',
+      name: 'Read',
+      input: { path: 'package.json' }
+    }
+  ]);
 });
 
 test('fails clearly when the single empty-response recovery is exhausted', async () => {

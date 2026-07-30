@@ -155,26 +155,22 @@ test('interactive session lifecycle commands remain local and compose', () => {
     });
   `;
 
-  const result = spawnSync(
-    process.execPath,
-    ['--input-type=module', '--eval', script],
-    {
-      cwd: projectDirectory,
-      encoding: 'utf8',
-      input: [
-        '/rename Better title',
-        '/save',
-        '/compact',
-        '/provider beta',
-        '/new Fresh',
-        '/resume dddddddd',
-        '/status',
-        '/exit',
-        ''
-      ].join('\n'),
-      timeout: 5_000
-    }
-  );
+  const result = spawnSync(process.execPath, ['--input-type=module', '--eval', script], {
+    cwd: projectDirectory,
+    encoding: 'utf8',
+    input: [
+      '/rename Better title',
+      '/save',
+      '/compact',
+      '/provider beta',
+      '/new Fresh',
+      '/resume dddddddd',
+      '/status',
+      '/exit',
+      ''
+    ].join('\n'),
+    timeout: 5_000
+  });
 
   assert.equal(result.status, 0, result.stderr || result.error?.message);
   assert.match(result.stdout, /MARK:rename:Better title/);
@@ -226,16 +222,12 @@ test('autosave-off session switching requires explicit discard confirmation', ()
     await runInteractiveSession(engine, { session });
   `;
 
-  const result = spawnSync(
-    process.execPath,
-    ['--input-type=module', '--eval', script],
-    {
-      cwd: projectDirectory,
-      encoding: 'utf8',
-      input: 'hello\n/new\nn\n/exit\n',
-      timeout: 5_000
-    }
-  );
+  const result = spawnSync(process.execPath, ['--input-type=module', '--eval', script], {
+    cwd: projectDirectory,
+    encoding: 'utf8',
+    input: 'hello\n/new\nn\n/exit\n',
+    timeout: 5_000
+  });
 
   assert.equal(result.status, 0, result.stderr || result.error?.message);
   assert.match(result.stdout, /HANDLED:hello/);

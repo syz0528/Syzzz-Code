@@ -1,0 +1,96 @@
+name: Publish npm Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Exact package version to publish
+        required: true
+        default: 1.0.0
+      confirmation:
+        description: Type "publish syzzz-code@<version>"
+        required: true
+
+concurrency:
+  group: npm-release
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  publish:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    environment: npm-release
+    permissions:
+      contents: write
+      id-token: write
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 24
+          cache: npm
+          registry-url: https://registry.npmjs.org
+      - name: Validate manual gate
+        env:
+          RELEASE_VERSION: ${{ inputs.version }}
+          RELEASE_CONFIRMATION: ${{ inputs.confirmation }}
+        run: |
+          node --input-type=module -e "
+            import p from './package.json' with { type: 'json' };
+            const expected = 'publish ' + p.name + '@' + p.version;
+            if (process.env.RELEASE_VERSION !== p.version || process.env.RELEASE_CONFIRMATION !== expected) {
+              throw new Error('Release version or confirmation does not match ' + expected);
+            }
+          "
+      - run: npm ci
+      - run: npm run release:verify
+      - name: Create canonical tarball
+        run: |
+          mkdir -p artifacts
+          npm pack --json --pack-destination artifacts > artifacts/pack.json
+          node scripts/write-release-metadata.mjs
+      - name: Publish or verify registry copy
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: node scripts/publish-package.mjs
+      - name: Revoke the one-time npm token
+        if: always()
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: |
+          if [ -n "${NODE_AUTH_TOKEN}" ]; then
+            npm token revoke "${NODE_AUTH_TOKEN}"
+            echo "::notice::The one-time granular NPM_TOKEN was revoked."
+          else
+            echo "::notice::No granular token was supplied; publication used Trusted Publishing."
+          fi
+          echo "::notice::Verify token revocation and configure npm Trusted Publishing before the next release."
+      - name: Create annotated tag and GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          VERSION="$(node -p "require('./package.json').version")"
+          TARBALL="$(node -p "require('./artifacts/release.json').tarball")"
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          if git rev-parse "v${VERSION}" >/dev/null 2>&1; then
+            test "$(git rev-list -n 1 "v${VERSION}")" = "$(git rev-parse HEAD)"
+          else
+            git tag -a "v${VERSION}" -m "Syzzz Code v${VERSION}"
+            git push origin "v${VERSION}"
+          fi
+          if gh release view "v${VERSION}" >/dev/null 2>&1; then
+            echo "GitHub Release v${VERSION} already exists"
+          else
+            gh release create "v${VERSION}" \
+              "artifacts/${TARBALL}" \
+              artifacts/SHA256SUMS \
+              artifacts/eval-summary.json \
+              --title "Syzzz Code v${VERSION}" \
+              --notes-file CHANGELOG.md
+          fi

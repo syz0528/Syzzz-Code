@@ -1,10 +1,5 @@
 import { createRequire } from 'node:module';
-import {
-  access,
-  constants,
-  mkdir,
-  stat
-} from 'node:fs/promises';
+import { access, constants, mkdir, stat } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { join } from 'node:path';
@@ -73,25 +68,18 @@ async function checkPrivateDirectory(
       `${path}; mode ${mode.toString(8).padStart(3, '0')}, expected 700`
     );
   } catch (error) {
-    check(
-      checks,
-      name,
-      'error',
-      error instanceof Error ? error.message : String(error)
-    );
+    check(checks, name, 'error', error instanceof Error ? error.message : String(error));
   }
 }
 
-export async function runDoctor(
-  workspaceRoot: string = process.cwd()
-): Promise<DoctorResult> {
+export async function runDoctor(workspaceRoot: string = process.cwd()): Promise<DoctorResult> {
   const checks: DoctorCheck[] = [];
   const nodeMajor = Number.parseInt(process.versions.node.split('.')[0], 10);
   check(
     checks,
     'Node.js',
-    nodeMajor >= 20 ? 'ok' : 'error',
-    `Node ${process.versions.node}; version 20 or newer is required`
+    nodeMajor >= 22 ? 'ok' : 'error',
+    `Node ${process.versions.node}; version 22 or newer is required`
   );
 
   const inspection = inspectConfig();
@@ -125,9 +113,7 @@ export async function runDoctor(
         ? 'Legacy configuration is valid and will migrate to schema v1'
         : 'Schema v1 is valid'
     );
-    const current = inspection.config.providers[
-      inspection.config.currentProvider
-    ];
+    const current = inspection.config.providers[inspection.config.currentProvider];
     const credential = resolveProviderCredential(current);
     check(
       checks,
@@ -138,48 +124,31 @@ export async function runDoctor(
         : credential.source === 'stored'
           ? 'Current Provider credentials resolve from the private config file'
           : `Current Provider has no usable credentials` +
-            (credential.environmentVariable
-              ? `; ${credential.environmentVariable} is unset`
-              : '')
+            (credential.environmentVariable ? `; ${credential.environmentVariable} is unset` : '')
     );
-    check(
-      checks,
-      'Model',
-      'ok',
-      `Configured model: ${current.model}`
-    );
+    check(checks, 'Model', 'ok', `Configured model: ${current.model}`);
     const endpoint = new URL(current.env.BASE_URL);
-    check(
-      checks,
-      'Endpoint',
-      'ok',
-      endpoint.origin
-    );
+    check(checks, 'Endpoint', 'ok', endpoint.origin);
   }
 
   const extensionPaths = getExtensionConfigPaths(workspaceRoot);
   const extensionConfiguration = loadExtensionConfiguration(workspaceRoot);
   const projectInspection = inspectProjectExtensions(workspaceRoot);
-  const trustInspection = inspectWorkspaceTrust(
-    workspaceRoot,
-    projectInspection.digest
-  );
-  const extensionWarnings = [...new Set([
-    ...extensionConfiguration.warnings,
-    ...projectInspection.warnings
-  ])];
+  const trustInspection = inspectWorkspaceTrust(workspaceRoot, projectInspection.digest);
+  const extensionWarnings = [
+    ...new Set([...extensionConfiguration.warnings, ...projectInspection.warnings])
+  ];
   check(
     checks,
     'MCP configuration',
     extensionWarnings.length > 0 ? 'warning' : 'ok',
     extensionWarnings.length > 0
       ? `${extensionWarnings.length} extension configuration warning(s); ` +
-        'run "syzzz mcp list" and "syzzz hooks list" for details'
+          'run "syzzz mcp list" and "syzzz hooks list" for details'
       : `${extensionConfiguration.mcpServers.length} active server(s); offline validation only`
   );
   const projectConfigurationPresent =
-    existsSync(extensionPaths.projectMcp) ||
-    existsSync(extensionPaths.projectHooks);
+    existsSync(extensionPaths.projectMcp) || existsSync(extensionPaths.projectHooks);
   check(
     checks,
     'Workspace trust',
@@ -193,11 +162,7 @@ export async function runDoctor(
       : 'No project extension files are present'
   );
 
-  await checkPrivateDirectory(
-    checks,
-    'Config directory',
-    getConfigDirectory()
-  );
+  await checkPrivateDirectory(checks, 'Config directory', getConfigDirectory());
 
   if (inspection.status !== 'missing') {
     try {
@@ -243,18 +208,11 @@ export async function runDoctor(
     }
     check(checks, 'ripgrep', 'ok', 'Bundled executable is available');
   } catch (error) {
-    check(
-      checks,
-      'ripgrep',
-      'error',
-      error instanceof Error ? error.message : String(error)
-    );
+    check(checks, 'ripgrep', 'error', error instanceof Error ? error.message : String(error));
   }
 
   try {
-    const workerPath = fileURLToPath(
-      new URL('./tools/analysis-worker.js', import.meta.url)
-    );
+    const workerPath = fileURLToPath(new URL('./tools/analysis-worker.js', import.meta.url));
     const workerStats = await stat(workerPath);
     if (!workerStats.isFile()) {
       throw new Error('analysis Worker is not a regular file');
@@ -271,28 +229,15 @@ export async function runDoctor(
 
   try {
     const store = await SessionStore.create({ workspaceRoot });
-    await checkPrivateDirectory(
-      checks,
-      'Sessions',
-      store.workspaceDirectory
-    );
+    await checkPrivateDirectory(checks, 'Sessions', store.workspaceDirectory);
   } catch (error) {
-    check(
-      checks,
-      'Sessions',
-      'error',
-      error instanceof Error ? error.message : String(error)
-    );
+    check(checks, 'Sessions', 'error', error instanceof Error ? error.message : String(error));
   }
 
-  await checkPrivateDirectory(
-    checks,
-    'Audit',
-    join(getConfigDirectory(), 'audit')
-  );
+  await checkPrivateDirectory(checks, 'Audit', join(getConfigDirectory(), 'audit'));
 
   return {
     checks,
-    hasErrors: checks.some(item => item.status === 'error')
+    hasErrors: checks.some((item) => item.status === 'error')
   };
 }

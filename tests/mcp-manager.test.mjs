@@ -4,10 +4,7 @@ import { access, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { createServer } from 'node:http';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import {
-  McpManager,
-  resolveMcpStdioInvocation
-} from '../dist/extensions/mcp-manager.js';
+import { McpManager, resolveMcpStdioInvocation } from '../dist/extensions/mcp-manager.js';
 
 function server(name = 'fixture') {
   return {
@@ -61,23 +58,24 @@ function fakeFactory(options = {}) {
       return {
         async listTools() {
           state.listCalls += 1;
-          return options.tools ?? [
-            tool('read_data', true),
-            tool('mutate_data', false)
-          ];
+          return options.tools ?? [tool('read_data', true), tool('mutate_data', false)];
         },
         async callTool(selected, input) {
           state.callCalls += 1;
           if (options.callError) {
             throw options.callError;
           }
-          return options.result ?? {
-            content: [{
-              type: 'text',
-              text: `${selected.name}:${input.value}`
-            }],
-            isError: false
-          };
+          return (
+            options.result ?? {
+              content: [
+                {
+                  type: 'text',
+                  text: `${selected.name}:${input.value}`
+                }
+              ],
+              isError: false
+            }
+          );
         },
         async close() {
           state.closes += 1;
@@ -135,38 +133,37 @@ test('local MCP policies only tighten tools and contradictory hints fail closed'
   const manager = new McpManager({
     workspaceRoot: process.cwd(),
     servers: [server()],
-    toolPolicies: [{
-      qualifiedName: 'fixture__read_data',
-      policy: 'disabled',
-      sources: ['user']
-    }, {
-      qualifiedName: 'fixture__forced',
-      policy: 'execute',
-      sources: ['project']
-    }],
+    toolPolicies: [
+      {
+        qualifiedName: 'fixture__read_data',
+        policy: 'disabled',
+        sources: ['user']
+      },
+      {
+        qualifiedName: 'fixture__forced',
+        policy: 'execute',
+        sources: ['project']
+      }
+    ],
     connectionFactory: fake.factory
   });
   const signal = new AbortController().signal;
 
   const search = await manager.search({}, signal);
   assert.deepEqual(
-    search.tools.map(entry => entry.qualifiedName),
+    search.tools.map((entry) => entry.qualifiedName),
     ['fixture__conflicted', 'fixture__forced']
   );
   await assert.rejects(
     manager.resolveTool('fixture__read_data', signal),
-    error => error.code === 'policy_denied'
+    (error) => error.code === 'policy_denied'
   );
   const inspection = await manager.inspectServer('fixture', signal);
-  const conflicted = inspection.tools.find(entry =>
-    entry.qualifiedName === 'fixture__conflicted'
+  const conflicted = inspection.tools.find(
+    (entry) => entry.qualifiedName === 'fixture__conflicted'
   );
-  const disabled = inspection.tools.find(entry =>
-    entry.qualifiedName === 'fixture__read_data'
-  );
-  const forced = inspection.tools.find(entry =>
-    entry.qualifiedName === 'fixture__forced'
-  );
+  const disabled = inspection.tools.find((entry) => entry.qualifiedName === 'fixture__read_data');
+  const forced = inspection.tools.find((entry) => entry.qualifiedName === 'fixture__forced');
   assert.equal(disabled.risk, 'disabled');
   assert.equal(disabled.riskSource, 'local-policy');
   assert.deepEqual(disabled.policySources, ['user']);
@@ -217,7 +214,7 @@ test('a connection failure is not replayed and the next action reconnects', asyn
 
   await assert.rejects(
     manager.call('fixture__read_data', { value: 'one' }, signal),
-    error => error.code === 'connection'
+    (error) => error.code === 'connection'
   );
   assert.equal(fake.state.callCalls, 1);
   assert.equal(manager.getStatuses()[0].state, 'error');
@@ -246,15 +243,11 @@ test('MCP calls validate input, do not retry, and mark bounded output untrusted'
 
   await assert.rejects(
     manager.call('fixture__read_data', {}, signal),
-    error => error.code === 'validation'
+    (error) => error.code === 'validation'
   );
   assert.equal(fake.state.callCalls, 0);
 
-  const result = await manager.call(
-    'fixture__read_data',
-    { value: 'ok' },
-    signal
-  );
+  const result = await manager.call('fixture__read_data', { value: 'ok' }, signal);
   assert.match(result.content, /untrusted_mcp_output/);
   assert.equal(Buffer.byteLength(result.content, 'utf8') <= 40 * 1024, true);
   assert.equal(result.metadata.outputTruncated, true);
@@ -270,11 +263,7 @@ test('MCP side-effect calls are never replayed after a remote failure', async ()
   });
 
   await assert.rejects(
-    manager.call(
-      'fixture__mutate_data',
-      { value: 'once' },
-      new AbortController().signal
-    ),
+    manager.call('fixture__mutate_data', { value: 'once' }, new AbortController().signal),
     /remote exploded/
   );
   assert.equal(fake.state.callCalls, 1);
@@ -289,22 +278,11 @@ test('Windows batch MCP commands use an explicit ComSpec invocation', () => {
     ),
     {
       command: 'C:\\Windows\\System32\\cmd.exe',
-      args: [
-        '/d',
-        '/c',
-        'call',
-        'fixture.cmd',
-        '--value',
-        'hello world'
-      ]
+      args: ['/d', '/c', 'call', 'fixture.cmd', '--value', 'hello world']
     }
   );
   assert.deepEqual(
-    resolveMcpStdioInvocation(
-      { command: '/usr/bin/node', args: ['server.mjs'] },
-      'linux',
-      {}
-    ),
+    resolveMcpStdioInvocation({ command: '/usr/bin/node', args: ['server.mjs'] }, 'linux', {}),
     {
       command: '/usr/bin/node',
       args: ['server.mjs']
@@ -338,19 +316,24 @@ test('malformed catalog tools are isolated and catalog output is bounded', async
   assert.equal(result.truncated, true);
   assert.equal(Buffer.byteLength(result.content, 'utf8') <= 40 * 1024, true);
   assert.match(result.content, /^<untrusted_mcp_catalog>/);
-  assert.equal(result.tools.some(entry => entry.name === ''), false);
+  assert.equal(
+    result.tools.some((entry) => entry.name === ''),
+    false
+  );
   await manager.close();
 });
 
 test('oversized MCP schemas fail closed even when resolved directly', async () => {
   const fake = fakeFactory({
-    tools: [{
-      ...tool('oversized', true),
-      inputSchema: {
-        type: 'object',
-        description: 'x'.repeat(4 * 1024 * 1024 + 1)
+    tools: [
+      {
+        ...tool('oversized', true),
+        inputSchema: {
+          type: 'object',
+          description: 'x'.repeat(4 * 1024 * 1024 + 1)
+        }
       }
-    }]
+    ]
   });
   const manager = new McpManager({
     workspaceRoot: process.cwd(),
@@ -359,11 +342,8 @@ test('oversized MCP schemas fail closed even when resolved directly', async () =
   });
 
   await assert.rejects(
-    manager.resolveTool(
-      'fixture__oversized',
-      new AbortController().signal
-    ),
-    error => error.code === 'output_limit'
+    manager.resolveTool('fixture__oversized', new AbortController().signal),
+    (error) => error.code === 'output_limit'
   );
   assert.equal(manager.getStatuses()[0].state, 'error');
   assert.equal(manager.getStatuses()[0].errorCode, 'output_limit');
@@ -379,12 +359,8 @@ test('stdio timeouts disconnect the server and calls are not retried', async () 
   });
 
   await assert.rejects(
-    manager.call(
-      'fixture__read_data',
-      { value: 'once' },
-      new AbortController().signal
-    ),
-    error => error.code === 'timeout'
+    manager.call('fixture__read_data', { value: 'once' }, new AbortController().signal),
+    (error) => error.code === 'timeout'
   );
   assert.equal(fake.state.callCalls, 1);
   assert.equal(fake.state.closes, 1);
@@ -406,11 +382,15 @@ test('cancelling an active stdio call disconnects it without replay', async () =
       async callTool(_tool, _input, signal) {
         state.calls += 1;
         return await new Promise((_resolve, reject) => {
-          signal.addEventListener('abort', () => {
-            const error = new Error('cancelled');
-            error.name = 'AbortError';
-            reject(error);
-          }, { once: true });
+          signal.addEventListener(
+            'abort',
+            () => {
+              const error = new Error('cancelled');
+              error.name = 'AbortError';
+              reject(error);
+            },
+            { once: true }
+          );
         });
       },
       async close() {
@@ -419,14 +399,10 @@ test('cancelling an active stdio call disconnects it without replay', async () =
     })
   });
   const controller = new AbortController();
-  const call = manager.call(
-    'fixture__read_data',
-    { value: 'once' },
-    controller.signal
-  );
+  const call = manager.call('fixture__read_data', { value: 'once' }, controller.signal);
   setTimeout(() => controller.abort(), 20);
 
-  await assert.rejects(call, error => error.name === 'AbortError');
+  await assert.rejects(call, (error) => error.name === 'AbortError');
   assert.equal(state.calls, 1);
   assert.equal(state.closes, 1);
   assert.equal(manager.getStatuses()[0].state, 'disconnected');
@@ -439,7 +415,7 @@ async function waitForFile(file, timeoutMs = 3_000) {
       await access(file);
       return;
     } catch {
-      await new Promise(resolve => setTimeout(resolve, 25));
+      await new Promise((resolve) => setTimeout(resolve, 25));
     }
   }
   throw new Error(`Timed out waiting for ${file}`);
@@ -455,33 +431,41 @@ test('official stdio MCP transport stays lazy and strips ambient credentials', a
   const manager = new McpManager({
     workspaceRoot: directory,
     forbiddenEnvironmentNames: ['TEST_PROVIDER_API_KEY'],
-    servers: [{
-      name: 'official',
-      source: 'user',
-      trusted: true,
-      config: {
-        type: 'stdio',
-        command: process.execPath,
-        args: [fixture],
-        env: { MCP_SAFE_VALUE: '${MCP_SAFE_SOURCE}' },
-        enabled: true,
-        startupTimeoutMs: 5_000,
-        toolTimeoutMs: 5_000,
-        protocolMode: 'legacy'
+    servers: [
+      {
+        name: 'official',
+        source: 'user',
+        trusted: true,
+        config: {
+          type: 'stdio',
+          command: process.execPath,
+          args: [fixture],
+          env: { MCP_SAFE_VALUE: '${MCP_SAFE_SOURCE}' },
+          enabled: true,
+          startupTimeoutMs: 5_000,
+          toolTimeoutMs: 5_000,
+          protocolMode: 'legacy'
+        }
       }
-    }]
+    ]
   });
 
   try {
     assert.equal(manager.getStatuses()[0].state, 'disconnected');
     const catalog = await manager.search({}, new AbortController().signal);
     assert.equal(manager.getStatuses()[0].state, 'ready');
-    assert.equal(catalog.tools.some(entry =>
-      entry.qualifiedName === 'official__echo' && entry.risk === 'read'
-    ), true);
-    assert.equal(catalog.tools.some(entry =>
-      entry.qualifiedName === 'official__mutate' && entry.risk === 'execute'
-    ), true);
+    assert.equal(
+      catalog.tools.some(
+        (entry) => entry.qualifiedName === 'official__echo' && entry.risk === 'read'
+      ),
+      true
+    );
+    assert.equal(
+      catalog.tools.some(
+        (entry) => entry.qualifiedName === 'official__mutate' && entry.risk === 'execute'
+      ),
+      true
+    );
 
     const environment = await manager.call(
       'official__environment',
@@ -502,69 +486,66 @@ test('official stdio MCP transport stays lazy and strips ambient credentials', a
     const blockedManager = new McpManager({
       workspaceRoot: directory,
       forbiddenEnvironmentNames: ['TEST_PROVIDER_API_KEY'],
-      servers: [{
-        name: 'blocked',
-        source: 'user',
-        trusted: true,
-        config: {
-          type: 'stdio',
-          command: process.execPath,
-          args: [fixture],
-          env: { MCP_SAFE_VALUE: '${TEST_PROVIDER_API_KEY}' },
-          enabled: true,
-          startupTimeoutMs: 5_000,
-          toolTimeoutMs: 5_000,
-          protocolMode: 'legacy'
+      servers: [
+        {
+          name: 'blocked',
+          source: 'user',
+          trusted: true,
+          config: {
+            type: 'stdio',
+            command: process.execPath,
+            args: [fixture],
+            env: { MCP_SAFE_VALUE: '${TEST_PROVIDER_API_KEY}' },
+            enabled: true,
+            startupTimeoutMs: 5_000,
+            toolTimeoutMs: 5_000,
+            protocolMode: 'legacy'
+          }
         }
-      }]
+      ]
     });
     try {
-      const blocked = await blockedManager.search(
-        {},
-        new AbortController().signal
-      );
-      assert.deepEqual(blocked.errors, [{
-        server: 'blocked',
-        code: 'configuration'
-      }]);
+      const blocked = await blockedManager.search({}, new AbortController().signal);
+      assert.deepEqual(blocked.errors, [
+        {
+          server: 'blocked',
+          code: 'configuration'
+        }
+      ]);
     } finally {
       await blockedManager.close();
     }
 
     if (process.platform === 'win32') {
       const batchFile = path.join(directory, 'mcp fixture.cmd');
-      await writeFile(
-        batchFile,
-        '@echo off\r\n"%~1" "%~2"\r\n',
-        'utf8'
-      );
+      await writeFile(batchFile, '@echo off\r\n"%~1" "%~2"\r\n', 'utf8');
       const batchManager = new McpManager({
         workspaceRoot: directory,
-        servers: [{
-          name: 'batch',
-          source: 'user',
-          trusted: true,
-          config: {
-            type: 'stdio',
-            command: batchFile,
-            args: [process.execPath, fixture],
-            env: {},
-            enabled: true,
-            startupTimeoutMs: 5_000,
-            toolTimeoutMs: 5_000,
-            protocolMode: 'legacy'
+        servers: [
+          {
+            name: 'batch',
+            source: 'user',
+            trusted: true,
+            config: {
+              type: 'stdio',
+              command: batchFile,
+              args: [process.execPath, fixture],
+              env: {},
+              enabled: true,
+              startupTimeoutMs: 5_000,
+              toolTimeoutMs: 5_000,
+              protocolMode: 'legacy'
+            }
           }
-        }]
+        ]
       });
       try {
-        const batchCatalog = await batchManager.search(
-          {},
-          new AbortController().signal
-        );
+        const batchCatalog = await batchManager.search({}, new AbortController().signal);
         assert.equal(batchCatalog.errors.length, 0);
-        assert.equal(batchCatalog.tools.some(entry =>
-          entry.qualifiedName === 'batch__echo'
-        ), true);
+        assert.equal(
+          batchCatalog.tools.some((entry) => entry.qualifiedName === 'batch__echo'),
+          true
+        );
       } finally {
         await batchManager.close();
       }
@@ -589,28 +570,31 @@ test('official stdio MCP transport negotiates the explicitly pinned modern mode'
   const fixture = path.resolve('tests/fixtures/mcp-stdio-server.mjs');
   const manager = new McpManager({
     workspaceRoot: process.cwd(),
-    servers: [{
-      name: 'modern',
-      source: 'user',
-      trusted: true,
-      config: {
-        type: 'stdio',
-        command: process.execPath,
-        args: [fixture],
-        env: {},
-        enabled: true,
-        startupTimeoutMs: 5_000,
-        toolTimeoutMs: 5_000,
-        protocolMode: 'modern'
+    servers: [
+      {
+        name: 'modern',
+        source: 'user',
+        trusted: true,
+        config: {
+          type: 'stdio',
+          command: process.execPath,
+          args: [fixture],
+          env: {},
+          enabled: true,
+          startupTimeoutMs: 5_000,
+          toolTimeoutMs: 5_000,
+          protocolMode: 'modern'
+        }
       }
-    }]
+    ]
   });
   try {
     const catalog = await manager.search({}, new AbortController().signal);
     assert.equal(catalog.errors.length, 0);
-    assert.equal(catalog.tools.some(entry =>
-      entry.qualifiedName === 'modern__echo'
-    ), true);
+    assert.equal(
+      catalog.tools.some((entry) => entry.qualifiedName === 'modern__echo'),
+      true
+    );
     assert.equal(manager.getStatuses()[0].state, 'ready');
   } finally {
     await manager.close();
@@ -628,13 +612,13 @@ async function listen(server) {
 }
 
 async function closeServer(server) {
-  await new Promise(resolve => server.close(resolve));
+  await new Promise((resolve) => server.close(resolve));
 }
 
 function readJsonRequest(request) {
   return new Promise((resolve, reject) => {
     const chunks = [];
-    request.on('data', chunk => chunks.push(chunk));
+    request.on('data', (chunk) => chunks.push(chunk));
     request.once('error', reject);
     request.once('end', () => {
       try {
@@ -672,40 +656,48 @@ test('Streamable HTTP MCP uses configured headers and the legacy handshake', asy
       };
     } else if (message.method === 'tools/list') {
       result = {
-        tools: [{
-          name: 'echo',
-          description: 'echo',
-          inputSchema: {
-            type: 'object',
-            properties: { value: { type: 'string' } },
-            required: ['value'],
-            additionalProperties: false
-          },
-          annotations: { readOnlyHint: true }
-        }]
+        tools: [
+          {
+            name: 'echo',
+            description: 'echo',
+            inputSchema: {
+              type: 'object',
+              properties: { value: { type: 'string' } },
+              required: ['value'],
+              additionalProperties: false
+            },
+            annotations: { readOnlyHint: true }
+          }
+        ]
       };
     } else if (message.method === 'tools/call') {
       result = {
-        content: [{
-          type: 'text',
-          text: `http:${message.params.arguments.value}`
-        }]
+        content: [
+          {
+            type: 'text',
+            text: `http:${message.params.arguments.value}`
+          }
+        ]
       };
     } else {
       response.writeHead(400, { 'content-type': 'application/json' });
-      response.end(JSON.stringify({
-        jsonrpc: '2.0',
-        id: message.id,
-        error: { code: -32601, message: 'not found' }
-      }));
+      response.end(
+        JSON.stringify({
+          jsonrpc: '2.0',
+          id: message.id,
+          error: { code: -32601, message: 'not found' }
+        })
+      );
       return;
     }
     response.writeHead(200, { 'content-type': 'application/json' });
-    response.end(JSON.stringify({
-      jsonrpc: '2.0',
-      id: message.id,
-      result
-    }));
+    response.end(
+      JSON.stringify({
+        jsonrpc: '2.0',
+        id: message.id,
+        result
+      })
+    );
   });
   const url = await listen(httpServer);
   const previousHeader = process.env.MCP_HTTP_TOKEN;
@@ -714,20 +706,22 @@ test('Streamable HTTP MCP uses configured headers and the legacy handshake', asy
   process.env.TEST_PROVIDER_API_KEY = 'ambient-secret';
   const manager = new McpManager({
     workspaceRoot: process.cwd(),
-    servers: [{
-      name: 'http',
-      source: 'user',
-      trusted: true,
-      config: {
-        type: 'http',
-        url,
-        headers: { Authorization: 'Bearer ${MCP_HTTP_TOKEN}' },
-        enabled: true,
-        startupTimeoutMs: 5_000,
-        toolTimeoutMs: 5_000,
-        protocolMode: 'legacy'
+    servers: [
+      {
+        name: 'http',
+        source: 'user',
+        trusted: true,
+        config: {
+          type: 'http',
+          url,
+          headers: { Authorization: 'Bearer ${MCP_HTTP_TOKEN}' },
+          enabled: true,
+          startupTimeoutMs: 5_000,
+          toolTimeoutMs: 5_000,
+          protocolMode: 'legacy'
+        }
       }
-    }]
+    ]
   });
   try {
     const catalog = await manager.search({}, new AbortController().signal);
@@ -738,11 +732,18 @@ test('Streamable HTTP MCP uses configured headers and the legacy handshake', asy
       new AbortController().signal
     );
     assert.match(result.content, /http:hello/);
-    assert.equal(seen.some(entry => entry.method === 'initialize'), true);
-    assert.equal(seen.every(entry =>
-      entry.authorization === 'Bearer header-value'
-    ), true);
-    assert.equal(seen.every(entry => entry.ambient === undefined), true);
+    assert.equal(
+      seen.some((entry) => entry.method === 'initialize'),
+      true
+    );
+    assert.equal(
+      seen.every((entry) => entry.authorization === 'Bearer header-value'),
+      true
+    );
+    assert.equal(
+      seen.every((entry) => entry.ambient === undefined),
+      true
+    );
   } finally {
     await manager.close();
     await closeServer(httpServer);
@@ -773,27 +774,31 @@ test('Streamable HTTP MCP never follows redirects', async () => {
   const redirectUrl = await listen(redirect);
   const manager = new McpManager({
     workspaceRoot: process.cwd(),
-    servers: [{
-      name: 'redirect',
-      source: 'user',
-      trusted: true,
-      config: {
-        type: 'http',
-        url: redirectUrl,
-        headers: {},
-        enabled: true,
-        startupTimeoutMs: 2_000,
-        toolTimeoutMs: 2_000,
-        protocolMode: 'legacy'
+    servers: [
+      {
+        name: 'redirect',
+        source: 'user',
+        trusted: true,
+        config: {
+          type: 'http',
+          url: redirectUrl,
+          headers: {},
+          enabled: true,
+          startupTimeoutMs: 2_000,
+          toolTimeoutMs: 2_000,
+          protocolMode: 'legacy'
+        }
       }
-    }]
+    ]
   });
   try {
     const result = await manager.search({}, new AbortController().signal);
-    assert.deepEqual(result.errors, [{
-      server: 'redirect',
-      code: 'connection'
-    }]);
+    assert.deepEqual(result.errors, [
+      {
+        server: 'redirect',
+        code: 'connection'
+      }
+    ]);
     assert.equal(redirectedRequests, 0);
   } finally {
     await manager.close();
@@ -812,34 +817,34 @@ test(
     const fixture = path.resolve('tests/fixtures/mcp-stdio-server.mjs');
     const manager = new McpManager({
       workspaceRoot: directory,
-      servers: [{
-        name: 'tree',
-        source: 'user',
-        trusted: true,
-        config: {
-          type: 'stdio',
-          command: process.execPath,
-          args: [fixture],
-          env: {
-            MCP_DESCENDANT_READY: ready,
-            MCP_DESCENDANT_SURVIVED: survived
-          },
-          enabled: true,
-          startupTimeoutMs: 5_000,
-          toolTimeoutMs: 5_000,
-          protocolMode: 'legacy'
+      servers: [
+        {
+          name: 'tree',
+          source: 'user',
+          trusted: true,
+          config: {
+            type: 'stdio',
+            command: process.execPath,
+            args: [fixture],
+            env: {
+              MCP_DESCENDANT_READY: ready,
+              MCP_DESCENDANT_SURVIVED: survived
+            },
+            enabled: true,
+            startupTimeoutMs: 5_000,
+            toolTimeoutMs: 5_000,
+            protocolMode: 'legacy'
+          }
         }
-      }]
+      ]
     });
 
     try {
       await manager.search({}, new AbortController().signal);
       await waitForFile(ready);
       await manager.close();
-      await new Promise(resolve => setTimeout(resolve, 1_800));
-      await assert.rejects(readFile(survived, 'utf8'), error =>
-        error?.code === 'ENOENT'
-      );
+      await new Promise((resolve) => setTimeout(resolve, 1_800));
+      await assert.rejects(readFile(survived, 'utf8'), (error) => error?.code === 'ENOENT');
     } finally {
       await manager.close();
       await rm(directory, { recursive: true, force: true });

@@ -34,11 +34,7 @@ export interface WorkspaceTrustInspection {
   warnings: string[];
 }
 
-const TRUST_STORE_PATH = join(
-  homedir(),
-  '.syzzz-code',
-  'trusted-workspaces.json'
-);
+const TRUST_STORE_PATH = join(homedir(), '.syzzz-code', 'trusted-workspaces.json');
 
 function canonicalWorkspacePath(workspaceRoot: string): string {
   let canonical = resolve(workspaceRoot);
@@ -70,11 +66,7 @@ function readTrustStore(): WorkspaceTrustStoreV2 {
   }
   const records: WorkspaceTrustRecordV2[] = [];
   for (const value of (raw as { workspaces: unknown[] }).workspaces) {
-    if (
-      typeof value !== 'object' ||
-      value === null ||
-      Array.isArray(value)
-    ) {
+    if (typeof value !== 'object' || value === null || Array.isArray(value)) {
       throw new Error('trusted-workspaces.json contains an invalid record');
     }
     if (schemaVersion === 1) {
@@ -97,17 +89,10 @@ function readTrustStore(): WorkspaceTrustStoreV2 {
     if (
       record.schemaVersion !== 2 ||
       typeof record.canonicalWorkspaceRoot !== 'string' ||
-      (
-        record.reviewedDigest !== undefined &&
-        (
-          typeof record.reviewedDigest !== 'string' ||
-          !/^[a-f0-9]{64}$/.test(record.reviewedDigest)
-        )
-      ) ||
-      (
-        record.reviewedAt !== undefined &&
-        typeof record.reviewedAt !== 'string'
-      )
+      (record.reviewedDigest !== undefined &&
+        (typeof record.reviewedDigest !== 'string' ||
+          !/^[a-f0-9]{64}$/.test(record.reviewedDigest))) ||
+      (record.reviewedAt !== undefined && typeof record.reviewedAt !== 'string')
     ) {
       throw new Error('trusted-workspaces.json contains an invalid v2 record');
     }
@@ -118,8 +103,7 @@ function readTrustStore(): WorkspaceTrustStoreV2 {
 
 function writeTrustStore(store: WorkspaceTrustStoreV2): void {
   mkdirSync(dirname(TRUST_STORE_PATH), { recursive: true, mode: 0o700 });
-  const temporaryFile =
-    `${TRUST_STORE_PATH}.${process.pid}.${randomUUID()}.tmp`;
+  const temporaryFile = `${TRUST_STORE_PATH}.${process.pid}.${randomUUID()}.tmp`;
   let descriptor: number | undefined;
   try {
     descriptor = openSync(temporaryFile, 'wx', 0o600);
@@ -157,22 +141,18 @@ export function inspectWorkspaceTrust(
   try {
     const store = readTrustStore();
     const record = store.workspaces.find(
-      candidate => candidate.canonicalWorkspaceRoot === canonicalWorkspaceRoot
+      (candidate) => candidate.canonicalWorkspaceRoot === canonicalWorkspaceRoot
     );
     const trustState: ExtensionTrustState = !record
       ? 'untrusted'
-      : !record.reviewedDigest ||
-          !currentDigest ||
-          record.reviewedDigest !== currentDigest
+      : !record.reviewedDigest || !currentDigest || record.reviewedDigest !== currentDigest
         ? 'review-required'
         : 'trusted';
     return {
       canonicalWorkspaceRoot,
       trustState,
       trusted: trustState === 'trusted',
-      ...(record?.reviewedDigest
-        ? { reviewedDigest: record.reviewedDigest }
-        : {}),
+      ...(record?.reviewedDigest ? { reviewedDigest: record.reviewedDigest } : {}),
       ...(currentDigest ? { currentDigest } : {}),
       warnings: []
     };
@@ -184,7 +164,7 @@ export function inspectWorkspaceTrust(
       ...(currentDigest ? { currentDigest } : {}),
       warnings: [
         'Workspace project extensions are disabled because the trust store is invalid: ' +
-        (error instanceof Error ? error.message : String(error))
+          (error instanceof Error ? error.message : String(error))
       ]
     };
   }
@@ -199,7 +179,7 @@ export function setWorkspaceTrusted(
   const canonicalWorkspaceRoot = canonicalWorkspacePath(workspaceRoot);
   const store = readTrustStore();
   const remaining = store.workspaces.filter(
-    record => record.canonicalWorkspaceRoot !== canonicalWorkspaceRoot
+    (record) => record.canonicalWorkspaceRoot !== canonicalWorkspaceRoot
   );
   if (!trusted) {
     writeTrustStore({ schemaVersion: 2, workspaces: remaining });

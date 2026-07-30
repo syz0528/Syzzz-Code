@@ -1,12 +1,5 @@
 import { lstat, readFile, realpath, stat } from 'node:fs/promises';
-import {
-  dirname,
-  extname,
-  isAbsolute,
-  posix,
-  relative,
-  resolve
-} from 'node:path';
+import { dirname, extname, isAbsolute, posix, relative, resolve } from 'node:path';
 import { parentPort } from 'node:worker_threads';
 import { TextDecoder } from 'node:util';
 import ts from 'typescript';
@@ -24,16 +17,7 @@ import type {
 const MAX_SOURCE_BYTES = 2 * 1024 * 1024;
 const MAX_SYMBOLS_PER_FILE = 50;
 const MAX_SYMBOL_CHARACTERS = 300;
-const SOURCE_EXTENSIONS = new Set([
-  '.ts',
-  '.tsx',
-  '.mts',
-  '.cts',
-  '.js',
-  '.jsx',
-  '.mjs',
-  '.cjs'
-]);
+const SOURCE_EXTENSIONS = new Set(['.ts', '.tsx', '.mts', '.cts', '.js', '.jsx', '.mjs', '.cjs']);
 
 interface FileAnalysis {
   path: string;
@@ -61,9 +45,7 @@ function normalizeRelativePath(path: string): string {
 
 function pathKey(path: string): string {
   const resolved = resolve(path);
-  return process.platform === 'win32'
-    ? resolved.toLocaleLowerCase()
-    : resolved;
+  return process.platform === 'win32' ? resolved.toLocaleLowerCase() : resolved;
 }
 
 function isInside(root: string, target: string): boolean {
@@ -96,18 +78,11 @@ function scriptKindForPath(path: string): ts.ScriptKind {
 
 function boundedText(value: string, limit = MAX_SYMBOL_CHARACTERS): string {
   const compact = value.replace(/\s+/g, ' ').trim();
-  return compact.length <= limit
-    ? compact
-    : `${compact.slice(0, limit - 3)}...`;
+  return compact.length <= limit ? compact : `${compact.slice(0, limit - 3)}...`;
 }
 
-function modifierPrefix(
-  node: ts.Node,
-  sourceFile: ts.SourceFile
-): string {
-  const modifiers = ts.canHaveModifiers(node)
-    ? ts.getModifiers(node)
-    : undefined;
+function modifierPrefix(node: ts.Node, sourceFile: ts.SourceFile): string {
+  const modifiers = ts.canHaveModifiers(node) ? ts.getModifiers(node) : undefined;
   const allowed = new Set([
     ts.SyntaxKind.ExportKeyword,
     ts.SyntaxKind.DefaultKeyword,
@@ -116,8 +91,8 @@ function modifierPrefix(
     ts.SyntaxKind.AbstractKeyword
   ]);
   const text = modifiers
-    ?.filter(modifier => allowed.has(modifier.kind))
-    .map(modifier => modifier.getText(sourceFile))
+    ?.filter((modifier) => allowed.has(modifier.kind))
+    .map((modifier) => modifier.getText(sourceFile))
     .join(' ');
   return text ? `${text} ` : '';
 }
@@ -127,9 +102,9 @@ function typeParametersText(
   sourceFile: ts.SourceFile
 ): string {
   return node.typeParameters?.length
-    ? `<${node.typeParameters.map(parameter =>
-      boundedText(parameter.getText(sourceFile), 80)
-    ).join(', ')}>`
+    ? `<${node.typeParameters
+        .map((parameter) => boundedText(parameter.getText(sourceFile), 80))
+        .join(', ')}>`
     : '';
 }
 
@@ -145,46 +120,46 @@ function extractTopLevelSymbols(sourceFile: ts.SourceFile): string[] {
     const prefix = modifierPrefix(statement, sourceFile);
     if (ts.isFunctionDeclaration(statement) && statement.name) {
       const parameters = statement.parameters
-        .map(parameter => boundedText(parameter.getText(sourceFile), 100))
+        .map((parameter) => boundedText(parameter.getText(sourceFile), 100))
         .join(', ');
       const returnType = statement.type
         ? `: ${boundedText(statement.type.getText(sourceFile), 100)}`
         : '';
       add(
         `${prefix}function ${statement.name.text}` +
-        `${typeParametersText(statement, sourceFile)}(${parameters})${returnType}`
+          `${typeParametersText(statement, sourceFile)}(${parameters})${returnType}`
       );
       continue;
     }
     if (ts.isClassDeclaration(statement) && statement.name) {
       const heritage = statement.heritageClauses?.length
         ? ` ${statement.heritageClauses
-          .map(clause => boundedText(clause.getText(sourceFile), 120))
-          .join(' ')}`
+            .map((clause) => boundedText(clause.getText(sourceFile), 120))
+            .join(' ')}`
         : '';
       add(
         `${prefix}class ${statement.name.text}` +
-        `${typeParametersText(statement, sourceFile)}${heritage}`
+          `${typeParametersText(statement, sourceFile)}${heritage}`
       );
       continue;
     }
     if (ts.isInterfaceDeclaration(statement)) {
       const heritage = statement.heritageClauses?.length
         ? ` ${statement.heritageClauses
-          .map(clause => boundedText(clause.getText(sourceFile), 120))
-          .join(' ')}`
+            .map((clause) => boundedText(clause.getText(sourceFile), 120))
+            .join(' ')}`
         : '';
       add(
         `${prefix}interface ${statement.name.text}` +
-        `${typeParametersText(statement, sourceFile)}${heritage}`
+          `${typeParametersText(statement, sourceFile)}${heritage}`
       );
       continue;
     }
     if (ts.isTypeAliasDeclaration(statement)) {
       add(
         `${prefix}type ${statement.name.text}` +
-        `${typeParametersText(statement, sourceFile)} = ` +
-        boundedText(statement.type.getText(sourceFile), 180)
+          `${typeParametersText(statement, sourceFile)} = ` +
+          boundedText(statement.type.getText(sourceFile), 180)
       );
       continue;
     }
@@ -197,32 +172,28 @@ function extractTopLevelSymbols(sourceFile: ts.SourceFile): string[] {
       continue;
     }
     if (ts.isVariableStatement(statement)) {
-      const declarationKind = statement.declarationList.flags & ts.NodeFlags.Const
-        ? 'const'
-        : statement.declarationList.flags & ts.NodeFlags.Let
-          ? 'let'
-          : 'var';
+      const declarationKind =
+        statement.declarationList.flags & ts.NodeFlags.Const
+          ? 'const'
+          : statement.declarationList.flags & ts.NodeFlags.Let
+            ? 'let'
+            : 'var';
       for (const declaration of statement.declarationList.declarations) {
         if (
           declaration.initializer &&
-          (
-            ts.isArrowFunction(declaration.initializer) ||
-            ts.isFunctionExpression(declaration.initializer)
-          )
+          (ts.isArrowFunction(declaration.initializer) ||
+            ts.isFunctionExpression(declaration.initializer))
         ) {
           const parameters = declaration.initializer.parameters
-            .map(parameter => boundedText(parameter.getText(sourceFile), 100))
+            .map((parameter) => boundedText(parameter.getText(sourceFile), 100))
             .join(', ');
           const returnType = declaration.initializer.type
-            ? `: ${boundedText(
-              declaration.initializer.type.getText(sourceFile),
-              100
-            )}`
+            ? `: ${boundedText(declaration.initializer.type.getText(sourceFile), 100)}`
             : '';
           add(
             `${prefix}${declarationKind} ` +
-            `${boundedText(declaration.name.getText(sourceFile), 100)}` +
-            ` = (${parameters})${returnType}`
+              `${boundedText(declaration.name.getText(sourceFile), 100)}` +
+              ` = (${parameters})${returnType}`
           );
           continue;
         }
@@ -231,7 +202,7 @@ function extractTopLevelSymbols(sourceFile: ts.SourceFile): string[] {
           : '';
         add(
           `${prefix}${declarationKind} ` +
-          `${boundedText(declaration.name.getText(sourceFile), 100)}${type}`
+            `${boundedText(declaration.name.getText(sourceFile), 100)}${type}`
         );
       }
     }
@@ -286,20 +257,13 @@ async function analyzeFile(
   }
   const cacheKey = `${rootReal}\0${normalizeRelativePath(relativePath)}`;
   const cached = repoMapCache.get(cacheKey);
-  if (
-    cached &&
-    cached.mtimeMs === pathStat.mtimeMs &&
-    cached.size === pathStat.size
-  ) {
+  if (cached && cached.mtimeMs === pathStat.mtimeMs && cached.size === pathStat.size) {
     return { analysis: cached.analysis, cacheHit: true };
   }
 
   const bytes = await readFile(path);
   const finalStat = await stat(path);
-  if (
-    finalStat.size !== pathStat.size ||
-    finalStat.mtimeMs !== pathStat.mtimeMs
-  ) {
+  if (finalStat.size !== pathStat.size || finalStat.mtimeMs !== pathStat.mtimeMs) {
     throw new Error(`Source file changed during analysis: ${relativePath}`);
   }
   const source = new TextDecoder('utf-8', { fatal: true }).decode(bytes);
@@ -331,31 +295,25 @@ function resolveRelativeImport(
   if (!specifier.startsWith('.')) {
     return undefined;
   }
-  const normalizedBase = posix.normalize(
-    posix.join(posix.dirname(importerPath), specifier)
-  );
+  const normalizedBase = posix.normalize(posix.join(posix.dirname(importerPath), specifier));
   const importExtension = posix.extname(normalizedBase);
-  const withoutRuntimeExtension = ['.js', '.jsx', '.mjs', '.cjs'].includes(
-    importExtension
-  )
+  const withoutRuntimeExtension = ['.js', '.jsx', '.mjs', '.cjs'].includes(importExtension)
     ? normalizedBase.slice(0, -importExtension.length)
     : normalizedBase;
   const variants = [
     normalizedBase,
-    ...[...SOURCE_EXTENSIONS].map(extension => `${normalizedBase}${extension}`),
-    ...[...SOURCE_EXTENSIONS].map(extension =>
-      `${withoutRuntimeExtension}${extension}`
-    ),
-    ...[...SOURCE_EXTENSIONS].map(extension => `${normalizedBase}/index${extension}`)
+    ...[...SOURCE_EXTENSIONS].map((extension) => `${normalizedBase}${extension}`),
+    ...[...SOURCE_EXTENSIONS].map((extension) => `${withoutRuntimeExtension}${extension}`),
+    ...[...SOURCE_EXTENSIONS].map((extension) => `${normalizedBase}/index${extension}`)
   ];
-  return variants.find(path => candidates.has(path));
+  return variants.find((path) => candidates.has(path));
 }
 
 function queryTerms(query: string | undefined): string[] {
   return (query ?? '')
     .toLocaleLowerCase()
     .split(/[^\p{L}\p{N}_$./-]+/u)
-    .filter(term => term.length > 1);
+    .filter((term) => term.length > 1);
 }
 
 function rankRepoMap(
@@ -365,30 +323,23 @@ function rankRepoMap(
   modifiedPaths: readonly string[],
   maxFiles: number
 ): RepoMapFile[] {
-  const candidatePaths = new Set(analyses.map(analysis => analysis.path));
+  const candidatePaths = new Set(analyses.map((analysis) => analysis.path));
   const importsByPath = new Map<string, string[]>();
   const importedBy = new Map<string, string[]>();
   for (const analysis of analyses) {
     const imports = analysis.rawImports
-      .map(specifier =>
-        resolveRelativeImport(analysis.path, specifier, candidatePaths)
-      )
+      .map((specifier) => resolveRelativeImport(analysis.path, specifier, candidatePaths))
       .filter((path): path is string => Boolean(path));
     importsByPath.set(analysis.path, [...new Set(imports)]);
     for (const importedPath of imports) {
-      importedBy.set(importedPath, [
-        ...(importedBy.get(importedPath) ?? []),
-        analysis.path
-      ]);
+      importedBy.set(importedPath, [...(importedBy.get(importedPath) ?? []), analysis.path]);
     }
   }
 
   const modified = new Set(modifiedPaths.map(normalizeRelativePath));
-  const normalizedFocusPath = focusPath
-    ? normalizeRelativePath(focusPath)
-    : undefined;
+  const normalizedFocusPath = focusPath ? normalizeRelativePath(focusPath) : undefined;
   const terms = queryTerms(query);
-  const scored = analyses.map(analysis => {
+  const scored = analyses.map((analysis) => {
     const pathText = analysis.path.toLocaleLowerCase();
     const symbolText = analysis.symbols.join('\n').toLocaleLowerCase();
     const importText = analysis.rawImports.join('\n').toLocaleLowerCase();
@@ -411,24 +362,22 @@ function rankRepoMap(
   });
 
   const seedPaths = new Set(
-    scored
-      .filter(entry => entry.score > 0)
-      .map(entry => entry.analysis.path)
+    scored.filter((entry) => entry.score > 0).map((entry) => entry.analysis.path)
   );
   for (const entry of scored) {
     const neighbors = [
       ...(importsByPath.get(entry.analysis.path) ?? []),
       ...(importedBy.get(entry.analysis.path) ?? [])
     ];
-    if (neighbors.some(path => seedPaths.has(path))) {
+    if (neighbors.some((path) => seedPaths.has(path))) {
       entry.score += 20;
     }
   }
 
   return scored
-    .sort((left, right) =>
-      right.score - left.score ||
-      left.analysis.path.localeCompare(right.analysis.path)
+    .sort(
+      (left, right) =>
+        right.score - left.score || left.analysis.path.localeCompare(right.analysis.path)
     )
     .slice(0, maxFiles)
     .map(({ analysis, score }) => ({
@@ -441,9 +390,7 @@ function rankRepoMap(
     }));
 }
 
-async function createRepoMap(
-  request: RepoMapWorkerRequest
-): Promise<RepoMapWorkerResult> {
+async function createRepoMap(request: RepoMapWorkerRequest): Promise<RepoMapWorkerResult> {
   const analyses: FileAnalysis[] = [];
   let cacheHits = 0;
   let parseErrors = 0;
@@ -476,9 +423,7 @@ async function createRepoMap(
   };
 }
 
-function diagnosticCategory(
-  category: ts.DiagnosticCategory
-): DiagnosticEntry['category'] {
+function diagnosticCategory(category: ts.DiagnosticCategory): DiagnosticEntry['category'] {
   switch (category) {
     case ts.DiagnosticCategory.Error:
       return 'error';
@@ -511,42 +456,30 @@ function toDiagnosticEntry(
   }
   if (
     SOURCE_EXTENSIONS.has(extname(absolutePath).toLowerCase()) &&
-    (
-      !allowedSourceFiles.has(pathKey(absolutePath)) ||
-      (
-        reportSourceFiles.size > 0 &&
-        !reportSourceFiles.has(pathKey(absolutePath))
-      )
-    )
+    (!allowedSourceFiles.has(pathKey(absolutePath)) ||
+      (reportSourceFiles.size > 0 && !reportSourceFiles.has(pathKey(absolutePath))))
   ) {
     return undefined;
   }
-  const position = diagnostic.start === undefined
-    ? undefined
-    : diagnostic.file.getLineAndCharacterOfPosition(diagnostic.start);
+  const position =
+    diagnostic.start === undefined
+      ? undefined
+      : diagnostic.file.getLineAndCharacterOfPosition(diagnostic.start);
   return {
     code: diagnostic.code,
     category: diagnosticCategory(diagnostic.category),
     message,
     path: normalizeRelativePath(relative(workspaceRoot, absolutePath)),
-    ...(position
-      ? { line: position.line + 1, column: position.character + 1 }
-      : {})
+    ...(position ? { line: position.line + 1, column: position.character + 1 } : {})
   };
 }
 
-function createDiagnostics(
-  request: DiagnosticsWorkerRequest
-): DiagnosticsWorkerResult {
+function createDiagnostics(request: DiagnosticsWorkerRequest): DiagnosticsWorkerResult {
   const workspaceRoot = resolve(request.workspaceRoot);
-  const allowedFiles = request.files.map(file => resolve(workspaceRoot, file));
-  const allowedSourceFiles = new Set(
-    allowedFiles.map(pathKey)
-  );
+  const allowedFiles = request.files.map((file) => resolve(workspaceRoot, file));
+  const allowedSourceFiles = new Set(allowedFiles.map(pathKey));
   const reportSourceFiles = new Set(
-    (request.reportFiles ?? []).map(file =>
-      pathKey(resolve(workspaceRoot, file))
-    )
+    (request.reportFiles ?? []).map((file) => pathKey(resolve(workspaceRoot, file)))
   );
   let rootNames = [...allowedFiles];
   let options: ts.CompilerOptions = {
@@ -580,14 +513,12 @@ function createDiagnostics(
       );
       configurationDiagnostics.push(...parsed.errors);
       rootNames = parsed.fileNames
-        .map(file => resolve(file))
-        .filter(file =>
-          isInside(workspaceRoot, file) &&
-          SOURCE_EXTENSIONS.has(extname(file).toLowerCase()) &&
-          (
-            allowedSourceFiles.size === 0 ||
-            allowedSourceFiles.has(pathKey(file))
-          )
+        .map((file) => resolve(file))
+        .filter(
+          (file) =>
+            isInside(workspaceRoot, file) &&
+            SOURCE_EXTENSIONS.has(extname(file).toLowerCase()) &&
+            (allowedSourceFiles.size === 0 || allowedSourceFiles.has(pathKey(file)))
         );
       options = {
         ...parsed.options,
@@ -609,14 +540,16 @@ function createDiagnostics(
     if (normalized.split('/').includes('node_modules')) {
       return true;
     }
-    return !SOURCE_EXTENSIONS.has(extname(absolutePath).toLowerCase()) ||
-      allowedSourceFiles.has(pathKey(absolutePath));
+    return (
+      !SOURCE_EXTENSIONS.has(extname(absolutePath).toLowerCase()) ||
+      allowedSourceFiles.has(pathKey(absolutePath))
+    );
   };
   const originalFileExists = compilerHost.fileExists.bind(compilerHost);
-  compilerHost.fileExists = fileName =>
+  compilerHost.fileExists = (fileName) =>
     isAllowedCompilerPath(fileName) && originalFileExists(fileName);
   const originalReadFile = compilerHost.readFile.bind(compilerHost);
-  compilerHost.readFile = fileName =>
+  compilerHost.readFile = (fileName) =>
     isAllowedCompilerPath(fileName) ? originalReadFile(fileName) : undefined;
   const originalGetSourceFile = compilerHost.getSourceFile.bind(compilerHost);
   compilerHost.getSourceFile = (
@@ -624,28 +557,21 @@ function createDiagnostics(
     languageVersionOrOptions,
     onError,
     shouldCreateNewSourceFile
-  ) => isAllowedCompilerPath(fileName)
-    ? originalGetSourceFile(
-      fileName,
-      languageVersionOrOptions,
-      onError,
-      shouldCreateNewSourceFile
-    )
-    : undefined;
+  ) =>
+    isAllowedCompilerPath(fileName)
+      ? originalGetSourceFile(
+          fileName,
+          languageVersionOrOptions,
+          onError,
+          shouldCreateNewSourceFile
+        )
+      : undefined;
 
   const program = ts.createProgram({ rootNames, options, host: compilerHost });
-  const diagnostics = [
-    ...configurationDiagnostics,
-    ...ts.getPreEmitDiagnostics(program)
-  ];
+  const diagnostics = [...configurationDiagnostics, ...ts.getPreEmitDiagnostics(program)];
   const visible = diagnostics
-    .map(diagnostic =>
-      toDiagnosticEntry(
-        diagnostic,
-        workspaceRoot,
-        allowedSourceFiles,
-        reportSourceFiles
-      )
+    .map((diagnostic) =>
+      toDiagnosticEntry(diagnostic, workspaceRoot, allowedSourceFiles, reportSourceFiles)
     )
     .filter((entry): entry is DiagnosticEntry => Boolean(entry));
   return {
@@ -657,12 +583,8 @@ function createDiagnostics(
   };
 }
 
-async function executeRequest(
-  request: AnalysisWorkerRequest
-): Promise<AnalysisWorkerResult> {
-  return request.operation === 'repo-map'
-    ? createRepoMap(request)
-    : createDiagnostics(request);
+async function executeRequest(request: AnalysisWorkerRequest): Promise<AnalysisWorkerResult> {
+  return request.operation === 'repo-map' ? createRepoMap(request) : createDiagnostics(request);
 }
 
 parentPort?.on('message', async (message: WorkerRequestEnvelope) => {

@@ -2,14 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { execFile } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import {
-  mkdtemp,
-  mkdir,
-  readFile,
-  readdir,
-  rm,
-  writeFile
-} from 'node:fs/promises';
+import { mkdtemp, mkdir, readFile, readdir, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { promisify } from 'node:util';
@@ -49,18 +42,14 @@ function sha256(content) {
 }
 
 test('Glob and Grep stay bounded, paginate, and exclude ignored and sensitive content', async () => {
-  await withWorkspace(async workspaceRoot => {
+  await withWorkspace(async (workspaceRoot) => {
     await mkdir(join(workspaceRoot, 'src'));
     await writeFile(
       join(workspaceRoot, 'src', 'alpha.ts'),
       'export const needle = 1;\nconst nearby = true;\n',
       'utf8'
     );
-    await writeFile(
-      join(workspaceRoot, 'src', 'beta.ts'),
-      'export const needle = 2;\n',
-      'utf8'
-    );
+    await writeFile(join(workspaceRoot, 'src', 'beta.ts'), 'export const needle = 2;\n', 'utf8');
     await writeFile(join(workspaceRoot, 'ignored.ts'), 'needle ignored\n', 'utf8');
     await writeFile(join(workspaceRoot, '.gitignore'), 'ignored.ts\n', 'utf8');
     await writeFile(join(workspaceRoot, '.env'), 'TOP_SECRET_NEEDLE=1\n', 'utf8');
@@ -125,7 +114,7 @@ test('Glob and Grep stay bounded, paginate, and exclude ignored and sensitive co
   });
 });
 test('Grep supports a single file path and literal matching', async () => {
-  await withWorkspace(async workspaceRoot => {
+  await withWorkspace(async (workspaceRoot) => {
     await writeFile(join(workspaceRoot, 'literal.txt'), 'a+b\nother\n', 'utf8');
     const result = await grepTool.execute(
       {
@@ -142,11 +131,9 @@ test('Grep supports a single file path and literal matching', async () => {
 });
 
 test('Read returns line ranges, versions, CRLF metadata, and bounded continuation', async () => {
-  await withWorkspace(async workspaceRoot => {
-    const content = Array.from(
-      { length: 700 },
-      (_, index) => `line-${index + 1}`
-    ).join('\r\n') + '\r\n';
+  await withWorkspace(async (workspaceRoot) => {
+    const content =
+      Array.from({ length: 700 }, (_, index) => `line-${index + 1}`).join('\r\n') + '\r\n';
     await writeFile(join(workspaceRoot, 'range.txt'), content, 'utf8');
 
     const result = await readTool.execute(
@@ -165,15 +152,12 @@ test('Read returns line ranges, versions, CRLF metadata, and bounded continuatio
 });
 
 test('Read permits explicit ranges up to 8 MiB while keeping model output bounded', async () => {
-  await withWorkspace(async workspaceRoot => {
+  await withWorkspace(async (workspaceRoot) => {
     const overLegacyLimit = `${'line\n'.repeat(230_000)}`;
     assert.ok(Buffer.byteLength(overLegacyLimit) > 1024 * 1024);
     await writeFile(join(workspaceRoot, 'large.txt'), overLegacyLimit, 'utf8');
 
-    const unbounded = await readTool.execute(
-      { path: 'large.txt' },
-      createContext(workspaceRoot)
-    );
+    const unbounded = await readTool.execute({ path: 'large.txt' }, createContext(workspaceRoot));
     assert.equal(unbounded.isError, true);
     assert.match(unbounded.content, /Provide offset or limit/);
 
@@ -185,10 +169,7 @@ test('Read permits explicit ranges up to 8 MiB while keeping model output bounde
     assert.match(ranged.content, /200000\| line/);
     assert.ok(Buffer.byteLength(ranged.content, 'utf8') <= 40 * 1024);
 
-    await writeFile(
-      join(workspaceRoot, 'over-eight.bin'),
-      Buffer.alloc((8 * 1024 * 1024) + 1, 0x61)
-    );
+    await writeFile(join(workspaceRoot, 'over-eight.bin'), Buffer.alloc(8 * 1024 * 1024 + 1, 0x61));
     const overEight = await readTool.execute(
       { path: 'over-eight.bin', offset: 1, limit: 1 },
       createContext(workspaceRoot)
@@ -199,7 +180,7 @@ test('Read permits explicit ranges up to 8 MiB while keeping model output bounde
 });
 
 test('Patch applies exact non-overlapping operations and preserves CRLF style', async () => {
-  await withWorkspace(async workspaceRoot => {
+  await withWorkspace(async (workspaceRoot) => {
     const targetPath = join(workspaceRoot, 'patch.ts');
     const original = 'const alpha = 1;\r\nconst beta = 2;\r\n';
     await writeFile(targetPath, original, 'utf8');
@@ -212,10 +193,7 @@ test('Patch applies exact non-overlapping operations and preserves CRLF style', 
       ]
     };
 
-    const approval = await patchTool.prepareApproval(
-      input,
-      createContext(workspaceRoot)
-    );
+    const approval = await patchTool.prepareApproval(input, createContext(workspaceRoot));
     assert.match(approval.preview, /alpha = 10/);
     assert.match(approval.preview, /beta = 20/);
     const result = await patchTool.execute(
@@ -226,47 +204,53 @@ test('Patch applies exact non-overlapping operations and preserves CRLF style', 
     assert.equal(result.isError, undefined);
     assert.match(result.content, /Version: sha256:[a-f0-9]{64}/);
     assert.equal(result.metadata.changeCount, 2);
+    assert.equal(await readFile(targetPath, 'utf8'), 'const alpha = 10;\r\nconst beta = 20;\r\n');
     assert.equal(
-      await readFile(targetPath, 'utf8'),
-      'const alpha = 10;\r\nconst beta = 20;\r\n'
-    );
-    assert.equal(
-      (await readdir(workspaceRoot)).some(name => name.includes('.syzzz-')),
+      (await readdir(workspaceRoot)).some((name) => name.includes('.syzzz-')),
       false
     );
   });
 });
 
 test('Patch rejects stale, ambiguous, overlapping, and post-approval changes', async () => {
-  await withWorkspace(async workspaceRoot => {
+  await withWorkspace(async (workspaceRoot) => {
     const targetPath = join(workspaceRoot, 'conflict.txt');
     await writeFile(targetPath, 'same same unique\n', 'utf8');
 
     await assert.rejects(
-      patchTool.prepareApproval({
-        path: 'conflict.txt',
-        expectedHash: '0'.repeat(64),
-        operations: [{ oldText: 'unique', newText: 'changed' }]
-      }, createContext(workspaceRoot)),
+      patchTool.prepareApproval(
+        {
+          path: 'conflict.txt',
+          expectedHash: '0'.repeat(64),
+          operations: [{ oldText: 'unique', newText: 'changed' }]
+        },
+        createContext(workspaceRoot)
+      ),
       /changed after it was read/
     );
     await assert.rejects(
-      patchTool.prepareApproval({
-        path: 'conflict.txt',
-        expectedHash: sha256('same same unique\n'),
-        operations: [{ oldText: 'same', newText: 'different' }]
-      }, createContext(workspaceRoot)),
+      patchTool.prepareApproval(
+        {
+          path: 'conflict.txt',
+          expectedHash: sha256('same same unique\n'),
+          operations: [{ oldText: 'same', newText: 'different' }]
+        },
+        createContext(workspaceRoot)
+      ),
       /found 2 matches/
     );
     await assert.rejects(
-      patchTool.prepareApproval({
-        path: 'conflict.txt',
-        expectedHash: sha256('same same unique\n'),
-        operations: [
-          { oldText: 'same same', newText: 'first' },
-          { oldText: 'same unique', newText: 'second' }
-        ]
-      }, createContext(workspaceRoot)),
+      patchTool.prepareApproval(
+        {
+          path: 'conflict.txt',
+          expectedHash: sha256('same same unique\n'),
+          operations: [
+            { oldText: 'same same', newText: 'first' },
+            { oldText: 'same unique', newText: 'second' }
+          ]
+        },
+        createContext(workspaceRoot)
+      ),
       /overlap/
     );
 
@@ -275,10 +259,7 @@ test('Patch rejects stale, ambiguous, overlapping, and post-approval changes', a
       expectedHash: sha256('same same unique\n'),
       operations: [{ oldText: 'unique', newText: 'changed' }]
     };
-    const approval = await patchTool.prepareApproval(
-      input,
-      createContext(workspaceRoot)
-    );
+    const approval = await patchTool.prepareApproval(input, createContext(workspaceRoot));
     await writeFile(targetPath, 'external\n', 'utf8');
     const result = await patchTool.execute(
       input,
@@ -291,22 +272,25 @@ test('Patch rejects stale, ambiguous, overlapping, and post-approval changes', a
 });
 
 test('Edit optionally enforces the Read version hash', async () => {
-  await withWorkspace(async workspaceRoot => {
+  await withWorkspace(async (workspaceRoot) => {
     await writeFile(join(workspaceRoot, 'edit.txt'), 'before\n', 'utf8');
     await assert.rejects(
-      editTool.prepareApproval({
-        path: 'edit.txt',
-        old_string: 'before',
-        new_string: 'after',
-        expectedHash: '0'.repeat(64)
-      }, createContext(workspaceRoot)),
+      editTool.prepareApproval(
+        {
+          path: 'edit.txt',
+          old_string: 'before',
+          new_string: 'after',
+          expectedHash: '0'.repeat(64)
+        },
+        createContext(workspaceRoot)
+      ),
       /changed after it was read/
     );
   });
 });
 
 test('GitStatus and GitDiff expose bounded non-sensitive workspace changes', async () => {
-  await withWorkspace(async workspaceRoot => {
+  await withWorkspace(async (workspaceRoot) => {
     await execFileAsync('git', ['init'], { cwd: workspaceRoot });
     await execFileAsync('git', ['config', 'user.email', 'phase3@example.test'], {
       cwd: workspaceRoot
@@ -338,10 +322,7 @@ test('GitStatus and GitDiff expose bounded non-sensitive workspace changes', asy
     assert.ok(Buffer.byteLength(diff.content, 'utf8') <= 40 * 1024);
 
     await execFileAsync('git', ['add', 'src/file.ts'], { cwd: workspaceRoot });
-    const staged = await gitDiffTool.execute(
-      { scope: 'staged' },
-      createContext(workspaceRoot)
-    );
+    const staged = await gitDiffTool.execute({ scope: 'staged' }, createContext(workspaceRoot));
     assert.equal(staged.isError, undefined);
     assert.match(staged.content, /export const value = 2/);
   });

@@ -15,11 +15,7 @@ async function collect(generator) {
 }
 
 test('Anthropic stays non-streaming under the unified runner contract', async () => {
-  const provider = new AnthropicProvider(
-    'test-key',
-    'https://example.invalid',
-    'claude-test'
-  );
+  const provider = new AnthropicProvider('test-key', 'https://example.invalid', 'claude-test');
   assert.equal(provider.client.maxRetries, 0);
   assert.deepEqual(provider.getInfo(), {
     name: 'Anthropic Claude',
@@ -42,10 +38,12 @@ test('Anthropic stays non-streaming under the unified runner contract', async ()
               data: {
                 id: 'message-1',
                 model: 'reported-claude',
-                content: [{
-                  type: 'text',
-                  text: 'Anthropic response.'
-                }],
+                content: [
+                  {
+                    type: 'text',
+                    text: 'Anthropic response.'
+                  }
+                ],
                 stop_reason: 'end_turn',
                 usage: {
                   input_tokens: 7,
@@ -55,9 +53,7 @@ test('Anthropic stays non-streaming under the unified runner contract', async ()
               response: {
                 headers: {
                   get(name) {
-                    return name === 'request-id'
-                      ? 'req-anthropic'
-                      : null;
+                    return name === 'request-id' ? 'req-anthropic' : null;
                   }
                 }
               }
@@ -68,15 +64,17 @@ test('Anthropic stays non-streaming under the unified runner contract', async ()
     }
   };
 
-  const { events, response } = await collect(runProviderRequest(
-    provider,
-    {
-      messages: [{ role: 'user', content: 'hello' }],
-      tools: [],
-      systemPrompt: 'system'
-    },
-    { idFactory: () => 'attempt-anthropic' }
-  ));
+  const { events, response } = await collect(
+    runProviderRequest(
+      provider,
+      {
+        messages: [{ role: 'user', content: 'hello' }],
+        tools: [],
+        systemPrompt: 'system'
+      },
+      { idFactory: () => 'attempt-anthropic' }
+    )
+  );
 
   assert.equal(capturedRequest.model, 'claude-test');
   assert.equal(response.message.content, 'Anthropic response.');
@@ -87,28 +85,18 @@ test('Anthropic stays non-streaming under the unified runner contract', async ()
     outputTokens: 3,
     totalTokens: 10
   });
-  assert.deepEqual(events.map(event => event.type), [
-    'request_started',
-    'text_delta',
-    'usage',
-    'request_completed'
-  ]);
-  assert.equal(
-    events.filter(event => event.type === 'text_delta').length,
-    1
+  assert.deepEqual(
+    events.map((event) => event.type),
+    ['request_started', 'text_delta', 'usage', 'request_completed']
   );
+  assert.equal(events.filter((event) => event.type === 'text_delta').length, 1);
 });
 
 test('Anthropic model switching updates provider information', () => {
-  const provider = new AnthropicProvider(
-    'test-key',
-    'https://example.invalid',
-    'claude-before',
-    {
-      'claude-before': 100_000,
-      'claude-after': 200_000
-    }
-  );
+  const provider = new AnthropicProvider('test-key', 'https://example.invalid', 'claude-before', {
+    'claude-before': 100_000,
+    'claude-after': 200_000
+  });
 
   assert.equal(provider.getInfo().contextWindowTokens, 100_000);
   provider.setModel('claude-after');

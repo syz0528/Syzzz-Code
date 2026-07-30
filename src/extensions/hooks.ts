@@ -1,7 +1,6 @@
 import { Buffer } from 'node:buffer';
 import picomatch from 'picomatch';
 import type { AgentEventData } from '../events.js';
-import { limitUtf8Head } from '../tools/output-limits.js';
 import { runBoundedProcess } from '../tools/bounded-process.js';
 import { isAbortError, OperationAbortedError, throwIfAborted } from '../tools/abort.js';
 import { expandEnvironmentTemplates } from './config.js';
@@ -35,16 +34,15 @@ const SAFE_INHERITED_ENVIRONMENT = new Set([
   'LANG'
 ]);
 const SAFE_INHERITED_ENVIRONMENT_LOWER = new Set(
-  [...SAFE_INHERITED_ENVIRONMENT].map(name => name.toLowerCase())
+  [...SAFE_INHERITED_ENVIRONMENT].map((name) => name.toLowerCase())
 );
 
 function shouldInheritEnvironmentVariable(name: string): boolean {
-  return SAFE_INHERITED_ENVIRONMENT.has(name) ||
-    (
-      process.platform === 'win32' &&
-      SAFE_INHERITED_ENVIRONMENT_LOWER.has(name.toLowerCase())
-    ) ||
-    name.startsWith('LC_');
+  return (
+    SAFE_INHERITED_ENVIRONMENT.has(name) ||
+    (process.platform === 'win32' && SAFE_INHERITED_ENVIRONMENT_LOWER.has(name.toLowerCase())) ||
+    name.startsWith('LC_')
+  );
 }
 
 export interface HookInvocation {
@@ -75,9 +73,7 @@ function safeEnvironment(
 ): NodeJS.ProcessEnv {
   const normalizeName = (name: string): string =>
     process.platform === 'win32' ? name.toUpperCase() : name;
-  const forbidden = new Set(
-    forbiddenEnvironmentNames.map(normalizeName)
-  );
+  const forbidden = new Set(forbiddenEnvironmentNames.map(normalizeName));
   const environment: NodeJS.ProcessEnv = {};
   for (const [name, value] of Object.entries(process.env)) {
     if (
@@ -90,18 +86,12 @@ function safeEnvironment(
   }
   return {
     ...environment,
-    ...expandEnvironmentTemplates(
-      configured,
-      process.env,
-      forbiddenEnvironmentNames
-    )
+    ...expandEnvironmentTemplates(configured, process.env, forbiddenEnvironmentNames)
   };
 }
 
 function isTerminalEvent(event: HookEventName): boolean {
-  return event === 'TurnCompleted' ||
-    event === 'TurnFailed' ||
-    event === 'TurnCancelled';
+  return event === 'TurnCompleted' || event === 'TurnFailed' || event === 'TurnCancelled';
 }
 
 function encodeInvocation(invocation: HookInvocation): string {
@@ -119,9 +109,7 @@ function encodeInvocation(invocation: HookInvocation): string {
   });
   const bytes = Buffer.byteLength(serialized, 'utf8');
   if (bytes > MAX_HOOK_STDIN_BYTES) {
-    throw new Error(
-      `Hook input exceeds ${MAX_HOOK_STDIN_BYTES} bytes`
-    );
+    throw new Error(`Hook input exceeds ${MAX_HOOK_STDIN_BYTES} bytes`);
   }
   return `${serialized}\n`;
 }
@@ -139,11 +127,7 @@ function parsePreToolOutput(stdout: string): {
   } catch {
     throw new Error('PreToolUse Hook stdout must be one JSON object');
   }
-  if (
-    typeof parsed !== 'object' ||
-    parsed === null ||
-    Array.isArray(parsed)
-  ) {
+  if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) {
     throw new Error('PreToolUse Hook stdout must be one JSON object');
   }
   const record = parsed as Record<string, unknown>;
@@ -151,19 +135,19 @@ function parsePreToolOutput(stdout: string): {
     throw new Error('PreToolUse Hook decision must be "continue" or "deny"');
   }
   const unexpectedKeys = Object.keys(record).filter(
-    key => key !== 'decision' && key !== 'reason'
+    (key) => key !== 'decision' && key !== 'reason'
   );
   if (unexpectedKeys.length > 0) {
     throw new Error(
-      `PreToolUse Hook output contains unsupported keys: ` +
-      unexpectedKeys.join(', ')
+      `PreToolUse Hook output contains unsupported keys: ` + unexpectedKeys.join(', ')
     );
   }
-  const reason = record.reason === undefined
-    ? undefined
-    : typeof record.reason === 'string'
-      ? record.reason.trim().slice(0, MAX_HOOK_REASON_CHARACTERS)
-      : undefined;
+  const reason =
+    record.reason === undefined
+      ? undefined
+      : typeof record.reason === 'string'
+        ? record.reason.trim().slice(0, MAX_HOOK_REASON_CHARACTERS)
+        : undefined;
   if (record.reason !== undefined && reason === undefined) {
     throw new Error('PreToolUse Hook reason must be a string');
   }
@@ -173,21 +157,21 @@ function parsePreToolOutput(stdout: string): {
   };
 }
 
-function matchesHook(
-  hook: HookConfig,
-  invocation: HookInvocation
-): boolean {
+function matchesHook(hook: HookConfig, invocation: HookInvocation): boolean {
   if (!hook.enabled || hook.event !== invocation.event) {
     return false;
   }
   if (!hook.matcher) {
     return true;
   }
-  return Boolean(invocation.subject) &&
-    picomatch.isMatch(invocation.subject!, hook.matcher, {
+  const subject = invocation.subject;
+  return (
+    subject !== undefined &&
+    picomatch.isMatch(subject, hook.matcher, {
       dot: true,
       nocase: process.platform === 'win32'
-    });
+    })
+  );
 }
 
 async function runHookProcess(
@@ -202,19 +186,15 @@ async function runHookProcess(
     const timeoutMs = isTerminalEvent(invocation.event)
       ? Math.min(hook.timeoutMs, TERMINAL_HOOK_TIMEOUT_MS)
       : hook.timeoutMs;
-    const processResult = await runBoundedProcess(
-      hook.command,
-      hook.args,
-      {
-        cwd: invocation.workspaceRoot,
-        signal,
-        timeoutMs,
-        maxStdoutBytes: MAX_HOOK_STDOUT_BYTES,
-        maxStderrBytes: MAX_HOOK_STDERR_BYTES,
-        env: safeEnvironment(hook.env, forbiddenEnvironmentNames),
-        stdin
-      }
-    );
+    const processResult = await runBoundedProcess(hook.command, hook.args, {
+      cwd: invocation.workspaceRoot,
+      signal,
+      timeoutMs,
+      maxStdoutBytes: MAX_HOOK_STDOUT_BYTES,
+      maxStderrBytes: MAX_HOOK_STDERR_BYTES,
+      env: safeEnvironment(hook.env, forbiddenEnvironmentNames),
+      stdin
+    });
     if (processResult.timedOut) {
       return {
         outcome: 'timeout',
@@ -246,9 +226,7 @@ async function runHookProcess(
         decision: 'continue'
       };
     }
-    const decision = parsePreToolOutput(
-      processResult.stdout.toString('utf8')
-    );
+    const decision = parsePreToolOutput(processResult.stdout.toString('utf8'));
     return {
       outcome: decision.decision === 'deny' ? 'denied' : 'success',
       durationMs: processResult.durationMs,
@@ -281,14 +259,9 @@ export class HookRunner {
   >();
   private readonly forbiddenEnvironmentNames: readonly string[];
 
-  constructor(
-    hooks: ResolvedHookConfig[],
-    forbiddenEnvironmentNames: Iterable<string> = []
-  ) {
+  constructor(hooks: ResolvedHookConfig[], forbiddenEnvironmentNames: Iterable<string> = []) {
     this.hooks = [...hooks];
-    this.forbiddenEnvironmentNames = [
-      ...new Set(forbiddenEnvironmentNames)
-    ];
+    this.forbiddenEnvironmentNames = [...new Set(forbiddenEnvironmentNames)];
   }
 
   replaceHooks(hooks: ResolvedHookConfig[]): void {
@@ -300,25 +273,21 @@ export class HookRunner {
   getStatus(): HookRuntimeStatus {
     return {
       configured: this.hooks.length,
-      enabled: this.hooks.filter(hook => hook.config.enabled).length,
+      enabled: this.hooks.filter((hook) => hook.config.enabled).length,
       ...(this.lastErrorCode ? { lastErrorCode: this.lastErrorCode } : {}),
-      entries: this.hooks.map(hook => {
+      entries: this.hooks.map((hook) => {
         const latest = this.runStatus.get(hook.config.name);
         return {
           name: hook.config.name,
           event: hook.config.event,
           source: hook.source,
           enabled: hook.config.enabled,
-          ...(hook.config.matcher
-            ? { matcher: hook.config.matcher }
-            : {}),
+          ...(hook.config.matcher ? { matcher: hook.config.matcher } : {}),
           ...(latest
             ? {
                 lastOutcome: latest.outcome,
                 lastDurationMs: latest.durationMs,
-                ...(latest.errorCode
-                  ? { lastErrorCode: latest.errorCode }
-                  : {})
+                ...(latest.errorCode ? { lastErrorCode: latest.errorCode } : {})
               }
             : {})
         };
@@ -331,9 +300,7 @@ export class HookRunner {
     signal: AbortSignal
   ): AsyncGenerator<AgentEventData, HookRunResult> {
     throwIfAborted(signal);
-    const matching = this.hooks.filter(hook =>
-      matchesHook(hook.config, invocation)
-    );
+    const matching = this.hooks.filter((hook) => matchesHook(hook.config, invocation));
     for (const hook of matching) {
       throwIfAborted(signal);
       yield {
@@ -368,7 +335,8 @@ export class HookRunner {
       if (result.decision === 'deny') {
         return {
           decision: 'deny',
-          reason: result.reason ??
+          reason:
+            result.reason ??
             (result.errorCode
               ? `Hook ${hook.config.name} failed closed (${result.errorCode})`
               : `Hook ${hook.config.name} denied the operation`)

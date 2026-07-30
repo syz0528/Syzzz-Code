@@ -66,11 +66,7 @@ public static class SyzzzProcessSnapshot {
 `;
 
 export type ShellCompletionReason =
-  | 'exited'
-  | 'timeout'
-  | 'aborted'
-  | 'output_limit'
-  | 'spawn_error';
+  'exited' | 'timeout' | 'aborted' | 'output_limit' | 'spawn_error';
 
 export interface ShellInvocation {
   executable: string;
@@ -147,11 +143,7 @@ export function resolveShellInvocation(
   };
 }
 
-function captureOutputChunk(
-  output: CapturedOutput,
-  chunk: Buffer,
-  maximumBytes: number
-): boolean {
+function captureOutputChunk(output: CapturedOutput, chunk: Buffer, maximumBytes: number): boolean {
   output.bytesSeen += chunk.length;
   const remainingBytes = Math.max(0, maximumBytes - output.bytesCaptured);
 
@@ -170,7 +162,7 @@ function captureOutputChunk(
 }
 
 function wait(milliseconds: number): Promise<void> {
-  return new Promise(resolve => setTimeout(resolve, milliseconds));
+  return new Promise((resolve) => setTimeout(resolve, milliseconds));
 }
 
 function isProcessGroupRunning(processId: number): boolean {
@@ -178,9 +170,8 @@ function isProcessGroupRunning(processId: number): boolean {
     process.kill(-processId, 0);
     return true;
   } catch (error) {
-    const errorCode = error && typeof error === 'object' && 'code' in error
-      ? String(error.code)
-      : undefined;
+    const errorCode =
+      error && typeof error === 'object' && 'code' in error ? String(error.code) : undefined;
     return errorCode !== 'ESRCH';
   }
 }
@@ -199,9 +190,8 @@ async function terminatePosixProcessGroup(
   try {
     process.kill(-processId, 'SIGTERM');
   } catch (error) {
-    const errorCode = error && typeof error === 'object' && 'code' in error
-      ? String(error.code)
-      : undefined;
+    const errorCode =
+      error && typeof error === 'object' && 'code' in error ? String(error.code) : undefined;
     if (errorCode === 'ESRCH') {
       return { ...result, succeeded: true };
     }
@@ -227,9 +217,8 @@ async function terminatePosixProcessGroup(
       forced: true
     };
   } catch (error) {
-    const errorCode = error && typeof error === 'object' && 'code' in error
-      ? String(error.code)
-      : undefined;
+    const errorCode =
+      error && typeof error === 'object' && 'code' in error ? String(error.code) : undefined;
     if (errorCode === 'ESRCH') {
       return { ...result, succeeded: true };
     }
@@ -241,9 +230,7 @@ async function terminatePosixProcessGroup(
   }
 }
 
-async function terminateWindowsProcessTree(
-  processId: number
-): Promise<ProcessTerminationResult> {
+async function terminateWindowsProcessTree(processId: number): Promise<ProcessTerminationResult> {
   const result: ProcessTerminationResult = {
     attempted: true,
     strategy: 'windows-toolhelp',
@@ -254,18 +241,14 @@ async function terminateWindowsProcessTree(
   try {
     process.kill(processId, 'SIGKILL');
   } catch (error) {
-    const errorCode = error && typeof error === 'object' && 'code' in error
-      ? String(error.code)
-      : undefined;
+    const errorCode =
+      error && typeof error === 'object' && 'code' in error ? String(error.code) : undefined;
     if (errorCode !== 'ESRCH') {
       result.error = error instanceof Error ? error.message : String(error);
     }
   }
 
-  const snapshotSource = Buffer.from(
-    WINDOWS_PROCESS_SNAPSHOT_SOURCE,
-    'utf8'
-  ).toString('base64');
+  const snapshotSource = Buffer.from(WINDOWS_PROCESS_SNAPSHOT_SOURCE, 'utf8').toString('base64');
   const script = [
     `$rootPid = ${processId}`,
     `$source = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('${snapshotSource}'))`,
@@ -294,7 +277,7 @@ async function terminateWindowsProcessTree(
     'Write-Error ("Processes remained after termination: " + ($remaining -join ","))',
     'exit 1'
   ].join('; ');
-  return new Promise(resolve => {
+  return new Promise((resolve) => {
     const powershellProcess = spawn(
       'powershell.exe',
       ['-NoLogo', '-NoProfile', '-NonInteractive', '-Command', script],
@@ -328,10 +311,10 @@ async function terminateWindowsProcessTree(
     powershellProcess.stderr?.on('data', (chunk: Buffer) => {
       output += chunk.toString('utf8');
     });
-    powershellProcess.on('error', error => {
+    powershellProcess.on('error', (error) => {
       finish({ ...result, error: error.message });
     });
-    powershellProcess.on('exit', exitCode => {
+    powershellProcess.on('exit', (exitCode) => {
       const succeeded = exitCode === 0;
       finish({
         ...result,
@@ -339,7 +322,9 @@ async function terminateWindowsProcessTree(
         ...(succeeded
           ? {}
           : {
-              error: output.trim() || result.error ||
+              error:
+                output.trim() ||
+                result.error ||
                 `PowerShell process-tree termination exited with code ${exitCode ?? 'unknown'}`
             })
       });
@@ -401,7 +386,7 @@ export async function runShellCommand(
     };
   }
 
-  return new Promise(resolve => {
+  return new Promise((resolve) => {
     const stdout = emptyOutput();
     const stderr = emptyOutput();
     let requestedCompletionReason: ShellCompletionReason | undefined;
@@ -430,11 +415,7 @@ export async function runShellCommand(
 
       requestedCompletionReason = reason;
       if (processId !== null) {
-        terminationPromise = terminateProcessTree(
-          processId,
-          platform,
-          terminationGraceMs
-        );
+        terminationPromise = terminateProcessTree(processId, platform, terminationGraceMs);
       }
 
       terminationDeadlineTimer = setTimeout(() => {
@@ -443,10 +424,7 @@ export async function runShellCommand(
     };
 
     const handleAbort = (): void => requestTermination('aborted');
-    const timeoutTimer = setTimeout(
-      () => requestTermination('timeout'),
-      Math.max(1, timeoutMs)
-    );
+    const timeoutTimer = setTimeout(() => requestTermination('timeout'), Math.max(1, timeoutMs));
 
     const cleanup = (): void => {
       clearTimeout(timeoutTimer);
@@ -466,12 +444,8 @@ export async function runShellCommand(
       isSettled = true;
       cleanup();
 
-      const termination = terminationPromise
-        ? await terminationPromise
-        : undefined;
-      const completionReason = requestedCompletionReason ?? (
-        spawnError ? 'spawn_error' : 'exited'
-      );
+      const termination = terminationPromise ? await terminationPromise : undefined;
+      const completionReason = requestedCompletionReason ?? (spawnError ? 'spawn_error' : 'exited');
 
       resolve({
         ok: completionReason === 'exited' && exitCode === 0,
@@ -509,7 +483,7 @@ export async function runShellCommand(
         requestTermination('output_limit');
       }
     });
-    childProcess.on('error', error => {
+    childProcess.on('error', (error) => {
       spawnError = error.message;
       requestedCompletionReason = requestedCompletionReason ?? 'spawn_error';
     });

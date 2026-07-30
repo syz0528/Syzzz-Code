@@ -1,0 +1,27 @@
+version: 2
+updates:
+  - package-ecosystem: npm
+    directory: /
+    schedule:
+      interval: weekly
+    groups:
+      npm-runtime:
+        dependency-type: production
+        exclude-patterns:
+          - '@modelcontextprotocol/*'
+      npm-development:
+        dependency-type: development
+        exclude-patterns:
+          - '@modelcontextprotocol/*'
+      mcp-sdk:
+        patterns:
+          - '@modelcontextprotocol/*'
+
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    groups:
+      actions:
+        patterns:
+          - '*'

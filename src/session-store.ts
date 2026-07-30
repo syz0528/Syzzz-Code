@@ -1,15 +1,5 @@
 import { createHash, randomUUID } from 'node:crypto';
-import {
-  chmod,
-  lstat,
-  mkdir,
-  open,
-  readdir,
-  realpath,
-  rename,
-  rm,
-  rmdir
-} from 'node:fs/promises';
+import { chmod, lstat, mkdir, open, readdir, realpath, rename, rm, rmdir } from 'node:fs/promises';
 import { homedir, hostname } from 'node:os';
 import { join, resolve } from 'node:path';
 import { z } from 'zod';
@@ -23,130 +13,154 @@ const DEFAULT_STALE_LOCK_MS = 24 * 60 * 60 * 1_000;
 const SESSION_ID_PATTERN =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
-const toolCallSchema = z.object({
-  id: z.string().min(1),
-  name: z.string().min(1),
-  input: z.unknown()
-}).strict();
+const toolCallSchema = z
+  .object({
+    id: z.string().min(1),
+    name: z.string().min(1),
+    input: z.unknown()
+  })
+  .strict();
 
 const conversationMessageSchema = z.discriminatedUnion('role', [
-  z.object({
-    role: z.literal('user'),
-    content: z.string(),
-    kind: z.literal('compaction-summary').optional()
-  }).strict(),
-  z.object({
-    role: z.literal('assistant'),
-    content: z.string(),
-    toolCalls: z.array(toolCallSchema).optional()
-  }).strict(),
-  z.object({
-    role: z.literal('tool'),
-    toolCallId: z.string().min(1),
-    toolName: z.string().min(1),
-    content: z.string(),
-    isError: z.boolean().optional()
-  }).strict()
+  z
+    .object({
+      role: z.literal('user'),
+      content: z.string(),
+      kind: z.literal('compaction-summary').optional()
+    })
+    .strict(),
+  z
+    .object({
+      role: z.literal('assistant'),
+      content: z.string(),
+      toolCalls: z.array(toolCallSchema).optional()
+    })
+    .strict(),
+  z
+    .object({
+      role: z.literal('tool'),
+      toolCallId: z.string().min(1),
+      toolName: z.string().min(1),
+      content: z.string(),
+      isError: z.boolean().optional()
+    })
+    .strict()
 ]);
 
-const usageSchema = z.object({
-  inputTokens: z.number().int().nonnegative(),
-  outputTokens: z.number().int().nonnegative(),
-  totalTokens: z.number().int().nonnegative()
-}).strict();
+const usageSchema = z
+  .object({
+    inputTokens: z.number().int().nonnegative(),
+    outputTokens: z.number().int().nonnegative(),
+    totalTokens: z.number().int().nonnegative()
+  })
+  .strict();
 
-const fileChangeReceiptSchema = z.object({
-  path: z.string().min(1),
-  versionHash: z.string().min(1).optional()
-}).strict();
+const fileChangeReceiptSchema = z
+  .object({
+    path: z.string().min(1),
+    versionHash: z.string().min(1).optional()
+  })
+  .strict();
 
-const engineStateSchema = z.object({
-  schemaVersion: z.literal(1),
-  messages: z.array(conversationMessageSchema),
-  pendingFileChangeReceipts: z.array(fileChangeReceiptSchema),
-  compactionCount: z.number().int().nonnegative(),
-  totalUsage: usageSchema,
-  lastReportedModel: z.string().min(1).optional()
-}).strict();
-
-const sessionUsageSchema = usageSchema.extend({
-  turns: z.number().int().nonnegative()
-}).strict();
-
-const sessionSnapshotSchema = z.object({
-  schemaVersion: z.literal(SESSION_SCHEMA_VERSION),
-  revision: z.number().int().positive(),
-  sessionId: z.string().regex(SESSION_ID_PATTERN),
-  title: z.string().min(1).max(120),
-  createdAt: z.string().datetime({ offset: true }),
-  updatedAt: z.string().datetime({ offset: true }),
-  workspace: z.object({
-    id: z.string().regex(/^[0-9a-f]{16}$/),
-    root: z.string().min(1)
-  }).strict(),
-  provider: z.object({
-    id: z.string().min(1),
-    model: z.string().min(1),
+const engineStateSchema = z
+  .object({
+    schemaVersion: z.literal(1),
+    messages: z.array(conversationMessageSchema),
+    pendingFileChangeReceipts: z.array(fileChangeReceiptSchema),
+    compactionCount: z.number().int().nonnegative(),
+    totalUsage: usageSchema,
     lastReportedModel: z.string().min(1).optional()
-  }).strict(),
-  mode: z.enum(['ask', 'plan', 'code']),
-  engineState: engineStateSchema,
-  usage: sessionUsageSchema,
-  auditSessionId: z.string().regex(SESSION_ID_PATTERN)
-}).strict().superRefine((snapshot, context) => {
-  if (snapshot.auditSessionId !== snapshot.sessionId) {
-    context.addIssue({
-      code: 'custom',
-      path: ['auditSessionId'],
-      message: 'auditSessionId must match sessionId'
-    });
-  }
-  const engineUsage = snapshot.engineState.totalUsage;
-  if (
-    snapshot.usage.inputTokens !== engineUsage.inputTokens ||
-    snapshot.usage.outputTokens !== engineUsage.outputTokens ||
-    snapshot.usage.totalTokens !== engineUsage.totalTokens
-  ) {
-    context.addIssue({
-      code: 'custom',
-      path: ['usage'],
-      message: 'session usage must match engine usage'
-    });
-  }
-  if (
-    snapshot.provider.lastReportedModel !==
-    snapshot.engineState.lastReportedModel
-  ) {
-    context.addIssue({
-      code: 'custom',
-      path: ['provider', 'lastReportedModel'],
-      message: 'reported model metadata is inconsistent'
-    });
-  }
-});
+  })
+  .strict();
 
-const sessionMetadataSchema = z.object({
-  schemaVersion: z.literal(SESSION_SCHEMA_VERSION),
-  revision: z.number().int().positive(),
-  sessionId: z.string().regex(SESSION_ID_PATTERN),
-  title: z.string().min(1).max(120),
-  createdAt: z.string().datetime({ offset: true }),
-  updatedAt: z.string().datetime({ offset: true }),
-  workspaceId: z.string().regex(/^[0-9a-f]{16}$/),
-  providerId: z.string().min(1),
-  model: z.string().min(1),
-  mode: z.enum(['ask', 'plan', 'code']),
-  messageCount: z.number().int().nonnegative(),
-  turns: z.number().int().nonnegative()
-}).strict();
+const sessionUsageSchema = usageSchema
+  .extend({
+    turns: z.number().int().nonnegative()
+  })
+  .strict();
 
-const lockFileSchema = z.object({
-  schemaVersion: z.literal(1),
-  token: z.string().uuid(),
-  pid: z.number().int().positive(),
-  hostname: z.string().min(1),
-  createdAt: z.string().datetime({ offset: true })
-}).strict();
+const sessionSnapshotSchema = z
+  .object({
+    schemaVersion: z.literal(SESSION_SCHEMA_VERSION),
+    revision: z.number().int().positive(),
+    sessionId: z.string().regex(SESSION_ID_PATTERN),
+    title: z.string().min(1).max(120),
+    createdAt: z.string().datetime({ offset: true }),
+    updatedAt: z.string().datetime({ offset: true }),
+    workspace: z
+      .object({
+        id: z.string().regex(/^[0-9a-f]{16}$/),
+        root: z.string().min(1)
+      })
+      .strict(),
+    provider: z
+      .object({
+        id: z.string().min(1),
+        model: z.string().min(1),
+        lastReportedModel: z.string().min(1).optional()
+      })
+      .strict(),
+    mode: z.enum(['ask', 'plan', 'code']),
+    engineState: engineStateSchema,
+    usage: sessionUsageSchema,
+    auditSessionId: z.string().regex(SESSION_ID_PATTERN)
+  })
+  .strict()
+  .superRefine((snapshot, context) => {
+    if (snapshot.auditSessionId !== snapshot.sessionId) {
+      context.addIssue({
+        code: 'custom',
+        path: ['auditSessionId'],
+        message: 'auditSessionId must match sessionId'
+      });
+    }
+    const engineUsage = snapshot.engineState.totalUsage;
+    if (
+      snapshot.usage.inputTokens !== engineUsage.inputTokens ||
+      snapshot.usage.outputTokens !== engineUsage.outputTokens ||
+      snapshot.usage.totalTokens !== engineUsage.totalTokens
+    ) {
+      context.addIssue({
+        code: 'custom',
+        path: ['usage'],
+        message: 'session usage must match engine usage'
+      });
+    }
+    if (snapshot.provider.lastReportedModel !== snapshot.engineState.lastReportedModel) {
+      context.addIssue({
+        code: 'custom',
+        path: ['provider', 'lastReportedModel'],
+        message: 'reported model metadata is inconsistent'
+      });
+    }
+  });
+
+const sessionMetadataSchema = z
+  .object({
+    schemaVersion: z.literal(SESSION_SCHEMA_VERSION),
+    revision: z.number().int().positive(),
+    sessionId: z.string().regex(SESSION_ID_PATTERN),
+    title: z.string().min(1).max(120),
+    createdAt: z.string().datetime({ offset: true }),
+    updatedAt: z.string().datetime({ offset: true }),
+    workspaceId: z.string().regex(/^[0-9a-f]{16}$/),
+    providerId: z.string().min(1),
+    model: z.string().min(1),
+    mode: z.enum(['ask', 'plan', 'code']),
+    messageCount: z.number().int().nonnegative(),
+    turns: z.number().int().nonnegative()
+  })
+  .strict();
+
+const lockFileSchema = z
+  .object({
+    schemaVersion: z.literal(1),
+    token: z.string().uuid(),
+    pid: z.number().int().positive(),
+    hostname: z.string().min(1),
+    createdAt: z.string().datetime({ offset: true })
+  })
+  .strict();
 
 export interface SessionUsage extends ProviderUsage {
   turns: number;
@@ -256,16 +270,11 @@ function defaultProcessAlive(pid: number): boolean {
 
 function normalizeWorkspacePath(path: string): string {
   const normalized = path.replaceAll('\\', '/');
-  return process.platform === 'win32'
-    ? normalized.toLowerCase()
-    : normalized;
+  return process.platform === 'win32' ? normalized.toLowerCase() : normalized;
 }
 
 function workspaceHash(path: string): string {
-  return createHash('sha256')
-    .update(normalizeWorkspacePath(path))
-    .digest('hex')
-    .slice(0, 16);
+  return createHash('sha256').update(normalizeWorkspacePath(path)).digest('hex').slice(0, 16);
 }
 
 function validateSessionId(value: string): string {
@@ -278,10 +287,7 @@ function validateSessionId(value: string): string {
 function validateSessionPrefix(value: string): string {
   const normalized = value.trim().toLowerCase();
   if (!/^[0-9a-f-]{4,36}$/.test(normalized)) {
-    throw new SessionStoreError(
-      `Invalid session ID or prefix: ${value}`,
-      'INVALID_ID'
-    );
+    throw new SessionStoreError(`Invalid session ID or prefix: ${value}`, 'INVALID_ID');
   }
   return normalized;
 }
@@ -305,11 +311,7 @@ function metadataFromSnapshot(snapshot: SessionSnapshotV1): SessionMetadata {
 }
 
 function persistedMetadata(metadata: SessionMetadata) {
-  const {
-    available: _available,
-    unavailableReason: _unavailableReason,
-    ...persisted
-  } = metadata;
+  const { available: _available, unavailableReason: _unavailableReason, ...persisted } = metadata;
   return persisted;
 }
 
@@ -331,15 +333,14 @@ export class SessionStore {
   constructor(options: SessionStoreOptions) {
     this.workspaceRoot = resolve(options.workspaceRoot);
     this.workspaceId = workspaceHash(this.workspaceRoot);
-    const baseDirectory = options.baseDirectory ??
-      join(homedir(), '.syzzz-code', 'sessions');
+    const baseDirectory = options.baseDirectory ?? join(homedir(), '.syzzz-code', 'sessions');
     this.workspaceDirectory = join(baseDirectory, this.workspaceId);
     this.now = options.now ?? Date.now;
     this.pid = options.pid ?? process.pid;
     this.host = options.hostname ?? hostname();
     this.staleLockMs = options.staleLockMs ?? DEFAULT_STALE_LOCK_MS;
     this.isProcessAlive = options.isProcessAlive ?? defaultProcessAlive;
-    this.warn = options.warn ?? (message => process.stderr.write(`${message}\n`));
+    this.warn = options.warn ?? ((message) => process.stderr.write(`${message}\n`));
   }
 
   static async create(options: SessionStoreOptions): Promise<SessionStore> {
@@ -393,7 +394,7 @@ export class SessionStore {
         if ((error as NodeJS.ErrnoException).code !== 'EEXIST') {
           throw error;
         }
-        if (attempt === 0 && await this.removeStaleLock(normalizedId)) {
+        if (attempt === 0 && (await this.removeStaleLock(normalizedId))) {
           continue;
         }
         throw new SessionStoreError(
@@ -403,28 +404,18 @@ export class SessionStore {
       }
     }
 
-    throw new SessionStoreError(
-      `Session ${normalizedId} could not be locked`,
-      'LOCKED'
-    );
+    throw new SessionStoreError(`Session ${normalizedId} could not be locked`, 'LOCKED');
   }
 
-  async save(
-    snapshot: SessionSnapshotV1,
-    lease: SessionLease
-  ): Promise<SessionMetadata> {
+  async save(snapshot: SessionSnapshotV1, lease: SessionLease): Promise<SessionMetadata> {
     const parsed = sessionSnapshotSchema.parse(snapshot) as SessionSnapshotV1;
     const sessionId = validateSessionId(parsed.sessionId);
     if (lease.sessionId !== sessionId) {
-      throw new SessionStoreError(
-        'The session lease does not match the saved session',
-        'LOCKED'
-      );
+      throw new SessionStoreError('The session lease does not match the saved session', 'LOCKED');
     }
     if (
       parsed.workspace.id !== this.workspaceId ||
-      normalizeWorkspacePath(parsed.workspace.root) !==
-        normalizeWorkspacePath(this.workspaceRoot)
+      normalizeWorkspacePath(parsed.workspace.root) !== normalizeWorkspacePath(this.workspaceRoot)
     ) {
       throw new SessionStoreError(
         'The session belongs to a different workspace',
@@ -442,10 +433,7 @@ export class SessionStore {
     }
 
     const sessionDirectory = this.sessionDirectory(sessionId);
-    await this.writeAtomic(
-      join(sessionDirectory, 'state.json'),
-      serialized
-    );
+    await this.writeAtomic(join(sessionDirectory, 'state.json'), serialized);
     const metadata = metadataFromSnapshot(parsed);
     try {
       await this.writeAtomic(
@@ -475,15 +463,11 @@ export class SessionStore {
     }
     const snapshot = parsed.data as SessionSnapshotV1;
     if (snapshot.sessionId !== sessionId) {
-      throw new SessionStoreError(
-        `Session ${sessionId} contains a mismatched identity`,
-        'CORRUPT'
-      );
+      throw new SessionStoreError(`Session ${sessionId} contains a mismatched identity`, 'CORRUPT');
     }
     if (
       snapshot.workspace.id !== this.workspaceId ||
-      normalizeWorkspacePath(snapshot.workspace.root) !==
-        normalizeWorkspacePath(this.workspaceRoot)
+      normalizeWorkspacePath(snapshot.workspace.root) !== normalizeWorkspacePath(this.workspaceRoot)
     ) {
       throw new SessionStoreError(
         `Session ${sessionId} belongs to a different workspace`,
@@ -499,16 +483,13 @@ export class SessionStore {
     for (const sessionId of entries) {
       const sessionDirectory = this.sessionDirectory(sessionId);
       try {
-        const value = await this.readJson(
-          join(sessionDirectory, 'meta.json'),
-          256 * 1024
-        );
+        const value = await this.readJson(join(sessionDirectory, 'meta.json'), 256 * 1024);
         const parsed = sessionMetadataSchema.safeParse(value);
         if (
           parsed.success &&
           parsed.data.sessionId === sessionId &&
           parsed.data.workspaceId === this.workspaceId &&
-          await this.metadataIsFresh(sessionDirectory)
+          (await this.metadataIsFresh(sessionDirectory))
         ) {
           sessions.push({
             ...(parsed.data as Omit<SessionMetadata, 'available'>),
@@ -533,10 +514,7 @@ export class SessionStore {
           // Listing remains useful even when the derived cache cannot be repaired.
         }
       } catch (error) {
-        if (
-          error instanceof SessionStoreError &&
-          error.code === 'NOT_FOUND'
-        ) {
+        if (error instanceof SessionStoreError && error.code === 'NOT_FOUND') {
           continue;
         }
         sessions.push({
@@ -558,9 +536,10 @@ export class SessionStore {
       }
     }
 
-    return sessions.sort((left, right) =>
-      right.updatedAt.localeCompare(left.updatedAt) ||
-      left.sessionId.localeCompare(right.sessionId)
+    return sessions.sort(
+      (left, right) =>
+        right.updatedAt.localeCompare(left.updatedAt) ||
+        left.sessionId.localeCompare(right.sessionId)
     );
   }
 
@@ -570,7 +549,7 @@ export class SessionStore {
     if (entries.includes(prefix)) {
       return prefix;
     }
-    const matches = entries.filter(sessionId => sessionId.startsWith(prefix));
+    const matches = entries.filter((sessionId) => sessionId.startsWith(prefix));
     if (matches.length === 0) {
       throw new SessionStoreError(
         `No session in the current workspace matches ${idOrPrefix}`,
@@ -578,10 +557,7 @@ export class SessionStore {
       );
     }
     if (matches.length > 1) {
-      throw new SessionStoreError(
-        `Session prefix ${idOrPrefix} is ambiguous`,
-        'AMBIGUOUS_ID'
-      );
+      throw new SessionStoreError(`Session prefix ${idOrPrefix} is ambiguous`, 'AMBIGUOUS_ID');
     }
     return matches[0];
   }
@@ -650,8 +626,8 @@ export class SessionStore {
       throw error;
     }
     return entries
-      .filter(entry => entry.isDirectory() && SESSION_ID_PATTERN.test(entry.name))
-      .map(entry => entry.name.toLowerCase());
+      .filter((entry) => entry.isDirectory() && SESSION_ID_PATTERN.test(entry.name))
+      .map((entry) => entry.name.toLowerCase());
   }
 
   private async readJson(path: string, maximumBytes: number): Promise<unknown> {
@@ -667,25 +643,16 @@ export class SessionStore {
     try {
       const fileStats = await handle.stat();
       if (!fileStats.isFile()) {
-        throw new SessionStoreError(
-          'Session state is not a regular file',
-          'CORRUPT'
-        );
+        throw new SessionStoreError('Session state is not a regular file', 'CORRUPT');
       }
       if (fileStats.size > maximumBytes) {
-        throw new SessionStoreError(
-          `Session state exceeds ${maximumBytes} bytes`,
-          'TOO_LARGE'
-        );
+        throw new SessionStoreError(`Session state exceeds ${maximumBytes} bytes`, 'TOO_LARGE');
       }
       const content = await handle.readFile('utf8');
       try {
         return JSON.parse(content);
       } catch (error) {
-        throw new SessionStoreError(
-          `Session JSON is invalid: ${errorMessage(error)}`,
-          'CORRUPT'
-        );
+        throw new SessionStoreError(`Session JSON is invalid: ${errorMessage(error)}`, 'CORRUPT');
       }
     } finally {
       await handle.close();
@@ -698,10 +665,12 @@ export class SessionStore {
         lstat(join(sessionDirectory, 'state.json')),
         lstat(join(sessionDirectory, 'meta.json'))
       ]);
-      return stateStats.isFile() &&
+      return (
+        stateStats.isFile() &&
         metadataStats.isFile() &&
         stateStats.size <= MAX_SESSION_STATE_BYTES &&
-        metadataStats.mtimeMs >= stateStats.mtimeMs;
+        metadataStats.mtimeMs >= stateStats.mtimeMs
+      );
     } catch {
       return false;
     }
@@ -728,9 +697,7 @@ export class SessionStore {
     try {
       await chmod(path, mode);
     } catch (error) {
-      this.warn(
-        `Could not apply private permissions to ${path}: ${errorMessage(error)}`
-      );
+      this.warn(`Could not apply private permissions to ${path}: ${errorMessage(error)}`);
     }
   }
 
@@ -751,10 +718,7 @@ export class SessionStore {
       const parsed = lockFileSchema.safeParse(value);
       return parsed.success ? parsed.data : undefined;
     } catch (error) {
-      if (
-        error instanceof SessionStoreError &&
-        error.code === 'NOT_FOUND'
-      ) {
+      if (error instanceof SessionStoreError && error.code === 'NOT_FOUND') {
         return undefined;
       }
       throw error;
@@ -782,9 +746,7 @@ export class SessionStore {
     const createdAt = lock ? Date.parse(lock.createdAt) : lockStats.mtimeMs;
     const oldEnough = this.now() - createdAt >= this.staleLockMs;
     const sameHost = lock?.hostname === this.host;
-    const localOwnerAlive = Boolean(
-      lock && sameHost && this.isProcessAlive(lock.pid)
-    );
+    const localOwnerAlive = Boolean(lock && sameHost && this.isProcessAlive(lock.pid));
     if (localOwnerAlive) {
       return false;
     }

@@ -1,0 +1,10 @@
+archive/
+artifacts/
+coverage/
+dist/
+eval-results/
+node_modules/
+package-lock.json
+hook-should-not-exist-2.txt
+phase2-events.jsonl
+phase3-manual.ts

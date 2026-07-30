@@ -32,11 +32,13 @@ test('context estimation is conservative for UTF-8 and includes fixed request da
   const measurement = manager.measure(
     [{ role: 'user', content: 'x'.repeat(2_000) }],
     'system prompt',
-    [{
-      name: 'Read',
-      description: 'read',
-      inputSchema: { type: 'object', properties: {} }
-    }],
+    [
+      {
+        name: 'Read',
+        description: 'read',
+        inputSchema: { type: 'object', properties: {} }
+      }
+    ],
     providerInfo
   );
 
@@ -93,15 +95,16 @@ test('history compaction never splits assistant tool calls from tool results', (
 
   assert.ok(plan);
   assert.equal(plan.mode, 'history');
-  const assistantIndex = plan.selectedMessages.findIndex(
-    message => message.role === 'assistant'
-  );
+  const assistantIndex = plan.selectedMessages.findIndex((message) => message.role === 'assistant');
   if (assistantIndex !== -1) {
     assert.equal(plan.selectedMessages[assistantIndex + 1].role, 'tool');
   }
   const compacted = applyCompactionPlan(messages, plan, 'Preserved summary');
   assert.equal(compacted.at(-1).content, 'current request');
-  assert.equal(compacted.some(message => message.kind === 'compaction-summary'), true);
+  assert.equal(
+    compacted.some((message) => message.kind === 'compaction-summary'),
+    true
+  );
 });
 
 test('intra-turn compaction retains the current user and newest tool group', () => {
@@ -163,11 +166,13 @@ test('emergency intra-turn compaction selects the newest tool group atomically',
     {
       role: 'assistant',
       content: '',
-      toolCalls: [{
-        id: 'latest',
-        name: 'Read',
-        input: { path: 'large.ts' }
-      }]
+      toolCalls: [
+        {
+          id: 'latest',
+          name: 'Read',
+          input: { path: 'large.ts' }
+        }
+      ]
     },
     {
       role: 'tool',
@@ -187,7 +192,7 @@ test('emergency intra-turn compaction selects the newest tool group atomically',
   assert.equal(emergencyPlan.startIndex, 1);
   assert.equal(emergencyPlan.endIndex, 3);
   assert.deepEqual(
-    emergencyPlan.selectedMessages.map(message => message.role),
+    emergencyPlan.selectedMessages.map((message) => message.role),
     ['assistant', 'tool']
   );
 });
@@ -212,16 +217,13 @@ test('later compaction folds an earlier summary back into old history', () => {
   assert.ok(plan);
   assert.equal(plan.mode, 'history');
   assert.equal(
-    plan.selectedMessages.some(message => message.kind === 'compaction-summary'),
+    plan.selectedMessages.some((message) => message.kind === 'compaction-summary'),
     true
   );
   assert.ok(plan.selectedMessages.length > 1);
 
   const compacted = applyCompactionPlan(messages, plan, 'Consolidated summary.');
-  assert.equal(
-    compacted.filter(message => message.kind === 'compaction-summary').length,
-    1
-  );
+  assert.equal(compacted.filter((message) => message.kind === 'compaction-summary').length, 1);
   assert.equal(compacted.at(-1).content, 'current request');
 });
 
@@ -260,14 +262,17 @@ test('compaction transcript is deterministically bounded below request threshold
     providerInfo,
     promptPrefix
   );
-  const bounded = formatMessagesForCompactionBounded([
-    { role: 'user', content: `HEAD-${'x'.repeat(10_000)}-TAIL` },
-    {
-      role: 'assistant',
-      content: 'visible',
-      reasoningContent: 'PRIVATE REASONING'
-    }
-  ], budget);
+  const bounded = formatMessagesForCompactionBounded(
+    [
+      { role: 'user', content: `HEAD-${'x'.repeat(10_000)}-TAIL` },
+      {
+        role: 'assistant',
+        content: 'visible',
+        reasoningContent: 'PRIVATE REASONING'
+      }
+    ],
+    budget
+  );
 
   assert.equal(bounded.truncated, true);
   assert.ok(Buffer.byteLength(bounded.content, 'utf8') <= budget);
@@ -314,11 +319,7 @@ test('context manager validates reducing summaries and opens its failure circuit
 
 test('tool result limiting keeps command error head and tail', () => {
   const manager = new ContextManager({ maxToolResultBytes: 200 });
-  const limited = manager.limitToolResult(
-    'Shell',
-    `HEADER\n${'middle'.repeat(100)}\nTAIL`,
-    true
-  );
+  const limited = manager.limitToolResult('Shell', `HEADER\n${'middle'.repeat(100)}\nTAIL`, true);
   assert.equal(limited.truncated, true);
   assert.match(limited.content, /HEADER/);
   assert.match(limited.content, /TAIL/);
@@ -334,11 +335,13 @@ test('tool result budget adapts to the remaining model context', () => {
     ...providerInfo,
     contextWindowTokens: 16_384
   };
-  const tools = [{
-    name: 'HugeResult',
-    description: 'return data',
-    inputSchema: { type: 'object', properties: {} }
-  }];
+  const tools = [
+    {
+      name: 'HugeResult',
+      description: 'return data',
+      inputSchema: { type: 'object', properties: {} }
+    }
+  ];
   const messages = [
     { role: 'user', content: 'inspect' },
     {
@@ -355,12 +358,7 @@ test('tool result budget adapts to the remaining model context', () => {
     'huge',
     'HugeResult'
   );
-  const limited = manager.limitToolResult(
-    'HugeResult',
-    'x'.repeat(60 * 1024),
-    false,
-    budget
-  );
+  const limited = manager.limitToolResult('HugeResult', 'x'.repeat(60 * 1024), false, budget);
   const withResult = [
     ...messages,
     {
@@ -379,11 +377,7 @@ test('tool result budget adapts to the remaining model context', () => {
 
 test('UTF-8 output limits remain hard even when the marker exceeds the cap', () => {
   const manager = new ContextManager({ maxToolResultBytes: 8 });
-  const limited = manager.limitToolResult(
-    'Read',
-    '浣犲ソ'.repeat(20),
-    false
-  );
+  const limited = manager.limitToolResult('Read', '浣犲ソ'.repeat(20), false);
 
   assert.equal(limited.truncated, true);
   assert.ok(Buffer.byteLength(limited.content, 'utf8') <= 8);

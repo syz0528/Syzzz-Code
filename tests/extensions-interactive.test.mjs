@@ -178,16 +178,12 @@ function runInteractive(input) {
     });
     console.log('RESULT:' + JSON.stringify({ calls, trusted, subagentsEnabled }));
   `;
-  return spawnSync(
-    process.execPath,
-    ['--input-type=module', '--eval', script],
-    {
-      cwd: projectDirectory,
-      encoding: 'utf8',
-      input,
-      timeout: 5_000
-    }
-  );
+  return spawnSync(process.execPath, ['--input-type=module', '--eval', script], {
+    cwd: projectDirectory,
+    encoding: 'utf8',
+    input,
+    timeout: 5_000
+  });
 }
 
 function parseResult(output) {
@@ -197,20 +193,12 @@ function parseResult(output) {
 }
 
 test('workspace trust displays exact extensions and accepts only y or Y', () => {
-  const result = runInteractive(
-    '/trust\nyes\n/trust\n y \n/trust\ny\n/untrust\n/exit\n'
-  );
+  const result = runInteractive('/trust\nyes\n/trust\n y \n/trust\ny\n/untrust\n/exit\n');
   assert.equal(result.status, 0, result.stderr || result.error?.message);
   assert.match(result.stdout, /node server\.mjs --flag/);
   assert.match(result.stdout, /node hook\.mjs/);
-  assert.match(
-    result.stdout,
-    /configuration change requires another review/
-  );
-  assert.equal(
-    (result.stdout.match(/Workspace trust cancelled/g) ?? []).length,
-    2
-  );
+  assert.match(result.stdout, /configuration change requires another review/);
+  assert.equal((result.stdout.match(/Workspace trust cancelled/g) ?? []).length, 2);
   const state = parseResult(result.stdout);
   assert.deepEqual(state.calls, ['trust', 'untrust']);
   assert.equal(state.trusted, false);
@@ -233,7 +221,10 @@ test('/agents persists display state and extension commands stay local', () => {
     'reload'
   ]);
   assert.equal(state.subagentsEnabled, true);
-  assert.equal(state.calls.some(value => value.startsWith('chat:')), false);
+  assert.equal(
+    state.calls.some((value) => value.startsWith('chat:')),
+    false
+  );
 });
 
 test('/extensions and /mcp inspect expose structured local status', () => {
@@ -246,10 +237,9 @@ test('/extensions and /mcp inspect expose structured local status', () => {
   assert.match(result.stdout, /project-mcp__echo: read/);
   assert.match(result.stdout, /Extension reload/);
   const state = parseResult(result.stdout);
-  assert.deepEqual(state.calls, [
-    'trust',
-    'inspect:project-mcp',
-    'reload'
-  ]);
-  assert.equal(state.calls.some(value => value.startsWith('chat:')), false);
+  assert.deepEqual(state.calls, ['trust', 'inspect:project-mcp', 'reload']);
+  assert.equal(
+    state.calls.some((value) => value.startsWith('chat:')),
+    false
+  );
 });

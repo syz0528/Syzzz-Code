@@ -12,10 +12,7 @@ import { runBoundedProcess } from './bounded-process.js';
 import { limitUtf8Head } from './output-limits.js';
 import { defineTool } from './runtime.js';
 import { listWorkspaceFiles } from './search-tools.js';
-import {
-  isSensitiveRelativePath,
-  resolveWorkspacePath
-} from './workspace.js';
+import { isSensitiveRelativePath, resolveWorkspacePath } from './workspace.js';
 
 const MAX_PATH_CHARACTERS = 4_096;
 const MAX_QUERY_CHARACTERS = 2_000;
@@ -27,18 +24,10 @@ const MAX_ANALYSIS_CANDIDATES = 10_000;
 const MAX_OUTPUT_BYTES = 40 * 1024;
 const GIT_STATUS_TIMEOUT_MS = 10_000;
 const SOURCE_GLOB = '**/*.{ts,tsx,mts,cts,js,jsx,mjs,cjs}';
-const SOURCE_EXTENSIONS = new Set([
-  '.ts',
-  '.tsx',
-  '.mts',
-  '.cts',
-  '.js',
-  '.jsx',
-  '.mjs',
-  '.cjs'
-]);
+const SOURCE_EXTENSIONS = new Set(['.ts', '.tsx', '.mts', '.cts', '.js', '.jsx', '.mjs', '.cjs']);
 
-const pathSchema = z.string()
+const pathSchema = z
+  .string()
   .trim()
   .min(1, 'Path cannot be empty')
   .max(MAX_PATH_CHARACTERS, 'Path is too long');
@@ -62,20 +51,17 @@ async function modifiedWorkspacePaths(
   signal: AbortSignal
 ): Promise<string[]> {
   try {
-    const result = await runBoundedProcess('git', [
-      '-c',
-      'core.quotepath=false',
-      'status',
-      '--porcelain=v1',
-      '-z',
-      '--untracked-files=all'
-    ], {
-      cwd: workspaceRoot,
-      signal,
-      timeoutMs: GIT_STATUS_TIMEOUT_MS,
-      maxStdoutBytes: 2 * 1024 * 1024,
-      maxStderrBytes: 16 * 1024
-    });
+    const result = await runBoundedProcess(
+      'git',
+      ['-c', 'core.quotepath=false', 'status', '--porcelain=v1', '-z', '--untracked-files=all'],
+      {
+        cwd: workspaceRoot,
+        signal,
+        timeoutMs: GIT_STATUS_TIMEOUT_MS,
+        maxStdoutBytes: 2 * 1024 * 1024,
+        maxStderrBytes: 16 * 1024
+      }
+    );
     if (result.exitCode !== 0 || result.timedOut) {
       return [];
     }
@@ -115,29 +101,33 @@ function formatRepoMapFile(file: RepoMapFile): string {
   }
   if (file.symbols.length > 0) {
     lines.push('  symbols:');
-    lines.push(...file.symbols.map(symbol => `    - ${symbol}`));
+    lines.push(...file.symbols.map((symbol) => `    - ${symbol}`));
   }
   return lines.join('\n');
 }
 
-const repoMapInputSchema = z.object({
-  path: pathSchema
-    .optional()
-    .describe(
-      'Directory or TypeScript/JavaScript file inside the workspace; defaults to the workspace root'
-    ),
-  query: z.string()
-    .trim()
-    .max(MAX_QUERY_CHARACTERS, 'Query is too long')
-    .optional()
-    .describe('Optional symbol, file, or architectural topic used for ranking'),
-  maxFiles: z.number()
-    .int()
-    .min(1)
-    .max(MAX_REPO_MAP_FILES)
-    .optional()
-    .describe(`Maximum mapped files; defaults to ${DEFAULT_REPO_MAP_FILES}`)
-}).strict();
+const repoMapInputSchema = z
+  .object({
+    path: pathSchema
+      .optional()
+      .describe(
+        'Directory or TypeScript/JavaScript file inside the workspace; defaults to the workspace root'
+      ),
+    query: z
+      .string()
+      .trim()
+      .max(MAX_QUERY_CHARACTERS, 'Query is too long')
+      .optional()
+      .describe('Optional symbol, file, or architectural topic used for ranking'),
+    maxFiles: z
+      .number()
+      .int()
+      .min(1)
+      .max(MAX_REPO_MAP_FILES)
+      .optional()
+      .describe(`Maximum mapped files; defaults to ${DEFAULT_REPO_MAP_FILES}`)
+  })
+  .strict();
 
 interface RepoMapScope {
   searchPath: string;
@@ -148,11 +138,7 @@ async function resolveRepoMapScope(
   workspaceRoot: string,
   requestedPath: string
 ): Promise<RepoMapScope> {
-  const resolvedPath = await resolveWorkspacePath(
-    requestedPath,
-    workspaceRoot,
-    'read'
-  );
+  const resolvedPath = await resolveWorkspacePath(requestedPath, workspaceRoot, 'read');
   const pathStats = await stat(resolvedPath);
   if (pathStats.isDirectory()) {
     return {
@@ -167,8 +153,7 @@ async function resolveRepoMapScope(
   }
 
   return {
-    searchPath:
-      relative(workspaceRoot, dirname(resolvedPath)).replaceAll('\\', '/') || '.',
+    searchPath: relative(workspaceRoot, dirname(resolvedPath)).replaceAll('\\', '/') || '.',
     focusPath: relative(workspaceRoot, resolvedPath).replaceAll('\\', '/')
   };
 }
@@ -183,10 +168,7 @@ export const repoMapTool = defineTool({
   async execute(input, context) {
     try {
       throwIfAborted(context.signal);
-      const scope = await resolveRepoMapScope(
-        context.workspaceRoot,
-        input.path?.trim() || '.'
-      );
+      const scope = await resolveRepoMapScope(context.workspaceRoot, input.path?.trim() || '.');
       const filesResult = await listWorkspaceFiles(
         context.workspaceRoot,
         scope.searchPath,
@@ -194,46 +176,44 @@ export const repoMapTool = defineTool({
         context.signal
       );
       if (scope.focusPath && !filesResult.paths.includes(scope.focusPath)) {
-        throw new Error(
-          `RepoMap file is ignored or excluded from analysis: ${input.path}`
-        );
+        throw new Error(`RepoMap file is ignored or excluded from analysis: ${input.path}`);
       }
       const candidateTruncated =
-        filesResult.sourceTruncated ||
-        filesResult.paths.length > MAX_ANALYSIS_CANDIDATES;
+        filesResult.sourceTruncated || filesResult.paths.length > MAX_ANALYSIS_CANDIDATES;
       const orderedPaths = scope.focusPath
-        ? [
-          scope.focusPath,
-          ...filesResult.paths.filter(path => path !== scope.focusPath)
-        ]
+        ? [scope.focusPath, ...filesResult.paths.filter((path) => path !== scope.focusPath)]
         : filesResult.paths;
       const files = orderedPaths.slice(0, MAX_ANALYSIS_CANDIDATES);
-      const modifiedPaths = await modifiedWorkspacePaths(
-        context.workspaceRoot,
+      const modifiedPaths = await modifiedWorkspacePaths(context.workspaceRoot, context.signal);
+      const result = await runAnalysisWorker(
+        {
+          operation: 'repo-map',
+          workspaceRoot: context.workspaceRoot,
+          files,
+          query: input.query,
+          focusPath: scope.focusPath,
+          modifiedPaths,
+          maxFiles: input.maxFiles ?? DEFAULT_REPO_MAP_FILES
+        },
         context.signal
       );
-      const result = await runAnalysisWorker({
-        operation: 'repo-map',
-        workspaceRoot: context.workspaceRoot,
-        files,
-        query: input.query,
-        focusPath: scope.focusPath,
-        modifiedPaths,
-        maxFiles: input.maxFiles ?? DEFAULT_REPO_MAP_FILES
-      }, context.signal);
       throwIfAborted(context.signal);
 
-      const body = result.files.length > 0
-        ? result.files.map(formatRepoMapFile).join('\n\n')
-        : '(no TypeScript or JavaScript source files found)';
-      const limited = limitUtf8Head([
-        'RepoMap',
-        `Candidates: ${candidateTruncated ? 'at least ' : ''}${result.candidateCount}`,
-        `Selected: ${result.files.length}`,
-        `Cache hits: ${result.cacheHits}`,
-        '',
-        body
-      ].join('\n'), MAX_OUTPUT_BYTES);
+      const body =
+        result.files.length > 0
+          ? result.files.map(formatRepoMapFile).join('\n\n')
+          : '(no TypeScript or JavaScript source files found)';
+      const limited = limitUtf8Head(
+        [
+          'RepoMap',
+          `Candidates: ${candidateTruncated ? 'at least ' : ''}${result.candidateCount}`,
+          `Selected: ${result.files.length}`,
+          `Cache hits: ${result.cacheHits}`,
+          '',
+          body
+        ].join('\n'),
+        MAX_OUTPUT_BYTES
+      );
       return {
         content: limited.text,
         metadata: {
@@ -256,8 +236,10 @@ function formatDiagnostic(diagnostic: DiagnosticEntry): string {
       `${diagnostic.line === undefined ? '' : `:${diagnostic.line}`}` +
       `${diagnostic.column === undefined ? '' : `:${diagnostic.column}`}`
     : '(project)';
-  return `${location} - TS${diagnostic.code} ${diagnostic.category}: ` +
-    diagnostic.message.replace(/\s+/g, ' ').trim();
+  return (
+    `${location} - TS${diagnostic.code} ${diagnostic.category}: ` +
+    diagnostic.message.replace(/\s+/g, ' ').trim()
+  );
 }
 
 async function isFile(path: string): Promise<boolean> {
@@ -275,28 +257,16 @@ async function findDiagnosticsInputs(
   candidateTruncated: boolean;
 }> {
   const listConfigSources = async (configPath: string) => {
-    const configDirectory = dirname(
-      await resolveWorkspacePath(configPath, workspaceRoot, 'read')
-    );
-    const directoryPath = relative(workspaceRoot, configDirectory)
-      .replaceAll('\\', '/') || '.';
-    const listed = await listWorkspaceFiles(
-      workspaceRoot,
-      directoryPath,
-      SOURCE_GLOB,
-      signal
-    );
+    const configDirectory = dirname(await resolveWorkspacePath(configPath, workspaceRoot, 'read'));
+    const directoryPath = relative(workspaceRoot, configDirectory).replaceAll('\\', '/') || '.';
+    const listed = await listWorkspaceFiles(workspaceRoot, directoryPath, SOURCE_GLOB, signal);
     return {
       files: listed.paths.slice(0, MAX_ANALYSIS_CANDIDATES),
       configPath,
-      candidateTruncated:
-        listed.sourceTruncated ||
-        listed.paths.length > MAX_ANALYSIS_CANDIDATES
+      candidateTruncated: listed.sourceTruncated || listed.paths.length > MAX_ANALYSIS_CANDIDATES
     };
   };
-  const findNearestConfig = async (
-    startDirectory: string
-  ): Promise<string | undefined> => {
+  const findNearestConfig = async (startDirectory: string): Promise<string | undefined> => {
     const root = resolve(workspaceRoot);
     let directory = resolve(startDirectory);
     while (true) {
@@ -341,7 +311,7 @@ async function findDiagnosticsInputs(
     const nearestConfig = await findNearestConfig(dirname(target));
     if (nearestConfig) {
       return {
-        ...await listConfigSources(nearestConfig),
+        ...(await listConfigSources(nearestConfig)),
         reportFiles: [relativePath]
       };
     }
@@ -355,24 +325,13 @@ async function findDiagnosticsInputs(
     throw new Error('Diagnostics path must be a regular file or directory');
   }
 
-  const relativeDirectory = relative(workspaceRoot, target)
-    .replaceAll('\\', '/') || '.';
-  const listed = await listWorkspaceFiles(
-    workspaceRoot,
-    relativeDirectory,
-    SOURCE_GLOB,
-    signal
-  );
-  const potentialConfig = relativeDirectory === '.'
-    ? 'tsconfig.json'
-    : `${relativeDirectory}/tsconfig.json`;
+  const relativeDirectory = relative(workspaceRoot, target).replaceAll('\\', '/') || '.';
+  const listed = await listWorkspaceFiles(workspaceRoot, relativeDirectory, SOURCE_GLOB, signal);
+  const potentialConfig =
+    relativeDirectory === '.' ? 'tsconfig.json' : `${relativeDirectory}/tsconfig.json`;
   let configPath: string | undefined;
   try {
-    const resolvedConfig = await resolveWorkspacePath(
-      potentialConfig,
-      workspaceRoot,
-      'read'
-    );
+    const resolvedConfig = await resolveWorkspacePath(potentialConfig, workspaceRoot, 'read');
     if (await isFile(resolvedConfig)) {
       configPath = potentialConfig;
     }
@@ -385,23 +344,24 @@ async function findDiagnosticsInputs(
   return {
     files: listed.paths.slice(0, MAX_ANALYSIS_CANDIDATES),
     ...(configPath ? { configPath } : {}),
-    candidateTruncated:
-      listed.sourceTruncated ||
-      listed.paths.length > MAX_ANALYSIS_CANDIDATES
+    candidateTruncated: listed.sourceTruncated || listed.paths.length > MAX_ANALYSIS_CANDIDATES
   };
 }
 
-const diagnosticsInputSchema = z.object({
-  path: pathSchema
-    .optional()
-    .describe('Source file, directory, or tsconfig.json inside the workspace'),
-  limit: z.number()
-    .int()
-    .min(1)
-    .max(MAX_DIAGNOSTICS)
-    .optional()
-    .describe(`Maximum diagnostics; defaults to ${DEFAULT_DIAGNOSTICS}`)
-}).strict();
+const diagnosticsInputSchema = z
+  .object({
+    path: pathSchema
+      .optional()
+      .describe('Source file, directory, or tsconfig.json inside the workspace'),
+    limit: z
+      .number()
+      .int()
+      .min(1)
+      .max(MAX_DIAGNOSTICS)
+      .optional()
+      .describe(`Maximum diagnostics; defaults to ${DEFAULT_DIAGNOSTICS}`)
+  })
+  .strict();
 
 export const diagnosticsTool = defineTool({
   name: 'Diagnostics',
@@ -418,27 +378,34 @@ export const diagnosticsTool = defineTool({
         input.path?.trim() || '.',
         context.signal
       );
-      const result = await runAnalysisWorker({
-        operation: 'diagnostics',
-        workspaceRoot: context.workspaceRoot,
-        files: analysisInput.files,
-        configPath: analysisInput.configPath,
-        reportFiles: analysisInput.reportFiles,
-        limit: input.limit ?? DEFAULT_DIAGNOSTICS
-      }, context.signal);
+      const result = await runAnalysisWorker(
+        {
+          operation: 'diagnostics',
+          workspaceRoot: context.workspaceRoot,
+          files: analysisInput.files,
+          configPath: analysisInput.configPath,
+          reportFiles: analysisInput.reportFiles,
+          limit: input.limit ?? DEFAULT_DIAGNOSTICS
+        },
+        context.signal
+      );
       throwIfAborted(context.signal);
 
-      const body = result.diagnostics.length > 0
-        ? result.diagnostics.map(formatDiagnostic).join('\n')
-        : 'No TypeScript or JavaScript diagnostics.';
-      const limited = limitUtf8Head([
-        'Diagnostics',
-        `Files: ${result.fileCount}`,
-        `Configuration: ${result.configPath ?? '(compiler defaults)'}`,
-        `Total: ${result.total}`,
-        '',
-        body
-      ].join('\n'), MAX_OUTPUT_BYTES);
+      const body =
+        result.diagnostics.length > 0
+          ? result.diagnostics.map(formatDiagnostic).join('\n')
+          : 'No TypeScript or JavaScript diagnostics.';
+      const limited = limitUtf8Head(
+        [
+          'Diagnostics',
+          `Files: ${result.fileCount}`,
+          `Configuration: ${result.configPath ?? '(compiler defaults)'}`,
+          `Total: ${result.total}`,
+          '',
+          body
+        ].join('\n'),
+        MAX_OUTPUT_BYTES
+      );
       return {
         content: limited.text,
         metadata: {
@@ -446,10 +413,7 @@ export const diagnosticsTool = defineTool({
           diagnosticCount: result.total,
           shownCount: result.diagnostics.length,
           configPath: result.configPath,
-          truncated:
-            result.truncated ||
-            analysisInput.candidateTruncated ||
-            limited.truncated
+          truncated: result.truncated || analysisInput.candidateTruncated || limited.truncated
         }
       };
     } catch (error) {

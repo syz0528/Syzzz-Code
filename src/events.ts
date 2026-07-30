@@ -1,12 +1,6 @@
 import type { ToolApprovalChoice, ToolRisk } from './types.js';
-import type {
-  ProviderInfo,
-  ProviderUsage
-} from './providers/base.js';
-import type {
-  ProviderErrorCode,
-  PublicProviderError
-} from './providers/errors.js';
+import type { ProviderInfo, ProviderUsage } from './providers/base.js';
+import type { ProviderErrorCode, PublicProviderError } from './providers/errors.js';
 import type { AgentMode } from './modes.js';
 import type { SubagentRole } from './subagents.js';
 
@@ -19,13 +13,7 @@ export interface AgentEventEnvelope {
 }
 
 export type AgentPhase =
-  | 'provider'
-  | 'compaction'
-  | 'extension'
-  | 'subagent'
-  | 'approval'
-  | 'tool'
-  | 'completed';
+  'provider' | 'compaction' | 'extension' | 'subagent' | 'approval' | 'tool' | 'completed';
 
 export interface TurnStartedEvent extends AgentEventEnvelope {
   type: 'turn_started';
@@ -116,11 +104,7 @@ export interface ContextUsageUpdatedEvent extends AgentEventEnvelope {
   source: 'estimated' | 'reported';
 }
 
-export type CompactionReason =
-  | 'threshold'
-  | 'context_exceeded'
-  | 'model_switch'
-  | 'manual';
+export type CompactionReason = 'threshold' | 'context_exceeded' | 'model_switch' | 'manual';
 
 export interface CompactionStartedEvent extends AgentEventEnvelope {
   type: 'compaction_started';
@@ -182,12 +166,7 @@ export interface McpServerStatusEvent extends AgentEventEnvelope {
   server: string;
   source: 'user' | 'project';
   transport: 'stdio' | 'http';
-  state:
-    | 'disabled'
-    | 'disconnected'
-    | 'connecting'
-    | 'ready'
-    | 'error';
+  state: 'disabled' | 'disconnected' | 'connecting' | 'ready' | 'error';
   toolCount: number;
   negotiatedProtocolVersion?: string;
   lastConnectedAt?: string;

@@ -55,33 +55,37 @@ test('runTurn emits ordered envelopes and one completed terminal event', async (
 
   assert.equal(result.status, 'completed');
   assert.equal(result.response, 'Hello from events.');
-  assert.deepEqual(events.map(event => event.type), [
-    'turn_started',
-    'context_usage_updated',
-    'phase_changed',
-    'provider_request_started',
-    'text_delta',
-    'usage_updated',
-    'context_usage_updated',
-    'provider_request_completed',
-    'phase_changed',
-    'turn_completed'
-  ]);
   assert.deepEqual(
-    events.map(event => event.sequence),
+    events.map((event) => event.type),
+    [
+      'turn_started',
+      'context_usage_updated',
+      'phase_changed',
+      'provider_request_started',
+      'text_delta',
+      'usage_updated',
+      'context_usage_updated',
+      'provider_request_completed',
+      'phase_changed',
+      'turn_completed'
+    ]
+  );
+  assert.deepEqual(
+    events.map((event) => event.sequence),
     [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]
   );
-  assert.ok(events.every(event => event.schemaVersion === 1));
-  assert.ok(events.every(event => event.sessionId === 'session-1'));
-  assert.ok(events.every(event => event.turnId === 'turn-1'));
-  assert.ok(events.every(event =>
-    event.timestamp === '2026-07-22T00:00:00.000Z'
-  ));
-  assert.equal(events.filter(event =>
-    ['turn_completed', 'turn_failed', 'turn_cancelled'].includes(event.type)
-  ).length, 1);
+  assert.ok(events.every((event) => event.schemaVersion === 1));
+  assert.ok(events.every((event) => event.sessionId === 'session-1'));
+  assert.ok(events.every((event) => event.turnId === 'turn-1'));
+  assert.ok(events.every((event) => event.timestamp === '2026-07-22T00:00:00.000Z'));
   assert.equal(
-    events.find(event => event.type === 'provider_request_completed').requestId,
+    events.filter((event) =>
+      ['turn_completed', 'turn_failed', 'turn_cancelled'].includes(event.type)
+    ).length,
+    1
+  );
+  assert.equal(
+    events.find((event) => event.type === 'provider_request_completed').requestId,
     'req-success'
   );
   assert.equal(events[0].mode, 'code');
@@ -103,9 +107,12 @@ test('runTurn reports failure as a terminal event and rolls back history', async
   assert.equal(result.status, 'failed');
   assert.equal(result.error.code, 'unknown');
   assert.equal(events.at(-1).type, 'turn_failed');
-  assert.equal(events.filter(event =>
-    ['turn_completed', 'turn_failed', 'turn_cancelled'].includes(event.type)
-  ).length, 1);
+  assert.equal(
+    events.filter((event) =>
+      ['turn_completed', 'turn_failed', 'turn_cancelled'].includes(event.type)
+    ).length,
+    1
+  );
   assert.deepEqual(engine.getMessages(), []);
 });
 
@@ -180,18 +187,16 @@ test('closing after a text delta aborts and closes the provider stream', async (
 
 test('user cancellation emits turn_cancelled without provider failure', async () => {
   let notifyStarted;
-  const started = new Promise(resolve => {
+  const started = new Promise((resolve) => {
     notifyStarted = resolve;
   });
   const provider = {
     chat(request) {
       notifyStarted();
       return new Promise((resolve, reject) => {
-        request.signal.addEventListener(
-          'abort',
-          () => reject(new Error('aborted')),
-          { once: true }
-        );
+        request.signal.addEventListener('abort', () => reject(new Error('aborted')), {
+          once: true
+        });
       });
     },
     getInfo() {
@@ -200,9 +205,11 @@ test('user cancellation emits turn_cancelled without provider failure', async ()
   };
   const engine = new QueryEngine({ provider, tools: [], audit: false });
   const controller = new AbortController();
-  const collecting = collectTurn(engine.runTurn('cancel', {
-    signal: controller.signal
-  }));
+  const collecting = collectTurn(
+    engine.runTurn('cancel', {
+      signal: controller.signal
+    })
+  );
 
   await started;
   controller.abort(new Error('secret abort reason'));
@@ -214,7 +221,7 @@ test('user cancellation emits turn_cancelled without provider failure', async ()
   assert.equal(events.at(-1).reason, 'Operation cancelled by the user');
   assert.equal(JSON.stringify(events).includes('secret abort reason'), false);
   assert.equal(
-    events.some(event => event.type === 'provider_request_failed'),
+    events.some((event) => event.type === 'provider_request_failed'),
     false
   );
   assert.deepEqual(engine.getMessages(), []);
@@ -230,11 +237,13 @@ test('approval and tool events preserve the decision order', async () => {
           message: {
             role: 'assistant',
             content: '',
-            toolCalls: [{
-              id: 'write-1',
-              name: 'Write',
-              input: { value: 'next' }
-            }]
+            toolCalls: [
+              {
+                id: 'write-1',
+                name: 'Write',
+                input: { value: 'next' }
+              }
+            ]
           }
         };
       }
@@ -266,22 +275,26 @@ test('approval and tool events preserve the decision order', async () => {
     audit: false
   });
 
-  const { events, result } = await collectTurn(engine.runTurn('write', {
-    async requestApproval() {
-      return 'allow-once';
-    }
-  }));
+  const { events, result } = await collectTurn(
+    engine.runTurn('write', {
+      async requestApproval() {
+        return 'allow-once';
+      }
+    })
+  );
 
   assert.equal(result.status, 'completed');
   const relevantTypes = events
-    .filter(event => [
-      'tool_requested',
-      'approval_requested',
-      'approval_resolved',
-      'tool_started',
-      'tool_completed'
-    ].includes(event.type))
-    .map(event => event.type);
+    .filter((event) =>
+      [
+        'tool_requested',
+        'approval_requested',
+        'approval_resolved',
+        'tool_started',
+        'tool_completed'
+      ].includes(event.type)
+    )
+    .map((event) => event.type);
   assert.deepEqual(relevantTypes, [
     'tool_requested',
     'approval_requested',
@@ -289,7 +302,7 @@ test('approval and tool events preserve the decision order', async () => {
     'tool_started',
     'tool_completed'
   ]);
-  const completed = events.find(event => event.type === 'tool_completed');
+  const completed = events.find((event) => event.type === 'tool_completed');
   assert.equal(completed.outcome, 'success');
   assert.equal(completed.result, 'sensitive tool result');
   assert.deepEqual(completed.metadata, { changed: true });
@@ -318,10 +331,7 @@ test('history commits only when the completed terminal event is emitted', async 
   while (true) {
     const next = await turn.next();
     assert.equal(next.done, false);
-    if (
-      next.value.type === 'phase_changed' &&
-      next.value.phase === 'completed'
-    ) {
+    if (next.value.type === 'phase_changed' && next.value.phase === 'completed') {
       break;
     }
   }
@@ -343,11 +353,13 @@ test('model switching preserves portable history and removes private reasoning m
             role: 'assistant',
             content: '',
             reasoningContent: 'provider-private reasoning',
-            toolCalls: [{
-              id: 'echo-1',
-              name: 'Echo',
-              input: { value: 'first' }
-            }]
+            toolCalls: [
+              {
+                id: 'echo-1',
+                name: 'Echo',
+                input: { value: 'first' }
+              }
+            ]
           }
         };
       }
@@ -370,34 +382,36 @@ test('model switching preserves portable history and removes private reasoning m
   };
   const engine = new QueryEngine({
     provider,
-    tools: [{
-      name: 'Echo',
-      description: 'Echo a value',
-      inputSchema: z.object({ value: z.string() }).strict(),
-      risk: 'read',
-      approval: 'never',
-      async execute(input) {
-        return { content: input.value };
+    tools: [
+      {
+        name: 'Echo',
+        description: 'Echo a value',
+        inputSchema: z.object({ value: z.string() }).strict(),
+        risk: 'read',
+        approval: 'never',
+        async execute(input) {
+          return { content: input.value };
+        }
       }
-    }],
+    ],
     audit: false
   });
 
   assert.equal(await engine.chat('first'), 'First reply.');
   assert.equal(
-    engine.getMessages().find(message => message.reasoningContent)?.reasoningContent,
+    engine.getMessages().find((message) => message.reasoningContent)?.reasoningContent,
     'provider-private reasoning'
   );
   engine.setModel('model-b');
 
   assert.equal(engine.getProviderInfo().model, 'model-b');
   assert.equal(
-    engine.getMessages().some(message => 'reasoningContent' in message),
+    engine.getMessages().some((message) => 'reasoningContent' in message),
     false
   );
   assert.equal(await engine.chat('second'), 'Second reply.');
   assert.equal(
-    capturedMessages[2].some(message => 'reasoningContent' in message),
+    capturedMessages[2].some((message) => 'reasoningContent' in message),
     false
   );
 });
@@ -405,14 +419,14 @@ test('model switching preserves portable history and removes private reasoning m
 test('model switching is rejected while a turn is running or unsupported', async () => {
   let notifyStarted;
   let finishRequest;
-  const started = new Promise(resolve => {
+  const started = new Promise((resolve) => {
     notifyStarted = resolve;
   });
   const provider = {
     model: 'model-a',
     chat() {
       notifyStarted();
-      return new Promise(resolve => {
+      return new Promise((resolve) => {
         finishRequest = resolve;
       });
     },
@@ -426,19 +440,13 @@ test('model switching is rejected while a turn is running or unsupported', async
   const engine = new QueryEngine({ provider, tools: [], audit: false });
   const earlyTurn = engine.runTurn('lock immediately');
   assert.equal((await earlyTurn.next()).value.type, 'turn_started');
-  assert.throws(
-    () => engine.setModel('model-b'),
-    /while a turn is processing/
-  );
+  assert.throws(() => engine.setModel('model-b'), /while a turn is processing/);
   await earlyTurn.return();
 
   const running = engine.chat('busy');
   await started;
 
-  assert.throws(
-    () => engine.setModel('model-b'),
-    /while a turn is processing/
-  );
+  assert.throws(() => engine.setModel('model-b'), /while a turn is processing/);
   finishRequest({ message: { role: 'assistant', content: 'Done.' } });
   await running;
 
@@ -454,8 +462,5 @@ test('model switching is rejected while a turn is running or unsupported', async
     tools: [],
     audit: false
   });
-  assert.throws(
-    () => unsupported.setModel('model-b'),
-    /does not support runtime model switching/
-  );
+  assert.throws(() => unsupported.setModel('model-b'), /does not support runtime model switching/);
 });

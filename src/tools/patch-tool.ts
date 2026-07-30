@@ -139,31 +139,42 @@ function applyResolvedOperations(
   return proposedContent;
 }
 
-const patchInputSchema = z.object({
-  path: z.string()
-    .trim()
-    .min(1, 'Path cannot be empty')
-    .max(MAX_PATH_CHARACTERS, 'Path is too long')
-    .describe('Existing UTF-8 file inside the workspace'),
-  expectedHash: z.string()
-    .trim()
-    .regex(
-      /^(?:sha256:)?[a-fA-F0-9]{64}$/,
-      'expectedHash must be a SHA-256 hash returned by Read'
-    )
-    .describe('SHA-256 version returned by the latest Read'),
-  operations: z.array(z.object({
-    oldText: z.string()
-      .min(1, 'oldText cannot be empty')
-      .max(MAX_PATCH_TEXT_CHARACTERS, 'oldText is too large')
-      .describe('Exact, uniquely matching text from the original file'),
-    newText: z.string()
-      .max(MAX_PATCH_TEXT_CHARACTERS, 'newText is too large')
-      .describe('Replacement text')
-  }).strict())
-    .min(1)
-    .max(MAX_PATCH_OPERATIONS)
-}).strict();
+const patchInputSchema = z
+  .object({
+    path: z
+      .string()
+      .trim()
+      .min(1, 'Path cannot be empty')
+      .max(MAX_PATH_CHARACTERS, 'Path is too long')
+      .describe('Existing UTF-8 file inside the workspace'),
+    expectedHash: z
+      .string()
+      .trim()
+      .regex(
+        /^(?:sha256:)?[a-fA-F0-9]{64}$/,
+        'expectedHash must be a SHA-256 hash returned by Read'
+      )
+      .describe('SHA-256 version returned by the latest Read'),
+    operations: z
+      .array(
+        z
+          .object({
+            oldText: z
+              .string()
+              .min(1, 'oldText cannot be empty')
+              .max(MAX_PATCH_TEXT_CHARACTERS, 'oldText is too large')
+              .describe('Exact, uniquely matching text from the original file'),
+            newText: z
+              .string()
+              .max(MAX_PATCH_TEXT_CHARACTERS, 'newText is too large')
+              .describe('Replacement text')
+          })
+          .strict()
+      )
+      .min(1)
+      .max(MAX_PATCH_OPERATIONS)
+  })
+  .strict();
 
 export const patchTool = defineTool({
   name: 'Patch',
@@ -174,11 +185,7 @@ export const patchTool = defineTool({
   approval: 'always',
   async prepareApproval(input, context) {
     throwIfAborted(context.signal);
-    const targetPath = await resolveWorkspacePath(
-      input.path,
-      context.workspaceRoot,
-      'write'
-    );
+    const targetPath = await resolveWorkspacePath(input.path, context.workspaceRoot, 'write');
     const currentFile = await readOptionalFileSnapshot(
       targetPath,
       MAX_FILE_CHANGE_BYTES,
@@ -196,12 +203,9 @@ export const patchTool = defineTool({
     }
 
     const resolvedOperations = resolveOperations(currentFile.content, input.operations);
-    const proposedContent = applyResolvedOperations(
-      currentFile.content,
-      resolvedOperations
-    );
-    const displayPath = relative(context.workspaceRoot, targetPath)
-      .replaceAll('\\', '/') || input.path;
+    const proposedContent = applyResolvedOperations(currentFile.content, resolvedOperations);
+    const displayPath =
+      relative(context.workspaceRoot, targetPath).replaceAll('\\', '/') || input.path;
     const limitedDiff = limitUtf8Head(
       createFileDiff(displayPath, currentFile.content, proposedContent),
       MAX_DIFF_BYTES,
@@ -254,7 +258,8 @@ export const patchTool = defineTool({
       }
 
       const newHash = hashContent(approvedChange.proposedContent);
-      const displayPath = approvedChange.displayPath ??
+      const displayPath =
+        approvedChange.displayPath ??
         relative(context.workspaceRoot, approvedChange.targetPath).replaceAll('\\', '/');
       const content = [
         `Successfully patched ${displayPath}`,

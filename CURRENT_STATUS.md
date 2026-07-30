@@ -1,8 +1,8 @@
 # Syzzz Code 当前项目状态
 
-**更新时间：** 2026-07-29
+**更新时间：** 2026-07-30
 
-**当前分支：** `codex/phase5-extensions`
+**当前分支：** `codex/phase6-quality-release`
 
 **Phase 4 冻结基线：** `3d2b8e6`
 
@@ -10,7 +10,9 @@
 
 **Phase 5.1 实现验证基线：** `85b2558`
 
-**当前阶段：** Phase 5 与 Phase 5.1 已于 2026-07-29 完成人工验收并标记为 **Frozen**
+**Phase 5 冻结基线：** `64789ec`
+
+**当前阶段：** Phase 6 **Implemented**；Phase 1 至 Phase 5.1 保持 **Frozen**
 
 ## 1. 当前结论
 
@@ -22,9 +24,20 @@ Phase 5.0 Core 已完成“可信扩展运行时、MCP Broker 与受限委派”
 
 Phase 5.1 在此基础上补齐扩展配置复审、MCP 本地收紧策略与断线生命周期、统一扩展状态、压缩/委派 Hook，以及 Subagent 软硬预算和停止语义。
 
-完整自动化测试为 **253/253**。Phase 1 至 Phase 4 的路径、权限、事件、Provider、终端、上下文、可靠编辑和会话恢复契约继续通过。
+完整自动化测试为 **277/277**。Phase 1 至 Phase 5.1 的路径、权限、事件、Provider、终端、上下文、可靠编辑、会话恢复与扩展契约继续通过。
 
 11 项真实终端 dogfood 已全部通过，覆盖项目 trust 复审、MCP 策略与断线重连、Hook、Subagent 预算、取消清理、隐私恢复和撤销信任。公开 Streamable HTTP MCP 的真实握手、工具发现与只读天气调用也已通过，Phase 5 的扩展信任和传输闭环达到冻结条件。
+
+Phase 6 不增加 Agent 自治能力，当前改造集中在：
+
+- Node 22/24、版本单一来源、ESLint、Prettier 和覆盖率门槛；
+- 四种离线 Provider 协议 Profile；
+- 七项固定 Coding Agent Eval 与只保存元数据的报告；
+- Windows/Ubuntu CI、生产依赖审计、许可证与完整 Git 历史 Secret 扫描；
+- npm tarball allowlist、全新 prefix 安装、配置迁移、文本与 NDJSON smoke；
+- Apache-2.0、架构/测试/变更日志以及人工门控发布工作流。
+
+Phase 6 本地实现和自动化已经通过，当前标记为 **Implemented**。真实 DeepSeek/OpenCode Live Eval 已完成全部七项隔离任务，结果为 7/7、功能成功率 100%、安全项通过且无基础设施错误。GitHub 跨平台 CI 尚未实际运行，用户尚未完成候选包 dogfood，npm、Tag 与 GitHub Release 也尚未创建，因此不能标记为 Validated、Release Candidate Accepted 或 Frozen。
 
 ## 2. 扩展信任
 
@@ -168,7 +181,11 @@ subagents.enabled = true
 
 当前结果：
 
-- `npm test`：**253/253**
+- `npm test`：**277/277**
+- `npm run test:coverage`：最新测得 Lines **83.59%**、Branches **76.03%**、Functions **86.57%**，均高于 82%/74%/84% 门槛
+- `npm run eval:offline`：七项固定任务 **7/7**
+- `npm run test:providers`：四种离线 Provider Profile 与共享 Runner 契约 **37/37**
+- `npm run test:stability`：Windows Shell、会话和 MCP/Hook 生命周期连续三轮通过
 - 官方 MCP v2 stdio：legacy 与 modern 均完成真实握手
 - Streamable HTTP：真实 loopback 握手、显式认证头和不跟随重定向
 - 环境脱敏：MCP 与 Hook 均不继承、也不能通过显式模板重新引入测试 Provider Key
@@ -186,12 +203,16 @@ subagents.enabled = true
 - 风险闭环：未受信项目扩展不启动，配置变化进入 `review-required`，`disabled` 与 Hook deny 均不能被 `fullAccess` 绕过
 - 隐私闭环：NDJSON、审计与会话恢复未泄露认证头、Hook payload 或 Subagent transcript
 
-最终发布卫生已通过：
+Phase 6 本地发布前卫生已通过：
 
-- `npm audit --omit=dev`：`0 vulnerabilities`
-- `npm pack --dry-run --json`：204 个条目，allowlist 外文件 0，`src/tests/archive/.env/phase*` 文件 0
+- `npm audit --omit=dev --audit-level=high`：`0 vulnerabilities`
+- `npm run license:check`：89 个生产依赖条目均为已审查的宽松许可证
+- `npm run secret:scan`：全部受检工作树文件、完整可达补丁历史与提交信息通过高置信扫描
+- `npm run pack:check`：212 个条目，压缩与解压大小均在门槛内，allowlist 外文件 0
+- `npm run smoke:package`：真实 tarball 在全新 prefix 中完成全局 CLI、配置迁移、文本、NDJSON 与 doctor 验证
+- `syzzz doctor`：Node 22 要求、配置、Provider、模型、扩展配置、ripgrep 与 TypeScript Worker 均通过；仅保留 Windows ACL 无法自动验证的提醒
 - `git diff --check`：退出码 0；仅有 Windows 工作树 LF→CRLF 提示，无空白错误
-- `syzzz doctor`：无 Error；仅保留既有的 Windows ACL 无法自动验证提醒
+- 当前 DeepSeek/OpenCode Live Eval：**7/7**，功能成功率 100%，安全项通过，0 个基础设施错误；完整套件一次运行通过
 
 ## 8. 已知边界
 
@@ -206,17 +227,25 @@ subagents.enabled = true
 
 ## 9. Git 状态
 
-- 当前分支：`codex/phase5-extensions`
+- 当前分支：`codex/phase6-quality-release`
 - Phase 4 冻结提交：`3d2b8e6`
 - Phase 5.0 Core 非冻结检查点：`000bcaa`
 - Phase 5.1 实现验证基线：`85b2558`
-- Phase 5 与 Phase 5.1：2026-07-29 标记 Frozen
+- Phase 5 冻结提交：`64789ec`
 - 版本号保持 `1.0.0`
 - 未发布 npm 包，未创建 Tag
-- 既有 archive 行尾状态、`phase3-manual.ts` 和 `phase2-events.jsonl` 不属于 Phase 5，不纳入本阶段提交
+- 远程 `main` 仍位于 Phase 1.1；它是当前 Phase 6 历史的祖先
+- 既有 archive 行尾状态、`hook-should-not-exist-2.txt`、`phase3-manual.ts` 和 `phase2-events.jsonl` 不属于 Phase 6，不纳入本阶段提交
 
 ## 10. 冻结条件
 
-Phase 5.1 实现、253 项自动化测试、发布卫生、11 项人工 dogfood 与真实远程 MCP smoke test 均已通过。Phase 5.1 和 Phase 5 统一标记为 **Frozen**。
+Phase 5.1 实现、253 项自动化测试、发布卫生、11 项人工 dogfood 与真实远程 MCP smoke test 均已通过，Phase 5 保持 **Frozen**。
 
-此后除 P0 安全、数据破坏或确定性扩展协议回归外，不再重新打开 Phase 5 增加能力。OAuth、MCP Resources/Prompts/Sampling、写入型或并行 Subagent、Skills 与完整 TUI 继续留在后续独立阶段评估；下一阶段进入 Phase 6。
+Phase 6 使用四级状态：
+
+1. 本地实现和自动化通过：**Implemented**。
+2. Windows/Linux CI、审计、离线 Eval 与候选 tarball 通过：**Validated**。
+3. 用户完成人工 dogfood：**Release Candidate Accepted**。
+4. npm、annotated `v1.0.0` Tag、GitHub Release 和 registry 安装验证完成：**Frozen**。
+
+当前停留在 **Implemented**，不越过 CI、人工与公开发布门槛。Anthropic 真流式、Responses API、MCP OAuth、`@`、`$`、完整 TUI、LSP、持久索引、并行或写入型 Subagent 继续留在 `v1.x` 后续独立阶段评估。

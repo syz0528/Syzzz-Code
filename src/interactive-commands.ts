@@ -1,8 +1,4 @@
-import type {
-  SuggestionItem,
-  SuggestionProvider,
-  SuggestionRequest
-} from './terminal-input.js';
+import type { SuggestionItem, SuggestionProvider, SuggestionRequest } from './terminal-input.js';
 
 export interface CommandChoice {
   value: string;
@@ -11,18 +7,9 @@ export interface CommandChoice {
   current?: boolean;
 }
 
-export type CommandExecutionResult =
-  | 'continue'
-  | 'exit'
-  | { submitMessage: string };
+export type CommandExecutionResult = 'continue' | 'exit' | { submitMessage: string };
 
-export const COMMAND_CATEGORIES = [
-  'work',
-  'session',
-  'runtime',
-  'extensions',
-  'general'
-] as const;
+export const COMMAND_CATEGORIES = ['work', 'session', 'runtime', 'extensions', 'general'] as const;
 
 export type CommandCategory = (typeof COMMAND_CATEGORIES)[number];
 
@@ -65,14 +52,14 @@ function commandScore(command: CommandDefinition<unknown>, query: string): numbe
   if (!query) {
     return 0;
   }
-  if (names.some(name => name === query)) {
+  if (names.some((name) => name === query)) {
     return 0;
   }
-  const prefixIndex = names.findIndex(name => name.startsWith(query));
+  const prefixIndex = names.findIndex((name) => name.startsWith(query));
   if (prefixIndex !== -1) {
     return 10 + prefixIndex;
   }
-  const substringIndex = names.findIndex(name => name.includes(query));
+  const substringIndex = names.findIndex((name) => name.includes(query));
   if (substringIndex !== -1) {
     return 100 + substringIndex;
   }
@@ -131,14 +118,12 @@ export class CommandRegistry<Context> {
   }
 
   list(context: Context): readonly CommandDefinition<Context>[] {
-    return this.commands.filter(command => command.isEnabled?.(context) ?? true);
+    return this.commands.filter((command) => command.isEnabled?.(context) ?? true);
   }
 
   resolve(name: string, context: Context): CommandDefinition<Context> | undefined {
     const command = this.names.get(normalizeName(name));
-    return command && (command.isEnabled?.(context) ?? true)
-      ? command
-      : undefined;
+    return command && (command.isEnabled?.(context) ?? true) ? command : undefined;
   }
 
   search(query: string, context: Context): readonly CommandDefinition<Context>[] {
@@ -149,31 +134,31 @@ export class CommandRegistry<Context> {
         score: commandScore(command as CommandDefinition<unknown>, normalizedQuery),
         registrationIndex
       }))
-      .filter(result => Number.isFinite(result.score))
-      .sort((left, right) =>
-        left.score - right.score ||
-        left.command.priority - right.command.priority ||
-        left.registrationIndex - right.registrationIndex
+      .filter((result) => Number.isFinite(result.score))
+      .sort(
+        (left, right) =>
+          left.score - right.score ||
+          left.command.priority - right.command.priority ||
+          left.registrationIndex - right.registrationIndex
       )
-      .map(result => result.command);
+      .map((result) => result.command);
   }
 
   closest(name: string, context: Context, maximum = 3): readonly string[] {
     const normalizedName = normalizeName(name);
     return this.list(context)
-      .map(command => ({
+      .map((command) => ({
         name: command.name,
         distance: Math.min(
           editDistance(normalizedName, normalizeName(command.name)),
-          ...(command.aliases ?? []).map(alias =>
+          ...(command.aliases ?? []).map((alias) =>
             editDistance(normalizedName, normalizeName(alias))
           )
         )
       }))
-      .sort((left, right) => left.distance - right.distance ||
-        left.name.localeCompare(right.name))
+      .sort((left, right) => left.distance - right.distance || left.name.localeCompare(right.name))
       .slice(0, maximum)
-      .map(result => result.name);
+      .map((result) => result.name);
   }
 }
 
@@ -210,13 +195,12 @@ export function createSlashSuggestionProvider<Context>(
       const context = getContext();
       const firstSpace = request.query.search(/\s/);
       if (firstSpace === -1) {
-        return registry.search(request.query, context).map(command => {
+        return registry.search(request.query, context).map((command) => {
           const hasChoices = Boolean(command.choices?.(context).length);
           return {
             id: `command:${command.name}`,
             label: `/${command.name}${command.argumentHint ? ` ${command.argumentHint}` : ''}`,
-            description:
-              `${COMMAND_CATEGORY_LABELS[command.category]} · ${command.description}`,
+            description: `${COMMAND_CATEGORY_LABELS[command.category]} · ${command.description}`,
             insertText: `/${command.name}${hasChoices ? ' ' : ''}`,
             replaceStart: 0,
             replaceEnd: request.query.length + 1,
@@ -234,13 +218,15 @@ export function createSlashSuggestionProvider<Context>(
       }
 
       return choices
-        .filter(choice => {
+        .filter((choice) => {
           const label = (choice.label ?? choice.value).toLowerCase();
-          return !argumentQuery ||
+          return (
+            !argumentQuery ||
             choice.value.toLowerCase().includes(argumentQuery) ||
-            label.includes(argumentQuery);
+            label.includes(argumentQuery)
+          );
         })
-        .map(choice => ({
+        .map((choice) => ({
           id: `choice:${command.name}:${choice.value}`,
           label: `${choice.current ? '* ' : '  '}${choice.label ?? choice.value}`,
           description: choice.description,

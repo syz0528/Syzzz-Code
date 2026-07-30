@@ -26,15 +26,19 @@ export const SUBAGENT_MAX_REPORT_BYTES = 20 * 1024;
 export const SUBAGENT_SOFT_TOKEN_BUDGET = 96_000;
 export const SUBAGENT_HARD_TOKEN_BUDGET = 128_000;
 
-const delegateInputSchema = z.object({
-  role: z.enum(['explore', 'review'])
-    .describe('Use explore for code discovery or review for read-only change review'),
-  task: z.string()
-    .trim()
-    .min(1, 'task cannot be empty')
-    .max(20_000, 'task is too long')
-    .describe('A self-contained, read-only research or review task')
-}).strict();
+const delegateInputSchema = z
+  .object({
+    role: z
+      .enum(['explore', 'review'])
+      .describe('Use explore for code discovery or review for read-only change review'),
+    task: z
+      .string()
+      .trim()
+      .min(1, 'task cannot be empty')
+      .max(20_000, 'task is too long')
+      .describe('A self-contained, read-only research or review task')
+  })
+  .strict();
 
 export type DelegateInput = z.infer<typeof delegateInputSchema>;
 
@@ -58,20 +62,12 @@ export function createDelegateTool(): ToolDefinition {
 }
 
 export function createSubagentToolSet(role: SubagentRole): ToolDefinition[] {
-  const common = [
-    globTool,
-    grepTool,
-    listDirectoryTool,
-    readRangeTool,
-    gitStatusTool,
-    repoMapTool
-  ];
-  return role === 'review'
-    ? [...common, gitDiffTool, diagnosticsTool]
-    : common;
+  const common = [globTool, grepTool, listDirectoryTool, readRangeTool, gitStatusTool, repoMapTool];
+  return role === 'review' ? [...common, gitDiffTool, diagnosticsTool] : common;
 }
 
 export function createBoundedSubagentProvider(provider: AIProvider): AIProvider {
+  const chatStream = provider.chatStream?.bind(provider);
   const getInfo = (): ProviderInfo => {
     const info = provider.getInfo();
     return {
@@ -84,11 +80,10 @@ export function createBoundedSubagentProvider(provider: AIProvider): AIProvider 
     };
   };
   return {
-    chat: request => provider.chat(request),
-    ...(provider.chatStream
+    chat: (request) => provider.chat(request),
+    ...(chatStream
       ? {
-          chatStream: (request, attemptOptions) =>
-            provider.chatStream!(request, attemptOptions)
+          chatStream
         }
       : {}),
     getInfo
@@ -96,19 +91,20 @@ export function createBoundedSubagentProvider(provider: AIProvider): AIProvider 
 }
 
 export function subagentSystemInstructions(role: SubagentRole): string {
-  const roleInstructions = role === 'review'
-    ? [
-        'Review only the requested code or diff.',
-        'Prioritize correctness, security, regressions, and missing tests.',
-        'Start with GitDiff, then use Read or Diagnostics only for concrete findings.',
-        'Ground findings in files and line numbers when available.'
-      ]
-    : [
-        'Locate only the code needed to answer the delegated question.',
-        'Start with RepoMap or Grep, then read only the smallest relevant ranges.',
-        'Explain architecture and relevant relationships without broad traversal.',
-        'Ground conclusions in inspected files and distinguish facts from inference.'
-      ];
+  const roleInstructions =
+    role === 'review'
+      ? [
+          'Review only the requested code or diff.',
+          'Prioritize correctness, security, regressions, and missing tests.',
+          'Start with GitDiff, then use Read or Diagnostics only for concrete findings.',
+          'Ground findings in files and line numbers when available.'
+        ]
+      : [
+          'Locate only the code needed to answer the delegated question.',
+          'Start with RepoMap or Grep, then read only the smallest relevant ranges.',
+          'Explain architecture and relevant relationships without broad traversal.',
+          'Ground conclusions in inspected files and distinguish facts from inference.'
+        ];
   return [
     'You are a bounded read-only subagent working for a parent coding Agent.',
     ...roleInstructions,

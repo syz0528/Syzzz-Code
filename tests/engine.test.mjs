@@ -107,13 +107,13 @@ test('does not commit a failed turn to conversation history', async () => {
 test('rejects a second message while a turn is still processing', async () => {
   let finishRequest;
   let notifyRequestStarted;
-  const requestStarted = new Promise(resolve => {
+  const requestStarted = new Promise((resolve) => {
     notifyRequestStarted = resolve;
   });
   const provider = {
     chat() {
       notifyRequestStarted();
-      return new Promise(resolve => {
+      return new Promise((resolve) => {
         finishRequest = resolve;
       });
     },
@@ -129,10 +129,7 @@ test('rejects a second message while a turn is still processing', async () => {
   });
 
   const firstTurn = engine.chat('First');
-  await assert.rejects(
-    () => engine.chat('Second'),
-    /Another message is still being processed/
-  );
+  await assert.rejects(() => engine.chat('Second'), /Another message is still being processed/);
   await requestStarted;
 
   finishRequest({
@@ -507,9 +504,7 @@ test('allows all edits for the session without granting shell approval', async (
   const response = await engine.chat('Edit, then run a command', {
     async requestApproval(request) {
       approvalRequests.push(request);
-      return request.toolName === 'Write'
-        ? 'allow-edits-session'
-        : 'deny';
+      return request.toolName === 'Write' ? 'allow-edits-session' : 'deny';
     }
   });
 
@@ -518,10 +513,7 @@ test('allows all edits for the session without granting shell approval', async (
   assert.equal(shellExecutions, 0);
   assert.equal(engine.getPermissionMode(), 'acceptEdits');
   assert.equal(approvalRequests.length, 2);
-  assert.deepEqual(
-    approvalRequests[0].choices,
-    ['allow-once', 'allow-edits-session', 'deny']
-  );
+  assert.deepEqual(approvalRequests[0].choices, ['allow-once', 'allow-edits-session', 'deny']);
   assert.equal(Object.isFrozen(approvalRequests[0].choices), true);
   assert.deepEqual(approvalRequests[1].choices, ['allow-once', 'deny']);
   assert.equal(Object.isFrozen(approvalRequests[1].choices), true);
@@ -563,11 +555,14 @@ test('fails closed when an approval handler returns a choice not offered', async
   };
   const engine = new QueryEngine({ provider, tools: [tool], announceProvider: false });
 
-  assert.equal(await engine.chat('Run shell', {
-    async requestApproval() {
-      return 'allow-edits-session';
-    }
-  }), 'Blocked.');
+  assert.equal(
+    await engine.chat('Run shell', {
+      async requestApproval() {
+        return 'allow-edits-session';
+      }
+    }),
+    'Blocked.'
+  );
   assert.equal(executionCount, 0);
   assert.equal(toolResult.isError, true);
   assert.match(toolResult.content, /invalid approval choice/);
@@ -612,7 +607,7 @@ test('aborts the turn when approval waiting is cancelled', async () => {
         return 'allow-once';
       }
     }),
-    error => error?.name === 'AbortError'
+    (error) => error?.name === 'AbortError'
   );
   assert.equal(executionCount, 0);
   assert.deepEqual(engine.getMessages(), []);
@@ -629,9 +624,13 @@ test('cancels an active provider request without committing the turn', async () 
       }
 
       return new Promise((resolve, reject) => {
-        request.signal.addEventListener('abort', () => {
-          reject(new Error('provider request aborted'));
-        }, { once: true });
+        request.signal.addEventListener(
+          'abort',
+          () => {
+            reject(new Error('provider request aborted'));
+          },
+          { once: true }
+        );
       });
     },
     getInfo() {
@@ -643,7 +642,7 @@ test('cancels an active provider request without committing the turn', async () 
 
   const cancelledTurn = engine.chat('Cancel me', { signal: abortController.signal });
   abortController.abort();
-  await assert.rejects(cancelledTurn, error => error?.name === 'AbortError');
+  await assert.rejects(cancelledTurn, (error) => error?.name === 'AbortError');
   assert.deepEqual(engine.getMessages(), []);
 
   shouldWaitForCancellation = false;
@@ -868,11 +867,13 @@ test('ask and plan modes expose only read tools and deny forged side effects', a
           message: {
             role: 'assistant',
             content: '',
-            toolCalls: [{
-              id: 'forged-write',
-              name: 'Write',
-              input: { path: 'blocked.txt' }
-            }]
+            toolCalls: [
+              {
+                id: 'forged-write',
+                name: 'Write',
+                input: { path: 'blocked.txt' }
+              }
+            ]
           }
         };
       }
@@ -914,7 +915,10 @@ test('ask and plan modes expose only read tools and deny forged side effects', a
   });
 
   assert.equal(await engine.chat('Inspect only'), 'Stayed read-only.');
-  assert.deepEqual(requests[0].tools.map(tool => tool.name), ['Read']);
+  assert.deepEqual(
+    requests[0].tools.map((tool) => tool.name),
+    ['Read']
+  );
   assert.equal(writeExecutions, 0);
   assert.equal(requests[1].messages.at(-1).isError, true);
   assert.match(requests[1].messages.at(-1).content, /unavailable in ask mode/);
@@ -937,11 +941,13 @@ test('a successful file side effect is reinforced in the final Provider request'
           message: {
             role: 'assistant',
             content: '',
-            toolCalls: [{
-              id: 'write-side-effect',
-              name: 'Write',
-              input: { path: 'confirmed.txt' }
-            }]
+            toolCalls: [
+              {
+                id: 'write-side-effect',
+                name: 'Write',
+                input: { path: 'confirmed.txt' }
+              }
+            ]
           }
         };
       }
@@ -958,17 +964,19 @@ test('a successful file side effect is reinforced in the final Provider request'
   };
   const engine = new QueryEngine({
     provider,
-    tools: [{
-      name: 'Write',
-      description: 'Write',
-      inputSchema: z.object({ path: z.string() }).strict(),
-      risk: 'write',
-      approval: 'never',
-      async execute() {
-        executions += 1;
-        return { content: 'written' };
+    tools: [
+      {
+        name: 'Write',
+        description: 'Write',
+        inputSchema: z.object({ path: z.string() }).strict(),
+        risk: 'write',
+        approval: 'never',
+        async execute() {
+          executions += 1;
+          return { content: 'written' };
+        }
       }
-    }],
+    ],
     mode: 'code',
     permissionMode: 'fullAccess',
     audit: false
@@ -1008,13 +1016,14 @@ test('engine state validation and persistence health fail closed', () => {
     dirty: true
   });
   assert.throws(
-    () => engine.restoreState({
-      schemaVersion: 1,
-      messages: [{ role: 'unexpected', content: 'invalid' }],
-      pendingFileChangeReceipts: [],
-      compactionCount: 0,
-      totalUsage: { inputTokens: 0, outputTokens: 0, totalTokens: 0 }
-    }),
+    () =>
+      engine.restoreState({
+        schemaVersion: 1,
+        messages: [{ role: 'unexpected', content: 'invalid' }],
+        pendingFileChangeReceipts: [],
+        compactionCount: 0,
+        totalUsage: { inputTokens: 0, outputTokens: 0, totalTokens: 0 }
+      }),
     /unknown message role/
   );
 });

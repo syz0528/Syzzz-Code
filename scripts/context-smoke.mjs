@@ -12,9 +12,7 @@ function withControllableContextWindow(provider, initialContextWindowTokens) {
   return {
     provider: {
       chat: provider.chat.bind(provider),
-      ...(provider.chatStream
-        ? { chatStream: provider.chatStream.bind(provider) }
-        : {}),
+      ...(provider.chatStream ? { chatStream: provider.chatStream.bind(provider) } : {}),
       getInfo() {
         return {
           ...provider.getInfo(),
@@ -62,20 +60,17 @@ async function main() {
   const marker = `CTX-SMOKE-${randomUUID().slice(0, 8)}`;
   await engine.chat(
     `Remember this exact marker: ${marker}. Reply only ACK. ` +
-    `Filler: ${'A'.repeat(FILLER_CHARACTERS)}`
+      `Filler: ${'A'.repeat(FILLER_CHARACTERS)}`
   );
   controlledProvider.setContextWindow(SIMULATED_WINDOW_TOKENS);
 
   const { events, result } = await collectTurn(
     engine.runTurn('Reply with only the exact marker from the previous turn.')
   );
-  const compactions = events.filter(
-    event => event.type === 'compaction_completed'
-  );
+  const compactions = events.filter((event) => event.type === 'compaction_completed');
   const finalCompaction = compactions.at(-1);
   const terminal = events.at(-1)?.type;
-  const markerPreserved =
-    result.status === 'completed' && result.response.includes(marker);
+  const markerPreserved = result.status === 'completed' && result.response.includes(marker);
   const passed =
     result.status === 'completed' &&
     markerPreserved &&
@@ -85,40 +80,44 @@ async function main() {
 
   const providerInfo = controlledProvider.provider.getInfo();
   const providerFailures = events
-    .filter(event => event.type === 'provider_request_failed')
-    .map(event => ({
+    .filter((event) => event.type === 'provider_request_failed')
+    .map((event) => ({
       purpose: event.purpose,
       attempt: event.attempt,
       code: event.error.code,
       status: event.error.status,
       willRetry: event.willRetry
     }));
-  process.stdout.write(`${JSON.stringify({
-    passed,
-    provider: providerInfo.name,
-    model: providerInfo.model,
-    simulatedWindowTokens: SIMULATED_WINDOW_TOKENS,
-    status: result.status,
-    markerPreserved,
-    compactions: compactions.length,
-    beforeTokens: finalCompaction?.beforeTokens,
-    afterTokens: finalCompaction?.afterTokens,
-    compactionRequests: events.filter(
-      event =>
-        event.type === 'provider_request_started' &&
-        event.purpose === 'compaction'
-    ).length,
-    errorCode: result.status === 'failed' ? result.error.code : undefined,
-    providerFailures,
-    terminal
-  }, null, 2)}\n`);
+  process.stdout.write(
+    `${JSON.stringify(
+      {
+        passed,
+        provider: providerInfo.name,
+        model: providerInfo.model,
+        simulatedWindowTokens: SIMULATED_WINDOW_TOKENS,
+        status: result.status,
+        markerPreserved,
+        compactions: compactions.length,
+        beforeTokens: finalCompaction?.beforeTokens,
+        afterTokens: finalCompaction?.afterTokens,
+        compactionRequests: events.filter(
+          (event) => event.type === 'provider_request_started' && event.purpose === 'compaction'
+        ).length,
+        errorCode: result.status === 'failed' ? result.error.code : undefined,
+        providerFailures,
+        terminal
+      },
+      null,
+      2
+    )}\n`
+  );
 
   if (!passed) {
     process.exitCode = 1;
   }
 }
 
-main().catch(error => {
+main().catch((error) => {
   const reason = error instanceof Error ? error.message : String(error);
   process.stderr.write(`Context smoke test failed: ${reason}\n`);
   process.exitCode = 1;

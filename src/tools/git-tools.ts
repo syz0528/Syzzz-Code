@@ -5,10 +5,7 @@ import { throwIfAborted } from './abort.js';
 import { runBoundedProcess } from './bounded-process.js';
 import { limitUtf8Head } from './output-limits.js';
 import { defineTool } from './runtime.js';
-import {
-  isSensitiveRelativePath,
-  resolveWorkspacePath
-} from './workspace.js';
+import { isSensitiveRelativePath, resolveWorkspacePath } from './workspace.js';
 
 const MAX_PATH_CHARACTERS = 4_096;
 const MAX_GIT_OUTPUT_BYTES = 40 * 1024;
@@ -28,11 +25,7 @@ function createGitError(action: string, error: unknown): ToolResult {
   };
 }
 
-async function runGit(
-  arguments_: readonly string[],
-  workspaceRoot: string,
-  signal: AbortSignal
-) {
+async function runGit(arguments_: readonly string[], workspaceRoot: string, signal: AbortSignal) {
   const result = await runBoundedProcess('git', arguments_, {
     cwd: workspaceRoot,
     signal,
@@ -57,13 +50,14 @@ function normalizeRelativePath(value: string): string {
 function statusLinePaths(line: string): string[] {
   const pathText = line.slice(3).trim();
   return pathText.includes(' -> ')
-    ? pathText.split(' -> ').map(path => path.replace(/^"|"$/g, ''))
+    ? pathText.split(' -> ').map((path) => path.replace(/^"|"$/g, ''))
     : [pathText.replace(/^"|"$/g, '')];
 }
 
 function isSafeStatusLine(line: string): boolean {
-  return statusLinePaths(line)
-    .every(path => path.length > 0 && !isSensitiveRelativePath(normalizeRelativePath(path)));
+  return statusLinePaths(line).every(
+    (path) => path.length > 0 && !isSensitiveRelativePath(normalizeRelativePath(path))
+  );
 }
 
 async function resolveGitPath(
@@ -77,16 +71,19 @@ async function resolveGitPath(
   return normalizeRelativePath(relative(workspaceRoot, targetPath)) || '.';
 }
 
-const optionalGitPathSchema = z.string()
+const optionalGitPathSchema = z
+  .string()
   .trim()
   .min(1, 'Path cannot be empty')
   .max(MAX_PATH_CHARACTERS, 'Path is too long')
   .optional()
   .describe('Optional file or directory inside the workspace');
 
-const gitStatusInputSchema = z.object({
-  path: optionalGitPathSchema
-}).strict();
+const gitStatusInputSchema = z
+  .object({
+    path: optionalGitPathSchema
+  })
+  .strict();
 
 export const gitStatusTool = defineTool({
   name: 'GitStatus',
@@ -99,27 +96,19 @@ export const gitStatusTool = defineTool({
     try {
       throwIfAborted(context.signal);
       const path = await resolveGitPath(input.path, context.workspaceRoot);
-      const result = await runGit([
-        '-c',
-        'core.quotepath=false',
-        'status',
-        '--short',
-        '--untracked-files=normal',
-        '--',
-        path
-      ], context.workspaceRoot, context.signal);
+      const result = await runGit(
+        ['-c', 'core.quotepath=false', 'status', '--short', '--untracked-files=normal', '--', path],
+        context.workspaceRoot,
+        context.signal
+      );
       const lines = result.stdout
         .toString('utf8')
         .split(/\r?\n/)
         .filter(Boolean)
         .filter(isSafeStatusLine);
-      const body = lines.length > 0
-        ? lines.join('\n')
-        : 'Working tree is clean for the selected path.';
-      const limited = limitUtf8Head(
-        `Git status:\n${body}`,
-        MAX_GIT_OUTPUT_BYTES
-      );
+      const body =
+        lines.length > 0 ? lines.join('\n') : 'Working tree is clean for the selected path.';
+      const limited = limitUtf8Head(`Git status:\n${body}`, MAX_GIT_OUTPUT_BYTES);
       return {
         content: limited.text,
         metadata: {
@@ -133,12 +122,15 @@ export const gitStatusTool = defineTool({
     }
   }
 });
-const gitDiffInputSchema = z.object({
-  scope: z.enum(['unstaged', 'staged'])
-    .optional()
-    .describe('Diff unstaged or staged changes; defaults to unstaged'),
-  path: optionalGitPathSchema
-}).strict();
+const gitDiffInputSchema = z
+  .object({
+    scope: z
+      .enum(['unstaged', 'staged'])
+      .optional()
+      .describe('Diff unstaged or staged changes; defaults to unstaged'),
+    path: optionalGitPathSchema
+  })
+  .strict();
 
 function boundedSafePaths(paths: readonly string[]): {
   paths: string[];
@@ -186,17 +178,12 @@ export const gitDiffTool = defineTool({
         commonArguments.push('--cached');
       }
 
-      const namesResult = await runGit([
-        ...commonArguments,
-        '--name-only',
-        '-z',
-        '--',
-        path
-      ], context.workspaceRoot, context.signal);
-      const rawPaths = namesResult.stdout
-        .toString('utf8')
-        .split('\0')
-        .filter(Boolean);
+      const namesResult = await runGit(
+        [...commonArguments, '--name-only', '-z', '--', path],
+        context.workspaceRoot,
+        context.signal
+      );
+      const rawPaths = namesResult.stdout.toString('utf8').split('\0').filter(Boolean);
       const selected = boundedSafePaths(rawPaths);
       if (selected.paths.length === 0) {
         return {
@@ -209,12 +196,11 @@ export const gitDiffTool = defineTool({
         };
       }
 
-      const diffResult = await runGit([
-        ...commonArguments,
-        '--unified=3',
-        '--',
-        ...selected.paths
-      ], context.workspaceRoot, context.signal);
+      const diffResult = await runGit(
+        [...commonArguments, '--unified=3', '--', ...selected.paths],
+        context.workspaceRoot,
+        context.signal
+      );
       const diff = diffResult.stdout.toString('utf8');
       const limited = limitUtf8Head(
         diff || '(Git reported changed paths but produced no textual diff.)',

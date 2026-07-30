@@ -1,14 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import {
-  mkdirSync,
-  mkdtempSync,
-  readFileSync,
-  readdirSync,
-  rmSync,
-  writeFileSync
-} from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -54,16 +47,12 @@ test('interactive work-mode commands stay local and can submit a message', () =>
     await runInteractiveSession(engine);
   `;
 
-  const result = spawnSync(
-    process.execPath,
-    ['--input-type=module', '--eval', script],
-    {
-      cwd: projectDirectory,
-      encoding: 'utf-8',
-      input: '/plan inspect this\n/code implement it\nexit\n',
-      timeout: 5_000
-    }
-  );
+  const result = spawnSync(process.execPath, ['--input-type=module', '--eval', script], {
+    cwd: projectDirectory,
+    encoding: 'utf-8',
+    input: '/plan inspect this\n/code implement it\nexit\n',
+    timeout: 5_000
+  });
 
   assert.equal(result.status, 0, result.stderr || result.error?.message);
   assert.match(result.stdout, /HANDLED:plan:inspect this/);
@@ -72,19 +61,14 @@ test('interactive work-mode commands stay local and can submit a message', () =>
 });
 
 test('stream-json rejects the human display stream override', () => {
-  const result = spawnSync(process.execPath, [
-    cliPath,
-    'chat',
-    '--message',
-    'hello',
-    '--output-format',
-    'stream-json',
-    '--stream',
-    'off'
-  ], {
-    cwd: projectDirectory,
-    encoding: 'utf-8'
-  });
+  const result = spawnSync(
+    process.execPath,
+    [cliPath, 'chat', '--message', 'hello', '--output-format', 'stream-json', '--stream', 'off'],
+    {
+      cwd: projectDirectory,
+      encoding: 'utf-8'
+    }
+  );
 
   assert.equal(result.status, 1);
   assert.match(result.stderr, /--stream cannot be used with --output-format stream-json/);
@@ -97,31 +81,34 @@ test('switch selects configured values and persists them', () => {
 
   try {
     mkdirSync(configDirectory);
-    writeFileSync(configPath, JSON.stringify({
-      currentProvider: 'alpha',
-      providers: {
-        alpha: {
-          name: 'Alpha',
-          type: 'openai-compatible',
-          model: 'alpha-1',
-          models: ['alpha-1'],
-          env: {
-            BASE_URL: 'https://alpha.example.com/v1',
-            API_KEY: ''
-          }
-        },
-        beta: {
-          name: 'Beta',
-          type: 'anthropic',
-          model: 'beta-1',
-          models: ['beta-1', 'beta-2'],
-          env: {
-            BASE_URL: 'https://beta.example.com',
-            API_KEY: ''
+    writeFileSync(
+      configPath,
+      JSON.stringify({
+        currentProvider: 'alpha',
+        providers: {
+          alpha: {
+            name: 'Alpha',
+            type: 'openai-compatible',
+            model: 'alpha-1',
+            models: ['alpha-1'],
+            env: {
+              BASE_URL: 'https://alpha.example.com/v1',
+              API_KEY: ''
+            }
+          },
+          beta: {
+            name: 'Beta',
+            type: 'anthropic',
+            model: 'beta-1',
+            models: ['beta-1', 'beta-2'],
+            env: {
+              BASE_URL: 'https://beta.example.com',
+              API_KEY: ''
+            }
           }
         }
-      }
-    }));
+      })
+    );
 
     const result = spawnSync(process.execPath, [cliPath, 'switch'], {
       cwd: projectDirectory,
@@ -153,28 +140,31 @@ test('interactive stream and model commands persist user configuration', () => {
 
   try {
     mkdirSync(configDirectory);
-    writeFileSync(configPath, JSON.stringify({
-      currentProvider: 'local',
-      providers: {
-        local: {
-          name: 'Local',
-          type: 'openai-compatible',
-          model: 'model-a',
-          models: ['model-a', 'model-b'],
-          env: {
-            BASE_URL: 'https://example.invalid/v1',
-            API_KEY: 'test-key'
+    writeFileSync(
+      configPath,
+      JSON.stringify({
+        currentProvider: 'local',
+        providers: {
+          local: {
+            name: 'Local',
+            type: 'openai-compatible',
+            model: 'model-a',
+            models: ['model-a', 'model-b'],
+            env: {
+              BASE_URL: 'https://example.invalid/v1',
+              API_KEY: 'test-key'
+            }
           }
+        },
+        audit: {
+          retentionDays: 0,
+          maxBytes: 4096
+        },
+        ui: {
+          streamOutput: true
         }
-      },
-      audit: {
-        retentionDays: 0,
-        maxBytes: 4096
-      },
-      ui: {
-        streamOutput: true
-      }
-    }));
+      })
+    );
 
     const result = spawnSync(process.execPath, [cliPath], {
       cwd: projectDirectory,
@@ -213,16 +203,12 @@ test('interactive session processes consecutive messages exactly once', () => {
     await runInteractiveSession(engine);
   `;
 
-  const result = spawnSync(
-    process.execPath,
-    ['--input-type=module', '--eval', script],
-    {
-      cwd: projectDirectory,
-      encoding: 'utf-8',
-      input: 'first\nsecond\nexit\n',
-      timeout: 5_000
-    }
-  );
+  const result = spawnSync(process.execPath, ['--input-type=module', '--eval', script], {
+    cwd: projectDirectory,
+    encoding: 'utf-8',
+    input: 'first\nsecond\nexit\n',
+    timeout: 5_000
+  });
 
   assert.equal(result.status, 0, result.stderr || result.error?.message);
   assert.equal((result.stdout.match(/HANDLED:first/g) ?? []).length, 1);
@@ -258,16 +244,12 @@ test('interactive approval input is not handled as a chat message', () => {
     await runInteractiveSession(engine);
   `;
 
-  const result = spawnSync(
-    process.execPath,
-    ['--input-type=module', '--eval', script],
-    {
-      cwd: projectDirectory,
-      encoding: 'utf-8',
-      input: 'change\ny\nnext\nexit\n',
-      timeout: 5_000
-    }
-  );
+  const result = spawnSync(process.execPath, ['--input-type=module', '--eval', script], {
+    cwd: projectDirectory,
+    encoding: 'utf-8',
+    input: 'change\ny\nnext\nexit\n',
+    timeout: 5_000
+  });
 
   assert.equal(result.status, 0, result.stderr || result.error?.message);
   assert.match(result.stdout, /APPROVED:allow-once/);
@@ -299,16 +281,13 @@ test('interactive /permissions does not become a chat message and can switch mod
     console.log('FINAL:' + engine.mode);
   `;
 
-  const result = spawnSync(
-    process.execPath,
-    ['--input-type=module', '--eval', script],
-    {
-      cwd: projectDirectory,
-      encoding: 'utf-8',
-      input: '/permissions\n/permissions acceptEdits\nhello\n/permissions fullAccess\nyes\n/permissions fullAccess\ny\nexit\n',
-      timeout: 5_000
-    }
-  );
+  const result = spawnSync(process.execPath, ['--input-type=module', '--eval', script], {
+    cwd: projectDirectory,
+    encoding: 'utf-8',
+    input:
+      '/permissions\n/permissions acceptEdits\nhello\n/permissions fullAccess\nyes\n/permissions fullAccess\ny\nexit\n',
+    timeout: 5_000
+  });
 
   assert.equal(result.status, 0, result.stderr || result.error?.message);
   assert.match(result.stdout, /Current permission mode/);
@@ -360,16 +339,12 @@ test('interactive slash commands control display and the current provider model'
     console.log('FINAL_MODEL:' + engine.model);
   `;
 
-  const result = spawnSync(
-    process.execPath,
-    ['--input-type=module', '--eval', script],
-    {
-      cwd: projectDirectory,
-      encoding: 'utf-8',
-      input: '/help\n/?\n/stream off\n/model model-b\n/model missing\n/stram\n//literal\n/quit\n',
-      timeout: 5_000
-    }
-  );
+  const result = spawnSync(process.execPath, ['--input-type=module', '--eval', script], {
+    cwd: projectDirectory,
+    encoding: 'utf-8',
+    input: '/help\n/?\n/stream off\n/model model-b\n/model missing\n/stram\n//literal\n/quit\n',
+    timeout: 5_000
+  });
 
   assert.equal(result.status, 0, result.stderr || result.error?.message);
   assert.match(result.stdout, /Available commands:/);
@@ -418,19 +393,16 @@ test('full access confirmation accepts only y or Y and fails closed for other in
   ];
 
   for (const confirmationCase of cases) {
-    const confirmationInput = confirmationCase.answer === null
-      ? '/permissions fullAccess\n'
-      : `/permissions fullAccess\n${confirmationCase.answer}\n`;
-    const result = spawnSync(
-      process.execPath,
-      ['--input-type=module', '--eval', script],
-      {
-        cwd: projectDirectory,
-        encoding: 'utf-8',
-        input: confirmationInput,
-        timeout: 5_000
-      }
-    );
+    const confirmationInput =
+      confirmationCase.answer === null
+        ? '/permissions fullAccess\n'
+        : `/permissions fullAccess\n${confirmationCase.answer}\n`;
+    const result = spawnSync(process.execPath, ['--input-type=module', '--eval', script], {
+      cwd: projectDirectory,
+      encoding: 'utf-8',
+      input: confirmationInput,
+      timeout: 5_000
+    });
 
     assert.equal(
       result.status,
@@ -496,15 +468,11 @@ test('Ctrl+C cancels full access confirmation without exiting or changing mode',
     originalStdout.write(JSON.stringify({ mode: engine.mode, transcript }));
   `;
 
-  const result = spawnSync(
-    process.execPath,
-    ['--input-type=module', '--eval', script],
-    {
-      cwd: projectDirectory,
-      encoding: 'utf-8',
-      timeout: 5_000
-    }
-  );
+  const result = spawnSync(process.execPath, ['--input-type=module', '--eval', script], {
+    cwd: projectDirectory,
+    encoding: 'utf-8',
+    timeout: 5_000
+  });
 
   assert.equal(result.status, 0, result.stderr || result.error?.message);
   const outcome = JSON.parse(result.stdout);
@@ -522,47 +490,43 @@ test('config secret input uses stdin without exposing the value in output', () =
   const secret = 'secret-value-that-must-not-be-printed';
   try {
     mkdirSync(configDirectory);
-    writeFileSync(configPath, JSON.stringify({
-      schemaVersion: 1,
-      currentProvider: 'local',
-      providers: {
-        local: {
-          name: 'Local',
-          type: 'openai-compatible',
-          model: 'model-a',
-          models: ['model-a'],
-          env: {
-            BASE_URL: 'https://example.invalid/v1',
-            API_KEY: ''
+    writeFileSync(
+      configPath,
+      JSON.stringify({
+        schemaVersion: 1,
+        currentProvider: 'local',
+        providers: {
+          local: {
+            name: 'Local',
+            type: 'openai-compatible',
+            model: 'model-a',
+            models: ['model-a'],
+            env: {
+              BASE_URL: 'https://example.invalid/v1',
+              API_KEY: ''
+            }
           }
-        }
-      },
-      audit: { retentionDays: 0, maxBytes: 4096 },
-      ui: { streamOutput: true },
-      context: { autoCompact: true, defaultWindowTokens: 65_536 },
-      sessions: { autoSave: true }
-    }));
+        },
+        audit: { retentionDays: 0, maxBytes: 4096 },
+        ui: { streamOutput: true },
+        context: { autoCompact: true, defaultWindowTokens: 65_536 },
+        sessions: { autoSave: true }
+      })
+    );
     const environment = {
       ...process.env,
       HOME: testHome,
       USERPROFILE: testHome
     };
-    const result = spawnSync(
-      process.execPath,
-      [cliPath, 'config', 'set', 'apiKey', '--stdin'],
-      {
-        cwd: projectDirectory,
-        encoding: 'utf8',
-        input: `${secret}\n`,
-        env: environment
-      }
-    );
+    const result = spawnSync(process.execPath, [cliPath, 'config', 'set', 'apiKey', '--stdin'], {
+      cwd: projectDirectory,
+      encoding: 'utf8',
+      input: `${secret}\n`,
+      env: environment
+    });
     assert.equal(result.status, 0, result.stderr);
     assert.doesNotMatch(result.stdout + result.stderr, new RegExp(secret));
-    assert.equal(
-      JSON.parse(readFileSync(configPath, 'utf8')).providers.local.env.API_KEY,
-      secret
-    );
+    assert.equal(JSON.parse(readFileSync(configPath, 'utf8')).providers.local.env.API_KEY, secret);
 
     const rejected = spawnSync(
       process.execPath,
@@ -579,14 +543,7 @@ test('config secret input uses stdin without exposing the value in output', () =
     const environmentSecret = 'environment-secret-not-for-output';
     const fromEnvironment = spawnSync(
       process.execPath,
-      [
-        cliPath,
-        'config',
-        'set',
-        'apiKey',
-        '--from-env',
-        'SYZZZ_EXTERNAL_API_KEY'
-      ],
+      [cliPath, 'config', 'set', 'apiKey', '--from-env', 'SYZZZ_EXTERNAL_API_KEY'],
       {
         cwd: projectDirectory,
         encoding: 'utf8',
@@ -599,10 +556,7 @@ test('config secret input uses stdin without exposing the value in output', () =
     assert.equal(fromEnvironment.status, 0, fromEnvironment.stderr);
     const environmentConfig = JSON.parse(readFileSync(configPath, 'utf8'));
     assert.equal(environmentConfig.providers.local.env.API_KEY, '');
-    assert.equal(
-      environmentConfig.providers.local.env.API_KEY_ENV,
-      'SYZZZ_EXTERNAL_API_KEY'
-    );
+    assert.equal(environmentConfig.providers.local.env.API_KEY_ENV, 'SYZZZ_EXTERNAL_API_KEY');
 
     const doctor = spawnSync(process.execPath, [cliPath, 'doctor'], {
       cwd: projectDirectory,
@@ -614,10 +568,7 @@ test('config secret input uses stdin without exposing the value in output', () =
     });
     assert.equal(doctor.status, 0, doctor.stderr);
     assert.doesNotMatch(doctor.stdout + doctor.stderr, new RegExp(secret));
-    assert.doesNotMatch(
-      doctor.stdout + doctor.stderr,
-      new RegExp(environmentSecret)
-    );
+    assert.doesNotMatch(doctor.stdout + doctor.stderr, new RegExp(environmentSecret));
   } finally {
     rmSync(testHome, { recursive: true, force: true });
   }
@@ -635,93 +586,69 @@ test('doctor migrates legacy config but refuses to overwrite future schemas', ()
   };
   try {
     mkdirSync(configDirectory);
-    writeFileSync(configPath, JSON.stringify({
-      currentProvider: 'custom',
-      providers: {
-        custom: {
-          name: 'Custom',
-          type: 'openai-compatible',
-          model: 'model-a',
-          models: ['model-a'],
-          env: {
-            BASE_URL: 'https://example.invalid/v1',
-            API_KEY: storedSecret
+    writeFileSync(
+      configPath,
+      JSON.stringify({
+        currentProvider: 'custom',
+        providers: {
+          custom: {
+            name: 'Custom',
+            type: 'openai-compatible',
+            model: 'model-a',
+            models: ['model-a'],
+            env: {
+              BASE_URL: 'https://example.invalid/v1',
+              API_KEY: storedSecret
+            }
           }
         }
-      }
-    }));
-
-    const migrated = spawnSync(
-      process.execPath,
-      [cliPath, 'doctor', '--repair-config', '--yes'],
-      {
-        cwd: projectDirectory,
-        encoding: 'utf8',
-        env: environment
-      }
+      })
     );
+
+    const migrated = spawnSync(process.execPath, [cliPath, 'doctor', '--repair-config', '--yes'], {
+      cwd: projectDirectory,
+      encoding: 'utf8',
+      env: environment
+    });
     assert.equal(migrated.status, 0, migrated.stderr);
     assert.match(migrated.stdout, /migrated to schema v1/);
-    assert.doesNotMatch(
-      migrated.stdout + migrated.stderr,
-      new RegExp(storedSecret)
-    );
+    assert.doesNotMatch(migrated.stdout + migrated.stderr, new RegExp(storedSecret));
     const migratedConfig = JSON.parse(readFileSync(configPath, 'utf8'));
     assert.equal(migratedConfig.schemaVersion, 1);
     assert.equal(migratedConfig.currentProvider, 'custom');
-    assert.equal(
-      migratedConfig.providers.custom.env.API_KEY,
-      storedSecret
-    );
+    assert.equal(migratedConfig.providers.custom.env.API_KEY, storedSecret);
 
     const futureConfig = JSON.stringify({
       schemaVersion: 2,
       privateValue: 'future-private-value'
     });
     writeFileSync(configPath, futureConfig);
-    const future = spawnSync(
-      process.execPath,
-      [cliPath, 'doctor', '--repair-config', '--yes'],
-      {
-        cwd: projectDirectory,
-        encoding: 'utf8',
-        env: environment
-      }
-    );
+    const future = spawnSync(process.execPath, [cliPath, 'doctor', '--repair-config', '--yes'], {
+      cwd: projectDirectory,
+      encoding: 'utf8',
+      env: environment
+    });
     assert.equal(future.status, 1);
     assert.match(future.stderr, /upgrade Syzzz Code/i);
     assert.equal(readFileSync(configPath, 'utf8'), futureConfig);
-    assert.doesNotMatch(
-      future.stdout + future.stderr,
-      /future-private-value/
-    );
+    assert.doesNotMatch(future.stdout + future.stderr, /future-private-value/);
 
     const corruptValue = '{"private":"corrupt-private-value",';
     writeFileSync(configPath, corruptValue);
-    const repaired = spawnSync(
-      process.execPath,
-      [cliPath, 'doctor', '--repair-config', '--yes'],
-      {
-        cwd: projectDirectory,
-        encoding: 'utf8',
-        env: environment
-      }
-    );
+    const repaired = spawnSync(process.execPath, [cliPath, 'doctor', '--repair-config', '--yes'], {
+      cwd: projectDirectory,
+      encoding: 'utf8',
+      env: environment
+    });
     assert.ok([0, 1].includes(repaired.status), repaired.stderr);
     assert.match(repaired.stdout, /Configuration reset/);
-    assert.doesNotMatch(
-      repaired.stdout + repaired.stderr,
-      /corrupt-private-value/
-    );
+    assert.doesNotMatch(repaired.stdout + repaired.stderr, /corrupt-private-value/);
     assert.equal(JSON.parse(readFileSync(configPath, 'utf8')).schemaVersion, 1);
-    const invalidBackup = readdirSync(configDirectory).find(
-      name => name.endsWith('.invalid.bak')
+    const invalidBackup = readdirSync(configDirectory).find((name) =>
+      name.endsWith('.invalid.bak')
     );
     assert.ok(invalidBackup);
-    assert.equal(
-      readFileSync(join(configDirectory, invalidBackup), 'utf8'),
-      corruptValue
-    );
+    assert.equal(readFileSync(join(configDirectory, invalidBackup), 'utf8'), corruptValue);
   } finally {
     rmSync(testHome, { recursive: true, force: true });
   }
@@ -734,62 +661,68 @@ test('CLI resumes a saved workspace session with mode restored and safe permissi
   const sessionId = 'cccccccc-cccc-4ccc-8ccc-cccccccccccc';
   try {
     mkdirSync(configDirectory);
-    writeFileSync(configPath, JSON.stringify({
-      schemaVersion: 1,
-      currentProvider: 'local',
-      providers: {
-        local: {
-          name: 'Local',
-          type: 'openai-compatible',
-          model: 'model-a',
-          models: ['model-a'],
-          env: {
-            BASE_URL: 'https://example.invalid/v1',
-            API_KEY: 'test-key'
+    writeFileSync(
+      configPath,
+      JSON.stringify({
+        schemaVersion: 1,
+        currentProvider: 'local',
+        providers: {
+          local: {
+            name: 'Local',
+            type: 'openai-compatible',
+            model: 'model-a',
+            models: ['model-a'],
+            env: {
+              BASE_URL: 'https://example.invalid/v1',
+              API_KEY: 'test-key'
+            }
           }
-        }
-      },
-      audit: { retentionDays: 0, maxBytes: 4096 },
-      ui: { streamOutput: true },
-      context: { autoCompact: true, defaultWindowTokens: 65_536 },
-      sessions: { autoSave: true }
-    }));
+        },
+        audit: { retentionDays: 0, maxBytes: 4096 },
+        ui: { streamOutput: true },
+        context: { autoCompact: true, defaultWindowTokens: 65_536 },
+        sessions: { autoSave: true }
+      })
+    );
     const store = await SessionStore.create({
       workspaceRoot: projectDirectory,
       baseDirectory: join(configDirectory, 'sessions')
     });
     const lease = await store.acquire(sessionId);
-    await store.save({
-      schemaVersion: 1,
-      revision: 1,
-      sessionId,
-      title: 'Saved planning session',
-      createdAt: '2026-07-28T00:00:00.000Z',
-      updatedAt: '2026-07-28T01:00:00.000Z',
-      workspace: {
-        id: store.workspaceId,
-        root: store.workspaceRoot
-      },
-      provider: { id: 'local', model: 'model-a' },
-      mode: 'plan',
-      engineState: {
+    await store.save(
+      {
         schemaVersion: 1,
-        messages: [
-          { role: 'user', content: 'Plan the feature' },
-          { role: 'assistant', content: 'Saved plan' }
-        ],
-        pendingFileChangeReceipts: [],
-        compactionCount: 0,
-        totalUsage: { inputTokens: 12, outputTokens: 6, totalTokens: 18 }
+        revision: 1,
+        sessionId,
+        title: 'Saved planning session',
+        createdAt: '2026-07-28T00:00:00.000Z',
+        updatedAt: '2026-07-28T01:00:00.000Z',
+        workspace: {
+          id: store.workspaceId,
+          root: store.workspaceRoot
+        },
+        provider: { id: 'local', model: 'model-a' },
+        mode: 'plan',
+        engineState: {
+          schemaVersion: 1,
+          messages: [
+            { role: 'user', content: 'Plan the feature' },
+            { role: 'assistant', content: 'Saved plan' }
+          ],
+          pendingFileChangeReceipts: [],
+          compactionCount: 0,
+          totalUsage: { inputTokens: 12, outputTokens: 6, totalTokens: 18 }
+        },
+        usage: {
+          turns: 1,
+          inputTokens: 12,
+          outputTokens: 6,
+          totalTokens: 18
+        },
+        auditSessionId: sessionId
       },
-      usage: {
-        turns: 1,
-        inputTokens: 12,
-        outputTokens: 6,
-        totalTokens: 18
-      },
-      auditSessionId: sessionId
-    }, lease);
+      lease
+    );
     await lease.release();
 
     const environment = {
@@ -797,51 +730,35 @@ test('CLI resumes a saved workspace session with mode restored and safe permissi
       HOME: testHome,
       USERPROFILE: testHome
     };
-    const resumed = spawnSync(
-      process.execPath,
-      [cliPath, '--resume', sessionId.slice(0, 12)],
-      {
-        cwd: projectDirectory,
-        encoding: 'utf8',
-        input: '/status\n/exit\n',
-        timeout: 5_000,
-        env: environment
-      }
-    );
+    const resumed = spawnSync(process.execPath, [cliPath, '--resume', sessionId.slice(0, 12)], {
+      cwd: projectDirectory,
+      encoding: 'utf8',
+      input: '/status\n/exit\n',
+      timeout: 5_000,
+      env: environment
+    });
     assert.equal(resumed.status, 0, resumed.stderr || resumed.error?.message);
     assert.match(resumed.stdout, /Saved planning session/);
     assert.match(resumed.stdout, /Work mode:\s+plan/);
     assert.match(resumed.stdout, /Permissions:\s+safe/);
     assert.match(resumed.stdout, /You \[plan\|safe\]/);
 
-    const continued = spawnSync(
-      process.execPath,
-      [cliPath, '--continue'],
-      {
-        cwd: projectDirectory,
-        encoding: 'utf8',
-        input: '/status\n/exit\n',
-        timeout: 5_000,
-        env: environment
-      }
-    );
-    assert.equal(
-      continued.status,
-      0,
-      continued.stderr || continued.error?.message
-    );
+    const continued = spawnSync(process.execPath, [cliPath, '--continue'], {
+      cwd: projectDirectory,
+      encoding: 'utf8',
+      input: '/status\n/exit\n',
+      timeout: 5_000,
+      env: environment
+    });
+    assert.equal(continued.status, 0, continued.stderr || continued.error?.message);
     assert.match(continued.stdout, /Saved planning session/);
     assert.match(continued.stdout, /You \[plan\|safe\]/);
 
-    const listed = spawnSync(
-      process.execPath,
-      [cliPath, 'sessions', 'list'],
-      {
-        cwd: projectDirectory,
-        encoding: 'utf8',
-        env: environment
-      }
-    );
+    const listed = spawnSync(process.execPath, [cliPath, 'sessions', 'list'], {
+      cwd: projectDirectory,
+      encoding: 'utf8',
+      env: environment
+    });
     assert.equal(listed.status, 0, listed.stderr);
     assert.match(listed.stdout, /Saved planning session/);
 
@@ -862,9 +779,7 @@ test('CLI resumes a saved workspace session with mode restored and safe permissi
 });
 
 test('permission mode helpers parse aliases', async () => {
-  const { parsePermissionMode } = await import(
-    '../dist/permissions/mode.js'
-  );
+  const { parsePermissionMode } = await import('../dist/permissions/mode.js');
   assert.equal(parsePermissionMode('accept'), 'acceptEdits');
   assert.equal(parsePermissionMode('full'), 'fullAccess');
   assert.equal(parsePermissionMode('yolo'), 'fullAccess');

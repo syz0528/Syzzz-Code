@@ -3,10 +3,7 @@ import assert from 'node:assert/strict';
 import { mkdtemp, readFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import {
-  resolveShellInvocation,
-  runShellCommand
-} from '../dist/tools/shell-runner.js';
+import { resolveShellInvocation, runShellCommand } from '../dist/tools/shell-runner.js';
 
 async function withWorkingDirectory(run) {
   const cwd = await mkdtemp(join(tmpdir(), 'syzzz-shell-'));
@@ -35,7 +32,7 @@ test('selects the native shell without enabling child-process shell mode', () =>
 });
 
 test('captures successful stdout as a structured result', async () => {
-  await withWorkingDirectory(async cwd => {
+  await withWorkingDirectory(async (cwd) => {
     const result = await runShellCommand('echo hello', {
       cwd,
       signal: new AbortController().signal
@@ -50,11 +47,8 @@ test('captures successful stdout as a structured result', async () => {
 });
 
 test('keeps stderr and non-zero exit status separate from stdout', async () => {
-  await withWorkingDirectory(async cwd => {
-    const command = commandFor(
-      'echo failure 1>&2 & exit /b 7',
-      'echo failure >&2; exit 7'
-    );
+  await withWorkingDirectory(async (cwd) => {
+    const command = commandFor('echo failure 1>&2 & exit /b 7', 'echo failure >&2; exit 7');
     const result = await runShellCommand(command, {
       cwd,
       signal: new AbortController().signal
@@ -68,7 +62,7 @@ test('keeps stderr and non-zero exit status separate from stdout', async () => {
 });
 
 test('does not spawn a command when cancellation already happened', async () => {
-  await withWorkingDirectory(async cwd => {
+  await withWorkingDirectory(async (cwd) => {
     const abortController = new AbortController();
     abortController.abort();
     const result = await runShellCommand('echo should-not-run', {
@@ -84,11 +78,8 @@ test('does not spawn a command when cancellation already happened', async () => 
 });
 
 test('terminates a command when its timeout expires', async () => {
-  await withWorkingDirectory(async cwd => {
-    const command = commandFor(
-      'ping -n 6 127.0.0.1 >nul',
-      'sleep 5'
-    );
+  await withWorkingDirectory(async (cwd) => {
+    const command = commandFor('ping -n 6 127.0.0.1 >nul', 'sleep 5');
     const result = await runShellCommand(command, {
       cwd,
       signal: new AbortController().signal,
@@ -104,12 +95,9 @@ test('terminates a command when its timeout expires', async () => {
 });
 
 test('propagates runtime cancellation to the process tree', async () => {
-  await withWorkingDirectory(async cwd => {
+  await withWorkingDirectory(async (cwd) => {
     const abortController = new AbortController();
-    const command = commandFor(
-      'ping -n 6 127.0.0.1 >nul',
-      'sleep 5'
-    );
+    const command = commandFor('ping -n 6 127.0.0.1 >nul', 'sleep 5');
     const resultPromise = runShellCommand(command, {
       cwd,
       signal: abortController.signal,
@@ -127,7 +115,7 @@ test('propagates runtime cancellation to the process tree', async () => {
 });
 
 test('terminates commands that exceed the configured output limit', async () => {
-  await withWorkingDirectory(async cwd => {
+  await withWorkingDirectory(async (cwd) => {
     const command = 'node -e "process.stdout.write(\'x\'.repeat(10000))"';
     const result = await runShellCommand(command, {
       cwd,
@@ -136,11 +124,7 @@ test('terminates commands that exceed the configured output limit', async () => 
       terminationGraceMs: 100
     });
 
-    assert.equal(
-      result.completionReason,
-      'output_limit',
-      JSON.stringify(result, null, 2)
-    );
+    assert.equal(result.completionReason, 'output_limit', JSON.stringify(result, null, 2));
     assert.equal(result.ok, false);
     assert.equal(result.outputLimitStream, 'stdout');
     assert.equal(result.stdoutBytesCaptured, 128);
@@ -150,12 +134,12 @@ test('terminates commands that exceed the configured output limit', async () => 
 });
 
 test('termination removes descendant processes instead of leaving them running', async () => {
-  await withWorkingDirectory(async cwd => {
+  await withWorkingDirectory(async (cwd) => {
     const readyPath = join(cwd, 'child-ready.txt');
     const survivedPath = join(cwd, 'child-survived.txt');
     const childScript = [
       "const fs=require('node:fs')",
-      "fs.writeFileSync(process.argv[1],String(process.pid))",
+      'fs.writeFileSync(process.argv[1],String(process.pid))',
       "setTimeout(()=>fs.writeFileSync(process.argv[2],'survived'),1000)"
     ].join(';');
     const command = `"${process.execPath}" -e "${childScript}" "${readyPath}" "${survivedPath}"`;
@@ -172,14 +156,11 @@ test('termination removes descendant processes instead of leaving them running',
     const childProcessId = Number(await readFile(readyPath, 'utf8'));
     assert.equal(Number.isInteger(childProcessId), true);
 
-    await new Promise(resolve => setTimeout(resolve, 1_100));
-    await assert.rejects(
-      readFile(survivedPath, 'utf8'),
-      error => error?.code === 'ENOENT'
-    );
+    await new Promise((resolve) => setTimeout(resolve, 1_100));
+    await assert.rejects(readFile(survivedPath, 'utf8'), (error) => error?.code === 'ENOENT');
     assert.throws(
       () => process.kill(childProcessId, 0),
-      error => error?.code === 'ESRCH'
+      (error) => error?.code === 'ESRCH'
     );
   });
 });

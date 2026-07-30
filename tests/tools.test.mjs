@@ -15,14 +15,8 @@ import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { z } from 'zod';
 import { editTool, listDirectoryTool, readTool, writeTool } from '../dist/tools/index.js';
-import {
-  convertToolSchemaToJsonSchema,
-  validateToolInput
-} from '../dist/tools/runtime.js';
-import {
-  resolveWorkspacePath,
-  validateWorkspacePathSyntax
-} from '../dist/tools/workspace.js';
+import { convertToolSchemaToJsonSchema, validateToolInput } from '../dist/tools/runtime.js';
+import { resolveWorkspacePath, validateWorkspacePathSyntax } from '../dist/tools/workspace.js';
 
 async function withWorkspace(run) {
   const workspaceRoot = await mkdtemp(join(tmpdir(), 'syzzz-tools-'));
@@ -47,10 +41,12 @@ test('validates tool input and derives provider JSON schema from Zod', () => {
   const tool = {
     name: 'Example',
     description: 'Example tool',
-    inputSchema: z.object({
-      path: z.string(),
-      count: z.number().int().optional()
-    }).strict(),
+    inputSchema: z
+      .object({
+        path: z.string(),
+        count: z.number().int().optional()
+      })
+      .strict(),
     risk: 'read',
     approval: 'never',
     async execute() {
@@ -74,7 +70,7 @@ test('validates tool input and derives provider JSON schema from Zod', () => {
 });
 
 test('keeps file access inside the workspace and blocks sensitive paths', async () => {
-  await withWorkspace(async workspaceRoot => {
+  await withWorkspace(async (workspaceRoot) => {
     await writeFile(join(workspaceRoot, 'safe.txt'), 'safe', 'utf8');
     await writeFile(join(workspaceRoot, '.env'), 'SECRET=value', 'utf8');
 
@@ -84,11 +80,11 @@ test('keeps file access inside the workspace and blocks sensitive paths', async 
     );
     await assert.rejects(
       resolveWorkspacePath('../outside.txt', workspaceRoot, 'write'),
-      error => error?.code === 'OUTSIDE_WORKSPACE'
+      (error) => error?.code === 'OUTSIDE_WORKSPACE'
     );
     await assert.rejects(
       resolveWorkspacePath('.env', workspaceRoot, 'read'),
-      error => error?.code === 'SENSITIVE_PATH'
+      (error) => error?.code === 'SENSITIVE_PATH'
     );
     assert.equal(
       await resolveWorkspacePath('.env.example', workspaceRoot, 'write'),
@@ -98,12 +94,8 @@ test('keeps file access inside the workspace and blocks sensitive paths', async 
 });
 
 test('rejects unsafe Windows path syntax without blocking normal drive paths', () => {
-  assert.doesNotThrow(() =>
-    validateWorkspacePathSyntax('C:\\workspace\\src\\index.ts', 'win32')
-  );
-  assert.doesNotThrow(() =>
-    validateWorkspacePathSyntax('NUL.txt', 'linux')
-  );
+  assert.doesNotThrow(() => validateWorkspacePathSyntax('C:\\workspace\\src\\index.ts', 'win32'));
+  assert.doesNotThrow(() => validateWorkspacePathSyntax('NUL.txt', 'linux'));
 
   for (const unsafePath of [
     'file.txt:secret',
@@ -116,14 +108,14 @@ test('rejects unsafe Windows path syntax without blocking normal drive paths', (
   ]) {
     assert.throws(
       () => validateWorkspacePathSyntax(unsafePath, 'win32'),
-      error => error?.code === 'INVALID_PATH',
+      (error) => error?.code === 'INVALID_PATH',
       unsafePath
     );
   }
 });
 
-test('blocks symbolic-link or junction escapes and sensitive aliases', async t => {
-  await withWorkspace(async workspaceRoot => {
+test('blocks symbolic-link or junction escapes and sensitive aliases', async (t) => {
+  await withWorkspace(async (workspaceRoot) => {
     const outsideRoot = await mkdtemp(join(tmpdir(), 'syzzz-outside-'));
     try {
       await writeFile(join(outsideRoot, 'secret.txt'), 'secret', 'utf8');
@@ -133,7 +125,11 @@ test('blocks symbolic-link or junction escapes and sensitive aliases', async t =
       const directoryLinkType = process.platform === 'win32' ? 'junction' : 'dir';
       try {
         await symlink(outsideRoot, join(workspaceRoot, 'outside-link'), directoryLinkType);
-        await symlink(join(workspaceRoot, '.git'), join(workspaceRoot, 'git-alias'), directoryLinkType);
+        await symlink(
+          join(workspaceRoot, '.git'),
+          join(workspaceRoot, 'git-alias'),
+          directoryLinkType
+        );
       } catch (error) {
         if (error?.code === 'EPERM' || error?.code === 'EACCES') {
           t.skip(`Symbolic links are unavailable: ${error.message}`);
@@ -144,11 +140,11 @@ test('blocks symbolic-link or junction escapes and sensitive aliases', async t =
 
       await assert.rejects(
         resolveWorkspacePath('outside-link/secret.txt', workspaceRoot, 'read'),
-        error => error?.code === 'OUTSIDE_WORKSPACE'
+        (error) => error?.code === 'OUTSIDE_WORKSPACE'
       );
       await assert.rejects(
         resolveWorkspacePath('git-alias/config', workspaceRoot, 'read'),
-        error => error?.code === 'SENSITIVE_PATH'
+        (error) => error?.code === 'SENSITIVE_PATH'
       );
     } finally {
       await rm(outsideRoot, { recursive: true, force: true });
@@ -157,11 +153,8 @@ test('blocks symbolic-link or junction escapes and sensitive aliases', async t =
 });
 
 test('read tool returns errors instead of accessing paths outside the workspace', async () => {
-  await withWorkspace(async workspaceRoot => {
-    const result = await readTool.execute(
-      { path: '../outside.txt' },
-      createContext(workspaceRoot)
-    );
+  await withWorkspace(async (workspaceRoot) => {
+    const result = await readTool.execute({ path: '../outside.txt' }, createContext(workspaceRoot));
 
     assert.equal(result.isError, true);
     assert.match(result.content, /outside the workspace/);
@@ -170,17 +163,14 @@ test('read tool returns errors instead of accessing paths outside the workspace'
 });
 
 test('read tool bounds allocation and only accepts regular files', async () => {
-  await withWorkspace(async workspaceRoot => {
+  await withWorkspace(async (workspaceRoot) => {
     const limitBytes = 1024 * 1024;
     await writeFile(join(workspaceRoot, 'limit.txt'), Buffer.alloc(limitBytes, 0x61));
     await writeFile(join(workspaceRoot, 'too-large.txt'), Buffer.alloc(limitBytes + 1, 0x62));
     await writeFile(join(workspaceRoot, 'invalid-utf8.txt'), Buffer.from([0xc3, 0x28]));
     await mkdir(join(workspaceRoot, 'directory'));
 
-    const atLimit = await readTool.execute(
-      { path: 'limit.txt' },
-      createContext(workspaceRoot)
-    );
+    const atLimit = await readTool.execute({ path: 'limit.txt' }, createContext(workspaceRoot));
     assert.equal(atLimit.isError, undefined);
     assert.ok(Buffer.byteLength(atLimit.content) <= 40 * 1024);
     assert.match(atLimit.content, /Version: sha256:[a-f0-9]{64}/);
@@ -195,10 +185,7 @@ test('read tool bounds allocation and only accepts regular files', async () => {
     assert.match(tooLarge.content, /limit is 1048576 bytes/);
     assert.equal(tooLarge.metadata.errorCode, 'FILE_TOO_LARGE');
 
-    const directory = await readTool.execute(
-      { path: 'directory' },
-      createContext(workspaceRoot)
-    );
+    const directory = await readTool.execute({ path: 'directory' }, createContext(workspaceRoot));
     assert.equal(directory.isError, true);
     assert.match(directory.content, /regular files/);
     assert.equal(directory.metadata.errorCode, 'NOT_REGULAR_FILE');
@@ -214,15 +201,12 @@ test('read tool bounds allocation and only accepts regular files', async () => {
 });
 
 test('list directory tool lists workspace entries and blocks escapes', async () => {
-  await withWorkspace(async workspaceRoot => {
+  await withWorkspace(async (workspaceRoot) => {
     await mkdir(join(workspaceRoot, 'src'));
     await writeFile(join(workspaceRoot, 'README.md'), 'hi', 'utf8');
     await writeFile(join(workspaceRoot, '.env'), 'SECRET=1', 'utf8');
 
-    const listed = await listDirectoryTool.execute(
-      {},
-      createContext(workspaceRoot)
-    );
+    const listed = await listDirectoryTool.execute({}, createContext(workspaceRoot));
     assert.equal(listed.isError, undefined);
     assert.match(listed.content, /README\.md/);
     assert.match(listed.content, /src/);
@@ -246,7 +230,7 @@ test('list directory tool lists workspace entries and blocks escapes', async () 
 });
 
 test('write tool previews changes and rejects files changed after approval', async () => {
-  await withWorkspace(async workspaceRoot => {
+  await withWorkspace(async (workspaceRoot) => {
     const targetPath = join(workspaceRoot, 'notes.txt');
     await writeFile(targetPath, 'before\n', 'utf8');
     const baseContext = createContext(workspaceRoot);
@@ -267,14 +251,14 @@ test('write tool previews changes and rejects files changed after approval', asy
     assert.match(rejected.content, /changed after approval/);
     assert.equal(await readFile(targetPath, 'utf8'), 'changed externally\n');
     assert.equal(
-      (await readdir(workspaceRoot)).some(name => name.includes('.syzzz-')),
+      (await readdir(workspaceRoot)).some((name) => name.includes('.syzzz-')),
       false
     );
   });
 });
 
 test('write tool atomically replaces content, preserves mode, and cleans temporary files', async () => {
-  await withWorkspace(async workspaceRoot => {
+  await withWorkspace(async (workspaceRoot) => {
     const targetPath = join(workspaceRoot, 'atomic.txt');
     await writeFile(targetPath, 'before\n', 'utf8');
     if (process.platform !== 'win32') {
@@ -282,10 +266,7 @@ test('write tool atomically replaces content, preserves mode, and cleans tempora
     }
 
     const input = { path: 'atomic.txt', contents: 'after\n' };
-    const approval = await writeTool.prepareApproval(
-      input,
-      createContext(workspaceRoot)
-    );
+    const approval = await writeTool.prepareApproval(input, createContext(workspaceRoot));
     const result = await writeTool.execute(
       input,
       createContext(workspaceRoot, approval.executionData)
@@ -297,20 +278,17 @@ test('write tool atomically replaces content, preserves mode, and cleans tempora
       assert.equal((await stat(targetPath)).mode & 0o777, 0o640);
     }
     assert.equal(
-      (await readdir(workspaceRoot)).some(name => name.includes('.syzzz-')),
+      (await readdir(workspaceRoot)).some((name) => name.includes('.syzzz-')),
       false
     );
   });
 });
 
 test('write and edit tools apply exactly the approved content', async () => {
-  await withWorkspace(async workspaceRoot => {
+  await withWorkspace(async (workspaceRoot) => {
     const writeInput = { path: 'nested/file.txt', contents: 'alpha beta\n' };
     await mkdir(dirname(join(workspaceRoot, writeInput.path)), { recursive: true });
-    const writeApproval = await writeTool.prepareApproval(
-      writeInput,
-      createContext(workspaceRoot)
-    );
+    const writeApproval = await writeTool.prepareApproval(writeInput, createContext(workspaceRoot));
     const writeResult = await writeTool.execute(
       writeInput,
       createContext(workspaceRoot, writeApproval.executionData)
@@ -323,10 +301,7 @@ test('write and edit tools apply exactly the approved content', async () => {
       old_string: 'beta',
       new_string: 'gamma'
     };
-    const editApproval = await editTool.prepareApproval(
-      editInput,
-      createContext(workspaceRoot)
-    );
+    const editApproval = await editTool.prepareApproval(editInput, createContext(workspaceRoot));
     assert.match(editApproval.preview, /alpha gamma/);
     const editResult = await editTool.execute(
       editInput,
@@ -338,7 +313,7 @@ test('write and edit tools apply exactly the approved content', async () => {
 });
 
 test('edit tool requires old_string to occur exactly once', async () => {
-  await withWorkspace(async workspaceRoot => {
+  await withWorkspace(async (workspaceRoot) => {
     await writeFile(join(workspaceRoot, 'duplicate.txt'), 'same same', 'utf8');
 
     await assert.rejects(

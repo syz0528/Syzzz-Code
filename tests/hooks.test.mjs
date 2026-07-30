@@ -72,10 +72,9 @@ async function withTempDirectory(run) {
 }
 
 test('Hooks execute in configured user-then-project order', async () => {
-  await withTempDirectory(async directory => {
+  await withTempDirectory(async (directory) => {
     const output = path.join(directory, 'order.txt');
-    const code =
-      "require('node:fs').appendFileSync(process.argv[1],process.argv[2]+'\\n')";
+    const code = "require('node:fs').appendFileSync(process.argv[1],process.argv[2]+'\\n')";
     const runner = new HookRunner([
       resolvedHook({
         name: 'user-first',
@@ -99,17 +98,15 @@ test('Hooks execute in configured user-then-project order', async () => {
 
     assert.equal(result.decision, 'continue');
     assert.equal(await readFile(output, 'utf8'), 'user\nproject\n');
-    assert.deepEqual(events.map(event => event.type), [
-      'hook_started',
-      'hook_completed',
-      'hook_started',
-      'hook_completed'
-    ]);
+    assert.deepEqual(
+      events.map((event) => event.type),
+      ['hook_started', 'hook_completed', 'hook_started', 'hook_completed']
+    );
   });
 });
 
 test('PreToolUse matcher can deny an operation and cannot modify its input', async () => {
-  await withTempDirectory(async directory => {
+  await withTempDirectory(async (directory) => {
     const runner = new HookRunner([
       resolvedHook({
         name: 'block-shell',
@@ -119,22 +116,26 @@ test('PreToolUse matcher can deny an operation and cannot modify its input', asy
       })
     ]);
 
-    const skipped = await collectGenerator(runner.run(
-      invocation('PreToolUse', directory, {
-        subject: 'builtin:Read',
-        payload: { input: { path: 'README.md' } }
-      }),
-      new AbortController().signal
-    ));
+    const skipped = await collectGenerator(
+      runner.run(
+        invocation('PreToolUse', directory, {
+          subject: 'builtin:Read',
+          payload: { input: { path: 'README.md' } }
+        }),
+        new AbortController().signal
+      )
+    );
     assert.equal(skipped.events.length, 0);
 
-    const denied = await collectGenerator(runner.run(
-      invocation('PreToolUse', directory, {
-        subject: 'builtin:Shell',
-        payload: { input: { command: 'echo original' } }
-      }),
-      new AbortController().signal
-    ));
+    const denied = await collectGenerator(
+      runner.run(
+        invocation('PreToolUse', directory, {
+          subject: 'builtin:Shell',
+          payload: { input: { command: 'echo original' } }
+        }),
+        new AbortController().signal
+      )
+    );
     assert.equal(denied.result.decision, 'deny');
     assert.equal(denied.result.reason, 'blocked by policy');
     assert.equal(denied.events.at(-1).outcome, 'denied');
@@ -142,7 +143,7 @@ test('PreToolUse matcher can deny an operation and cannot modify its input', asy
 });
 
 test('compaction and subagent Hooks are passive, match subjects, and expose status', async () => {
-  await withTempDirectory(async directory => {
+  await withTempDirectory(async (directory) => {
     const output = path.join(directory, 'passive.jsonl');
     const code = [
       "let input='';",
@@ -150,7 +151,7 @@ test('compaction and subagent Hooks are passive, match subjects, and expose stat
       "process.stdin.on('end',()=>{",
       "require('node:fs').appendFileSync(process.argv[1],input);",
       "process.stdout.write(JSON.stringify({decision:'deny'}));",
-      "});"
+      '});'
     ].join('');
     const events = [
       ['pre-compact', 'PreCompact', 'manual'],
@@ -158,31 +159,35 @@ test('compaction and subagent Hooks are passive, match subjects, and expose stat
       ['subagent-start', 'SubagentStart', 'explore'],
       ['subagent-stop', 'SubagentStop', 'explore']
     ];
-    const runner = new HookRunner(events.map(([name, event, matcher]) =>
-      resolvedHook({
-        name,
-        event,
-        matcher,
-        code,
-        args: [output]
-      })
-    ));
+    const runner = new HookRunner(
+      events.map(([name, event, matcher]) =>
+        resolvedHook({
+          name,
+          event,
+          matcher,
+          code,
+          args: [output]
+        })
+      )
+    );
 
     for (const [, event, subject] of events) {
-      const run = await collectGenerator(runner.run(
-        invocation(event, directory, {
-          subject,
-          payload: event.includes('Compact')
-            ? { reason: subject, beforeTokens: 10, afterTokens: 5 }
-            : {
-                subagentId: 'bounded-id',
-                role: subject,
-                outcome: 'success',
-                toolCalls: 2
-              }
-        }),
-        new AbortController().signal
-      ));
+      const run = await collectGenerator(
+        runner.run(
+          invocation(event, directory, {
+            subject,
+            payload: event.includes('Compact')
+              ? { reason: subject, beforeTokens: 10, afterTokens: 5 }
+              : {
+                  subagentId: 'bounded-id',
+                  role: subject,
+                  outcome: 'success',
+                  toolCalls: 2
+                }
+          }),
+          new AbortController().signal
+        )
+      );
       assert.equal(run.result.decision, 'continue');
       assert.equal(run.events.at(-1).outcome, 'success');
     }
@@ -190,24 +195,26 @@ test('compaction and subagent Hooks are passive, match subjects, and expose stat
     const payloads = (await readFile(output, 'utf8'))
       .trim()
       .split('\n')
-      .map(line => JSON.parse(line));
+      .map((line) => JSON.parse(line));
     assert.deepEqual(
-      payloads.map(entry => entry.event),
+      payloads.map((entry) => entry.event),
       events.map(([, event]) => event)
     );
     assert.equal(JSON.stringify(payloads).includes('summary'), false);
     assert.equal(JSON.stringify(payloads).includes('report'), false);
     const status = runner.getStatus();
     assert.equal(status.entries.length, 4);
-    assert.equal(status.entries.every(entry =>
-      entry.lastOutcome === 'success' &&
-      typeof entry.lastDurationMs === 'number'
-    ), true);
+    assert.equal(
+      status.entries.every(
+        (entry) => entry.lastOutcome === 'success' && typeof entry.lastDurationMs === 'number'
+      ),
+      true
+    );
   });
 });
 
 test('Hook failures continue by default and fail closed only when configured', async () => {
-  await withTempDirectory(async directory => {
+  await withTempDirectory(async (directory) => {
     const failingCode = 'process.exitCode=9';
     const continuing = new HookRunner([
       resolvedHook({
@@ -216,10 +223,12 @@ test('Hook failures continue by default and fail closed only when configured', a
         code: failingCode
       })
     ]);
-    const continued = await collectGenerator(continuing.run(
-      invocation('PreToolUse', directory, { subject: 'builtin:Read' }),
-      new AbortController().signal
-    ));
+    const continued = await collectGenerator(
+      continuing.run(
+        invocation('PreToolUse', directory, { subject: 'builtin:Read' }),
+        new AbortController().signal
+      )
+    );
     assert.equal(continued.result.decision, 'continue');
     assert.equal(continued.events.at(-1).errorCode, 'nonzero_exit');
 
@@ -231,17 +240,19 @@ test('Hook failures continue by default and fail closed only when configured', a
         onError: 'deny'
       })
     ]);
-    const denied = await collectGenerator(denying.run(
-      invocation('PreToolUse', directory, { subject: 'builtin:Read' }),
-      new AbortController().signal
-    ));
+    const denied = await collectGenerator(
+      denying.run(
+        invocation('PreToolUse', directory, { subject: 'builtin:Read' }),
+        new AbortController().signal
+      )
+    );
     assert.equal(denied.result.decision, 'deny');
     assert.match(denied.result.reason, /failed closed/);
   });
 });
 
 test('Hook timeout and output limits terminate the child process safely', async () => {
-  await withTempDirectory(async directory => {
+  await withTempDirectory(async (directory) => {
     const timeoutRunner = new HookRunner([
       resolvedHook({
         name: 'slow',
@@ -250,10 +261,9 @@ test('Hook timeout and output limits terminate the child process safely', async 
         timeoutMs: 50
       })
     ]);
-    const timedOut = await collectGenerator(timeoutRunner.run(
-      invocation('PreTurn', directory),
-      new AbortController().signal
-    ));
+    const timedOut = await collectGenerator(
+      timeoutRunner.run(invocation('PreTurn', directory), new AbortController().signal)
+    );
     assert.equal(timedOut.result.decision, 'continue');
     assert.equal(timedOut.events.at(-1).outcome, 'timeout');
 
@@ -264,16 +274,15 @@ test('Hook timeout and output limits terminate the child process safely', async 
         code: "process.stdout.write('x'.repeat(17*1024))"
       })
     ]);
-    const limited = await collectGenerator(noisyRunner.run(
-      invocation('PreTurn', directory),
-      new AbortController().signal
-    ));
+    const limited = await collectGenerator(
+      noisyRunner.run(invocation('PreTurn', directory), new AbortController().signal)
+    );
     assert.equal(limited.events.at(-1).errorCode, 'output_limit');
   });
 });
 
 test('Hook environment omits ambient credentials and resolves explicit templates', async () => {
-  await withTempDirectory(async directory => {
+  await withTempDirectory(async (directory) => {
     const output = path.join(directory, 'environment.json');
     const previousSecret = process.env.TEST_PROVIDER_API_KEY;
     const previousSafeSource = process.env.HOOK_SAFE_SOURCE;
@@ -286,35 +295,36 @@ test('Hook environment omits ambient credentials and resolves explicit templates
           event: 'PreTurn',
           code:
             "require('node:fs').writeFileSync(process.argv[1],JSON.stringify({" +
-            "secret:process.env.TEST_PROVIDER_API_KEY,safe:process.env.SAFE_TEST}))",
+            'secret:process.env.TEST_PROVIDER_API_KEY,safe:process.env.SAFE_TEST}))',
           args: [output],
           env: { SAFE_TEST: '${HOOK_SAFE_SOURCE}' }
         })
       ]);
-      await collectGenerator(runner.run(
-        invocation('PreTurn', directory),
-        new AbortController().signal
-      ));
+      await collectGenerator(
+        runner.run(invocation('PreTurn', directory), new AbortController().signal)
+      );
       const captured = JSON.parse(await readFile(output, 'utf8'));
       assert.equal(captured.secret, undefined);
       assert.equal(captured.safe, 'explicit-value');
 
       const blockedOutput = path.join(directory, 'blocked-environment.json');
-      const blockedRunner = new HookRunner([
-        resolvedHook({
-          name: 'blocked-environment',
-          event: 'PreTurn',
-          code:
-            "require('node:fs').writeFileSync(process.argv[1]," +
-            "JSON.stringify({leaked:process.env.LEAKED_KEY}))",
-          args: [blockedOutput],
-          env: { LEAKED_KEY: '${TEST_PROVIDER_API_KEY}' }
-        })
-      ], ['TEST_PROVIDER_API_KEY']);
-      const blocked = await collectGenerator(blockedRunner.run(
-        invocation('PreTurn', directory),
-        new AbortController().signal
-      ));
+      const blockedRunner = new HookRunner(
+        [
+          resolvedHook({
+            name: 'blocked-environment',
+            event: 'PreTurn',
+            code:
+              "require('node:fs').writeFileSync(process.argv[1]," +
+              'JSON.stringify({leaked:process.env.LEAKED_KEY}))',
+            args: [blockedOutput],
+            env: { LEAKED_KEY: '${TEST_PROVIDER_API_KEY}' }
+          })
+        ],
+        ['TEST_PROVIDER_API_KEY']
+      );
+      const blocked = await collectGenerator(
+        blockedRunner.run(invocation('PreTurn', directory), new AbortController().signal)
+      );
       assert.equal(blocked.events.at(-1).errorCode, 'execution_error');
       await assert.rejects(readFile(blockedOutput, 'utf8'), /ENOENT/);
     } finally {
@@ -351,11 +361,13 @@ function toolProvider() {
             message: {
               role: 'assistant',
               content: '',
-              toolCalls: [{
-                id: 'fixture-call',
-                name: 'Fixture',
-                input: { value: 'original-input' }
-              }]
+              toolCalls: [
+                {
+                  id: 'fixture-call',
+                  name: 'Fixture',
+                  input: { value: 'original-input' }
+                }
+              ]
             }
           }
         : { message: { role: 'assistant', content: 'done' } };
@@ -382,7 +394,7 @@ function fakeExtensionRuntime(hooks) {
 }
 
 test('Engine runs PreToolUse before approval and fullAccess cannot bypass a denial', async () => {
-  await withTempDirectory(async directory => {
+  await withTempDirectory(async (directory) => {
     let executions = 0;
     const hooks = new HookRunner([
       resolvedHook({
@@ -394,17 +406,19 @@ test('Engine runs PreToolUse before approval and fullAccess cannot bypass a deni
     ]);
     const engine = new QueryEngine({
       provider: toolProvider(),
-      tools: [{
-        name: 'Fixture',
-        description: 'fixture',
-        risk: 'execute',
-        approval: 'always',
-        inputSchema: z.object({ value: z.string() }),
-        async execute() {
-          executions += 1;
-          return { content: 'should not run' };
+      tools: [
+        {
+          name: 'Fixture',
+          description: 'fixture',
+          risk: 'execute',
+          approval: 'always',
+          inputSchema: z.object({ value: z.string() }),
+          async execute() {
+            executions += 1;
+            return { content: 'should not run' };
+          }
         }
-      }],
+      ],
       workspaceRoot: directory,
       mode: 'code',
       permissionMode: 'fullAccess',
@@ -415,26 +429,29 @@ test('Engine runs PreToolUse before approval and fullAccess cannot bypass a deni
     const { events, result } = await collectGenerator(engine.runTurn('run'));
     assert.equal(result.status, 'completed');
     assert.equal(executions, 0);
-    assert.equal(events.some(event => event.type === 'approval_requested'), false);
-    const completed = events.find(event => event.type === 'tool_completed');
+    assert.equal(
+      events.some((event) => event.type === 'approval_requested'),
+      false
+    );
+    const completed = events.find((event) => event.type === 'tool_completed');
     assert.equal(completed.outcome, 'denied');
     assert.equal(completed.metadata.reason, 'hook-policy');
     assert.match(completed.result, /fixture denied/);
-    const providerToolMessage = engine.getMessages().find(message =>
-      message.role === 'tool' && message.toolName === 'Fixture'
-    );
+    const providerToolMessage = engine
+      .getMessages()
+      .find((message) => message.role === 'tool' && message.toolName === 'Fixture');
     assert.equal(
       providerToolMessage.content,
       'Tool execution denied by a local Hook policy. This denial is ' +
-      'definitive for the current turn; do not retry it or attempt an ' +
-      'equivalent side effect with another tool.'
+        'definitive for the current turn; do not retry it or attempt an ' +
+        'equivalent side effect with another tool.'
     );
     assert.doesNotMatch(providerToolMessage.content, /fixture denied/);
   });
 });
 
 test('a Hook denial closes later tools and forces an accurate no-tool response', async () => {
-  await withTempDirectory(async directory => {
+  await withTempDirectory(async (directory) => {
     let shellExecutions = 0;
     let writeExecutions = 0;
     const requests = [];
@@ -519,18 +536,15 @@ test('a Hook denial closes later tools and forces an accurate no-tool response',
     assert.equal(requests.length, 2);
     assert.deepEqual(requests[1].tools, []);
     assert.match(requests[1].systemPrompt, /do not retry it/i);
-    const completions = events.filter(event => event.type === 'tool_completed');
+    const completions = events.filter((event) => event.type === 'tool_completed');
     assert.equal(completions.length, 2);
     assert.equal(completions[0].metadata.reason, 'hook-policy');
-    assert.equal(
-      completions[1].metadata.reason,
-      'turn-tool-access-closed'
-    );
+    assert.equal(completions[1].metadata.reason, 'turn-tool-access-closed');
   });
 });
 
 test('PostToolUse receives outcome metadata without the raw tool result', async () => {
-  await withTempDirectory(async directory => {
+  await withTempDirectory(async (directory) => {
     const capture = path.join(directory, 'post.json');
     const hooks = new HookRunner([
       resolvedHook({
@@ -545,24 +559,26 @@ test('PostToolUse receives outcome metadata without the raw tool result', async 
     ]);
     const engine = new QueryEngine({
       provider: toolProvider(),
-      tools: [{
-        name: 'Fixture',
-        description: 'fixture',
-        risk: 'read',
-        approval: 'never',
-        inputSchema: z.object({ value: z.string() }),
-        async execute() {
-          return {
-            content: 'RAW_TOOL_SECRET',
-            metadata: {
-              path: 'secret/path',
-              output: 'RAW_METADATA_SECRET',
-              versionHash: 'abc123',
-              itemCount: 2
-            }
-          };
+      tools: [
+        {
+          name: 'Fixture',
+          description: 'fixture',
+          risk: 'read',
+          approval: 'never',
+          inputSchema: z.object({ value: z.string() }),
+          async execute() {
+            return {
+              content: 'RAW_TOOL_SECRET',
+              metadata: {
+                path: 'secret/path',
+                output: 'RAW_METADATA_SECRET',
+                versionHash: 'abc123',
+                itemCount: 2
+              }
+            };
+          }
         }
-      }],
+      ],
       workspaceRoot: directory,
       extensions: fakeExtensionRuntime(hooks),
       audit: false
@@ -582,7 +598,7 @@ test('PostToolUse receives outcome metadata without the raw tool result', async 
 });
 
 test('terminal Hook events occur before the unique terminal AgentEvent', async () => {
-  await withTempDirectory(async directory => {
+  await withTempDirectory(async (directory) => {
     const hooks = new HookRunner([
       resolvedHook({
         name: 'completed-observer',
@@ -607,11 +623,14 @@ test('terminal Hook events occur before the unique terminal AgentEvent', async (
     const { events, result } = await collectGenerator(engine.runTurn('hello'));
     assert.equal(result.status, 'completed');
     assert.equal(events.at(-1).type, 'turn_completed');
-    assert.equal(events.filter(event =>
-      ['turn_completed', 'turn_failed', 'turn_cancelled'].includes(event.type)
-    ).length, 1);
-    const hookCompletedIndex = events.findIndex(event =>
-      event.type === 'hook_completed' && event.event === 'TurnCompleted'
+    assert.equal(
+      events.filter((event) =>
+        ['turn_completed', 'turn_failed', 'turn_cancelled'].includes(event.type)
+      ).length,
+      1
+    );
+    const hookCompletedIndex = events.findIndex(
+      (event) => event.type === 'hook_completed' && event.event === 'TurnCompleted'
     );
     assert.ok(hookCompletedIndex >= 0);
     assert.ok(hookCompletedIndex < events.length - 1);

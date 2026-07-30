@@ -8,10 +8,7 @@ import { throwIfAborted } from './abort.js';
 import { runBoundedProcess } from './bounded-process.js';
 import { limitUtf8Head } from './output-limits.js';
 import { defineTool } from './runtime.js';
-import {
-  isSensitiveRelativePath,
-  resolveWorkspacePath
-} from './workspace.js';
+import { isSensitiveRelativePath, resolveWorkspacePath } from './workspace.js';
 
 const require = createRequire(import.meta.url);
 const MAX_PATH_CHARACTERS = 4_096;
@@ -44,12 +41,14 @@ const SENSITIVE_IGNORE_RULES = [
   ''
 ].join('\n');
 
-const pathSchema = z.string()
+const pathSchema = z
+  .string()
   .trim()
   .min(1, 'Path cannot be empty')
   .max(MAX_PATH_CHARACTERS, 'Path is too long');
 
-const patternSchema = z.string()
+const patternSchema = z
+  .string()
   .min(1, 'Pattern cannot be empty')
   .max(MAX_PATTERN_CHARACTERS, 'Pattern is too long');
 
@@ -77,11 +76,7 @@ function getRipgrepPath(): string {
   return cachedRipgrepPath;
 }
 
-async function runRipgrep(
-  arguments_: readonly string[],
-  cwd: string,
-  signal: AbortSignal
-) {
+async function runRipgrep(arguments_: readonly string[], cwd: string, signal: AbortSignal) {
   const result = await runBoundedProcess(getRipgrepPath(), arguments_, {
     cwd,
     signal,
@@ -106,13 +101,11 @@ function relativeWorkspacePath(
   searchRoot: string,
   ripgrepPath: string
 ): string | undefined {
-  const workspaceRelativePath = relative(
-    workspaceRoot,
-    join(searchRoot, ripgrepPath)
-  ).replaceAll('\\', '/');
-  return isSensitiveRelativePath(workspaceRelativePath)
-    ? undefined
-    : workspaceRelativePath || '.';
+  const workspaceRelativePath = relative(workspaceRoot, join(searchRoot, ripgrepPath)).replaceAll(
+    '\\',
+    '/'
+  );
+  return isSensitiveRelativePath(workspaceRelativePath) ? undefined : workspaceRelativePath || '.';
 }
 
 export interface WorkspaceFileList {
@@ -128,28 +121,27 @@ export async function listWorkspaceFiles(
   signal: AbortSignal
 ): Promise<WorkspaceFileList> {
   throwIfAborted(signal);
-  const searchRoot = await resolveWorkspacePath(
-    requestedPath.trim() || '.',
-    workspaceRoot,
-    'read'
-  );
+  const searchRoot = await resolveWorkspacePath(requestedPath.trim() || '.', workspaceRoot, 'read');
   const searchStats = await stat(searchRoot);
   if (!searchStats.isDirectory()) {
     throw new Error(`Search path must be a directory: ${requestedPath}`);
   }
-  const searchPath = relative(workspaceRoot, searchRoot)
-    .replaceAll('\\', '/') || '.';
-  const result = await runRipgrep([
-    '--files',
-    '--hidden',
-    '--no-require-git',
-    '--color',
-    'never',
-    '--ignore-file',
-    '-',
-    '--',
-    searchPath
-  ], workspaceRoot, signal);
+  const searchPath = relative(workspaceRoot, searchRoot).replaceAll('\\', '/') || '.';
+  const result = await runRipgrep(
+    [
+      '--files',
+      '--hidden',
+      '--no-require-git',
+      '--color',
+      'never',
+      '--ignore-file',
+      '-',
+      '--',
+      searchPath
+    ],
+    workspaceRoot,
+    signal
+  );
   throwIfAborted(signal);
 
   const matchesPattern = picomatch(pattern, { dot: true });
@@ -158,33 +150,37 @@ export async function listWorkspaceFiles(
       .toString('utf8')
       .split(/\r?\n/)
       .filter(Boolean)
-      .map(path => relativeWorkspacePath(workspaceRoot, workspaceRoot, path))
+      .map((path) => relativeWorkspacePath(workspaceRoot, workspaceRoot, path))
       .filter((path): path is string => Boolean(path))
-      .filter(path => matchesPattern(path))
+      .filter((path) => matchesPattern(path))
       .sort((left, right) => left.localeCompare(right)),
     sourceTruncated: result.stdoutTruncated,
     durationMs: result.durationMs
   };
 }
 
-const globInputSchema = z.object({
-  pattern: patternSchema.describe('A ripgrep-compatible file glob'),
-  path: pathSchema
-    .optional()
-    .describe('Directory inside the workspace; defaults to the workspace root'),
-  offset: z.number()
-    .int()
-    .min(0)
-    .max(100_000)
-    .optional()
-    .describe('Number of sorted results to skip'),
-  limit: z.number()
-    .int()
-    .min(1)
-    .max(MAX_GLOB_RESULTS)
-    .optional()
-    .describe(`Maximum results to return; defaults to ${DEFAULT_GLOB_RESULTS}`)
-}).strict();
+const globInputSchema = z
+  .object({
+    pattern: patternSchema.describe('A ripgrep-compatible file glob'),
+    path: pathSchema
+      .optional()
+      .describe('Directory inside the workspace; defaults to the workspace root'),
+    offset: z
+      .number()
+      .int()
+      .min(0)
+      .max(100_000)
+      .optional()
+      .describe('Number of sorted results to skip'),
+    limit: z
+      .number()
+      .int()
+      .min(1)
+      .max(MAX_GLOB_RESULTS)
+      .optional()
+      .describe(`Maximum results to return; defaults to ${DEFAULT_GLOB_RESULTS}`)
+  })
+  .strict();
 
 export const globTool = defineTool({
   name: 'Glob',
@@ -207,12 +203,8 @@ export const globTool = defineTool({
       const visiblePaths = paths.slice(offset, offset + limit);
       const sourceTruncated = result.sourceTruncated;
       const truncated = sourceTruncated || paths.length > offset + visiblePaths.length;
-      const body = visiblePaths.length > 0
-        ? visiblePaths.join('\n')
-        : '(no matching files)';
-      const totalDescription = sourceTruncated
-        ? `at least ${paths.length}`
-        : String(paths.length);
+      const body = visiblePaths.length > 0 ? visiblePaths.join('\n') : '(no matching files)';
+      const totalDescription = sourceTruncated ? `at least ${paths.length}` : String(paths.length);
       const footer = truncated
         ? `\n\n[Truncated: showing ${visiblePaths.length} results from offset ${offset}; use a narrower pattern or a later offset]`
         : '';
@@ -312,9 +304,10 @@ function parseRipgrepJson(
     for (let lineOffset = 0; lineOffset < physicalLines.length; lineOffset++) {
       const rawPhysicalLine = physicalLines[lineOffset];
       const characters = Array.from(rawPhysicalLine);
-      const content = characters.length > MAX_RESULT_LINE_CHARACTERS
-        ? `${characters.slice(0, MAX_RESULT_LINE_CHARACTERS).join('')} [line truncated]`
-        : rawPhysicalLine;
+      const content =
+        characters.length > MAX_RESULT_LINE_CHARACTERS
+          ? `${characters.slice(0, MAX_RESULT_LINE_CHARACTERS).join('')} [line truncated]`
+          : rawPhysicalLine;
       contentLines.push({
         path,
         lineNumber: lineNumber + lineOffset,
@@ -327,42 +320,45 @@ function parseRipgrepJson(
   return { contentLines, matchingFiles, malformedTail };
 }
 
-const grepInputSchema = z.object({
-  pattern: patternSchema.describe('Regular expression or literal text to search for'),
-  path: pathSchema
-    .optional()
-    .describe('File or directory inside the workspace; defaults to the workspace root'),
-  glob: patternSchema
-    .optional()
-    .describe('Optional file glob filter'),
-  outputMode: z.enum(['content', 'files', 'count'])
-    .optional()
-    .describe('content, files, or per-file matching-line counts; defaults to content'),
-  literal: z.boolean()
-    .optional()
-    .describe('Treat pattern as literal text instead of a regular expression'),
-  ignoreCase: z.boolean()
-    .optional()
-    .describe('Use case-insensitive matching'),
-  context: z.number()
-    .int()
-    .min(0)
-    .max(10)
-    .optional()
-    .describe('Context lines before and after each content match'),
-  offset: z.number()
-    .int()
-    .min(0)
-    .max(100_000)
-    .optional()
-    .describe('Number of result lines or entries to skip'),
-  limit: z.number()
-    .int()
-    .min(1)
-    .max(MAX_FILE_RESULTS)
-    .optional()
-    .describe('Maximum result lines or entries')
-}).strict();
+const grepInputSchema = z
+  .object({
+    pattern: patternSchema.describe('Regular expression or literal text to search for'),
+    path: pathSchema
+      .optional()
+      .describe('File or directory inside the workspace; defaults to the workspace root'),
+    glob: patternSchema.optional().describe('Optional file glob filter'),
+    outputMode: z
+      .enum(['content', 'files', 'count'])
+      .optional()
+      .describe('content, files, or per-file matching-line counts; defaults to content'),
+    literal: z
+      .boolean()
+      .optional()
+      .describe('Treat pattern as literal text instead of a regular expression'),
+    ignoreCase: z.boolean().optional().describe('Use case-insensitive matching'),
+    context: z
+      .number()
+      .int()
+      .min(0)
+      .max(10)
+      .optional()
+      .describe('Context lines before and after each content match'),
+    offset: z
+      .number()
+      .int()
+      .min(0)
+      .max(100_000)
+      .optional()
+      .describe('Number of result lines or entries to skip'),
+    limit: z
+      .number()
+      .int()
+      .min(1)
+      .max(MAX_FILE_RESULTS)
+      .optional()
+      .describe('Maximum result lines or entries')
+  })
+  .strict();
 
 export const grepTool = defineTool({
   name: 'Grep',
@@ -379,15 +375,11 @@ export const grepTool = defineTool({
         context.workspaceRoot,
         'read'
       );
-      const searchPath = relative(context.workspaceRoot, searchRoot)
-        .replaceAll('\\', '/') || '.';
+      const searchPath = relative(context.workspaceRoot, searchRoot).replaceAll('\\', '/') || '.';
       const outputMode: GrepOutputMode = input.outputMode ?? 'content';
-      const hardLimit = outputMode === 'content'
-        ? MAX_CONTENT_RESULTS
-        : MAX_FILE_RESULTS;
-      const defaultLimit = outputMode === 'content'
-        ? DEFAULT_CONTENT_RESULTS
-        : DEFAULT_FILE_RESULTS;
+      const hardLimit = outputMode === 'content' ? MAX_CONTENT_RESULTS : MAX_FILE_RESULTS;
+      const defaultLimit =
+        outputMode === 'content' ? DEFAULT_CONTENT_RESULTS : DEFAULT_FILE_RESULTS;
       const limit = Math.min(input.limit ?? defaultLimit, hardLimit);
       const offset = input.offset ?? 0;
       const arguments_ = [
@@ -411,11 +403,7 @@ export const grepTool = defineTool({
       }
       arguments_.push('--', input.pattern, searchPath);
 
-      const result = await runRipgrep(
-        arguments_,
-        context.workspaceRoot,
-        context.signal
-      );
+      const result = await runRipgrep(arguments_, context.workspaceRoot, context.signal);
       const parsed = parseRipgrepJson(
         result.stdout,
         context.workspaceRoot,
@@ -427,27 +415,26 @@ export const grepTool = defineTool({
       let allEntries: string[];
       let matchCount: number;
       if (outputMode === 'content') {
-        allEntries = parsed.contentLines.map(line =>
-          `${line.path}${line.matched ? ':' : '-'}${line.lineNumber}${line.matched ? ':' : '-'}${line.content}`
+        allEntries = parsed.contentLines.map(
+          (line) =>
+            `${line.path}${line.matched ? ':' : '-'}${line.lineNumber}${line.matched ? ':' : '-'}${line.content}`
         );
-        matchCount = parsed.contentLines.filter(line => line.matched).length;
+        matchCount = parsed.contentLines.filter((line) => line.matched).length;
       } else {
-        const sortedFiles = [...parsed.matchingFiles.keys()]
-          .sort((left, right) => left.localeCompare(right));
-        allEntries = outputMode === 'files'
-          ? sortedFiles
-          : sortedFiles.map(path => `${path}:${parsed.matchingFiles.get(path) ?? 0}`);
-        matchCount = [...parsed.matchingFiles.values()]
-          .reduce((total, count) => total + count, 0);
+        const sortedFiles = [...parsed.matchingFiles.keys()].sort((left, right) =>
+          left.localeCompare(right)
+        );
+        allEntries =
+          outputMode === 'files'
+            ? sortedFiles
+            : sortedFiles.map((path) => `${path}:${parsed.matchingFiles.get(path) ?? 0}`);
+        matchCount = [...parsed.matchingFiles.values()].reduce((total, count) => total + count, 0);
       }
 
       const visibleEntries = allEntries.slice(offset, offset + limit);
       const sourceTruncated = result.stdoutTruncated || parsed.malformedTail;
-      const truncated = sourceTruncated ||
-        allEntries.length > offset + visibleEntries.length;
-      const body = visibleEntries.length > 0
-        ? visibleEntries.join('\n')
-        : '(no matches)';
+      const truncated = sourceTruncated || allEntries.length > offset + visibleEntries.length;
+      const body = visibleEntries.length > 0 ? visibleEntries.join('\n') : '(no matches)';
       const footer = truncated
         ? `\n\n[Truncated: showing ${visibleEntries.length} ${outputMode} results from offset ${offset}]`
         : '';

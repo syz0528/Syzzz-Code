@@ -14,11 +14,7 @@ import {
 } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import {
-  MAX_SESSION_STATE_BYTES,
-  SessionStore,
-  SessionStoreError
-} from '../dist/session-store.js';
+import { MAX_SESSION_STATE_BYTES, SessionStore, SessionStoreError } from '../dist/session-store.js';
 
 const SESSION_A = '11111111-1111-4111-8111-111111111111';
 const SESSION_B = '11111111-1111-4111-8111-222222222222';
@@ -101,12 +97,9 @@ test('session store atomically saves, loads, lists, and rebuilds metadata', asyn
     const rebuilt = await store.list();
     assert.equal(rebuilt[0].available, true);
     assert.equal(rebuilt[0].title, 'Phase 4 session');
-    assert.doesNotMatch(
-      await readFile(join(sessionDirectory, 'meta.json'), 'utf8'),
-      /broken/
-    );
+    assert.doesNotMatch(await readFile(join(sessionDirectory, 'meta.json'), 'utf8'), /broken/);
     assert.equal(
-      (await readdir(sessionDirectory)).some(name => name.endsWith('.tmp')),
+      (await readdir(sessionDirectory)).some((name) => name.endsWith('.tmp')),
       false
     );
 
@@ -143,9 +136,7 @@ test('stale metadata is rebuilt from the authoritative state snapshot', async ()
     assert.equal(listed[0].available, true);
     assert.equal(listed[0].revision, 2);
     assert.equal(listed[0].title, 'State is authoritative');
-    const metadata = JSON.parse(
-      await readFile(metadataPath, 'utf8')
-    );
+    const metadata = JSON.parse(await readFile(metadataPath, 'utf8'));
     assert.equal(metadata.revision, 2);
   });
 });
@@ -155,7 +146,7 @@ test('session locks reject live owners and recover dead owners', async () => {
     const firstLease = await store.acquire(SESSION_A);
     await assert.rejects(
       () => store.acquire(SESSION_A),
-      error => error instanceof SessionStoreError && error.code === 'LOCKED'
+      (error) => error instanceof SessionStoreError && error.code === 'LOCKED'
     );
 
     const recoveringStore = await SessionStore.create({
@@ -186,7 +177,7 @@ test('session lock timeout never overrides a verified live local owner', async (
     });
     await assert.rejects(
       () => liveLocalStore.acquire(SESSION_A),
-      error => error instanceof SessionStoreError && error.code === 'LOCKED'
+      (error) => error instanceof SessionStoreError && error.code === 'LOCKED'
     );
 
     const timedOutRemoteStore = await SessionStore.create({
@@ -209,27 +200,30 @@ test('session IDs resolve by unique prefix and locked sessions cannot be deleted
     const leaseA = await store.acquire(SESSION_A);
     await store.save(snapshot(store, SESSION_A), leaseA);
     const leaseB = await store.acquire(SESSION_B);
-    await store.save(snapshot(store, SESSION_B, {
-      sessionId: SESSION_B,
-      auditSessionId: SESSION_B,
-      title: 'Second session'
-    }), leaseB);
+    await store.save(
+      snapshot(store, SESSION_B, {
+        sessionId: SESSION_B,
+        auditSessionId: SESSION_B,
+        title: 'Second session'
+      }),
+      leaseB
+    );
 
     assert.equal(await store.resolveSessionId('11111111-1111-4111-8111-1'), SESSION_A);
     await assert.rejects(
       () => store.resolveSessionId('1111'),
-      error => error instanceof SessionStoreError &&
-        error.code === 'AMBIGUOUS_ID'
+      (error) => error instanceof SessionStoreError && error.code === 'AMBIGUOUS_ID'
     );
     await assert.rejects(
       () => store.resolveSessionId('9999'),
-      error => error instanceof SessionStoreError &&
+      (error) =>
+        error instanceof SessionStoreError &&
         error.code === 'NOT_FOUND' &&
         /current workspace/.test(error.message)
     );
     await assert.rejects(
       () => store.delete(SESSION_A),
-      error => error instanceof SessionStoreError && error.code === 'LOCKED'
+      (error) => error instanceof SessionStoreError && error.code === 'LOCKED'
     );
 
     await leaseA.release();
@@ -248,92 +242,96 @@ test('oversized and corrupt session states are isolated', async () => {
     await truncate(statePath, MAX_SESSION_STATE_BYTES + 1);
     await assert.rejects(
       () => store.load(SESSION_A),
-      error => error instanceof SessionStoreError && error.code === 'TOO_LARGE'
+      (error) => error instanceof SessionStoreError && error.code === 'TOO_LARGE'
     );
     const oversizedList = await store.list();
     assert.equal(oversizedList[0].available, false);
     assert.match(oversizedList[0].unavailableReason, /exceeds/i);
 
     await writeFile(statePath, '{"schemaVersion":1}');
-    await writeFile(
-      join(store.workspaceDirectory, SESSION_A, 'meta.json'),
-      '{broken'
-    );
+    await writeFile(join(store.workspaceDirectory, SESSION_A, 'meta.json'), '{broken');
     const listed = await store.list();
     assert.equal(listed[0].available, false);
     assert.match(listed[0].unavailableReason, /corrupt/i);
   });
 });
 
-test('session save accepts exactly 64 MiB and rejects one byte more atomically', {
-  timeout: 30_000
-}, async () => {
-  await withStore(async ({ store }) => {
-    const lease = await store.acquire(SESSION_A);
-    const exact = snapshot(store, SESSION_A, {
-      engineState: {
-        schemaVersion: 1,
-        messages: [{ role: 'user', content: '' }],
-        pendingFileChangeReceipts: [],
-        compactionCount: 0,
-        totalUsage: { inputTokens: 0, outputTokens: 0, totalTokens: 0 }
-      },
-      usage: {
-        turns: 0,
-        inputTokens: 0,
-        outputTokens: 0,
-        totalTokens: 0
-      }
-    });
-    const emptySize = Buffer.byteLength(
-      `${JSON.stringify(exact, null, 2)}\n`
-    );
-    exact.engineState.messages[0].content =
-      'x'.repeat(MAX_SESSION_STATE_BYTES - emptySize);
-    assert.equal(
-      Buffer.byteLength(`${JSON.stringify(exact, null, 2)}\n`),
-      MAX_SESSION_STATE_BYTES
-    );
-    await store.save(exact, lease);
+test(
+  'session save accepts exactly 64 MiB and rejects one byte more atomically',
+  {
+    timeout: 30_000
+  },
+  async () => {
+    await withStore(async ({ store }) => {
+      const lease = await store.acquire(SESSION_A);
+      const exact = snapshot(store, SESSION_A, {
+        engineState: {
+          schemaVersion: 1,
+          messages: [{ role: 'user', content: '' }],
+          pendingFileChangeReceipts: [],
+          compactionCount: 0,
+          totalUsage: { inputTokens: 0, outputTokens: 0, totalTokens: 0 }
+        },
+        usage: {
+          turns: 0,
+          inputTokens: 0,
+          outputTokens: 0,
+          totalTokens: 0
+        }
+      });
+      const emptySize = Buffer.byteLength(`${JSON.stringify(exact, null, 2)}\n`);
+      exact.engineState.messages[0].content = 'x'.repeat(MAX_SESSION_STATE_BYTES - emptySize);
+      assert.equal(
+        Buffer.byteLength(`${JSON.stringify(exact, null, 2)}\n`),
+        MAX_SESSION_STATE_BYTES
+      );
+      await store.save(exact, lease);
 
-    const oversized = structuredClone(exact);
-    oversized.revision = 2;
-    oversized.engineState.messages[0].content += 'x';
-    await assert.rejects(
-      () => store.save(oversized, lease),
-      error => error instanceof SessionStoreError &&
-        error.code === 'TOO_LARGE'
-    );
-    const loaded = await store.load(SESSION_A);
-    assert.equal(loaded.revision, 1);
-    assert.equal(
-      loaded.engineState.messages[0].content.length,
-      MAX_SESSION_STATE_BYTES - emptySize
-    );
-    assert.equal(
-      (await readdir(join(store.workspaceDirectory, SESSION_A)))
-        .some(name => name.endsWith('.tmp')),
-      false
-    );
-    await lease.release();
-  });
-});
+      const oversized = structuredClone(exact);
+      oversized.revision = 2;
+      oversized.engineState.messages[0].content += 'x';
+      await assert.rejects(
+        () => store.save(oversized, lease),
+        (error) => error instanceof SessionStoreError && error.code === 'TOO_LARGE'
+      );
+      const loaded = await store.load(SESSION_A);
+      assert.equal(loaded.revision, 1);
+      assert.equal(
+        loaded.engineState.messages[0].content.length,
+        MAX_SESSION_STATE_BYTES - emptySize
+      );
+      assert.equal(
+        (await readdir(join(store.workspaceDirectory, SESSION_A))).some((name) =>
+          name.endsWith('.tmp')
+        ),
+        false
+      );
+      await lease.release();
+    });
+  }
+);
 
 test('prune removes only old unlocked sessions in the current workspace', async () => {
   await withStore(async ({ store }) => {
     const leaseA = await store.acquire(SESSION_A);
-    await store.save(snapshot(store, SESSION_A, {
-      updatedAt: '2026-07-20T00:00:00.000Z'
-    }), leaseA);
+    await store.save(
+      snapshot(store, SESSION_A, {
+        updatedAt: '2026-07-20T00:00:00.000Z'
+      }),
+      leaseA
+    );
     await leaseA.release();
 
     const leaseB = await store.acquire(SESSION_B);
-    await store.save(snapshot(store, SESSION_B, {
-      sessionId: SESSION_B,
-      auditSessionId: SESSION_B,
-      title: 'Locked old session',
-      updatedAt: '2026-07-20T00:00:00.000Z'
-    }), leaseB);
+    await store.save(
+      snapshot(store, SESSION_B, {
+        sessionId: SESSION_B,
+        auditSessionId: SESSION_B,
+        title: 'Locked old session',
+        updatedAt: '2026-07-20T00:00:00.000Z'
+      }),
+      leaseB
+    );
 
     assert.deepEqual(await store.prune(1), [SESSION_A]);
     assert.equal((await store.list())[0].sessionId, SESSION_B);
@@ -368,8 +366,7 @@ test('session snapshots cannot be restored through another workspace bucket', as
     );
     await assert.rejects(
       () => second.load(SESSION_A),
-      error => error instanceof SessionStoreError &&
-        error.code === 'WORKSPACE_MISMATCH'
+      (error) => error instanceof SessionStoreError && error.code === 'WORKSPACE_MISMATCH'
     );
   } finally {
     await rm(directory, { recursive: true, force: true });

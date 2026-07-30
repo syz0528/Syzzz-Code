@@ -5,20 +5,16 @@ import {
   type CallToolResult,
   type Tool
 } from '@modelcontextprotocol/client';
-import {
-  StdioClientTransport
-} from '@modelcontextprotocol/client/stdio';
+import { StdioClientTransport } from '@modelcontextprotocol/client/stdio';
 import type { Transport } from '@modelcontextprotocol/client';
 import { Buffer } from 'node:buffer';
 import type { Readable } from 'node:stream';
 import { limitUtf8Head } from '../tools/output-limits.js';
 import { isAbortError, OperationAbortedError, throwIfAborted } from '../tools/abort.js';
 import { terminateProcessTree } from '../tools/shell-runner.js';
-import {
-  expandEnvironmentTemplates
-} from './config.js';
+import { PACKAGE_VERSION } from '../version.js';
+import { expandEnvironmentTemplates } from './config.js';
 import type {
-  McpServerConfig,
   McpServerStatus,
   McpToolPolicy,
   ResolvedMcpServerConfig,
@@ -51,7 +47,7 @@ const SAFE_INHERITED_ENVIRONMENT = new Set([
   'LANG'
 ]);
 const SAFE_INHERITED_ENVIRONMENT_LOWER = new Set(
-  [...SAFE_INHERITED_ENVIRONMENT].map(name => name.toLowerCase())
+  [...SAFE_INHERITED_ENVIRONMENT].map((name) => name.toLowerCase())
 );
 const FORBIDDEN_HTTP_HEADERS = new Set([
   'connection',
@@ -197,39 +193,27 @@ function safeEnvironment(
 ): Record<string, string> {
   const normalizeName = (name: string): string =>
     process.platform === 'win32' ? name.toUpperCase() : name;
-  const forbidden = new Set(
-    forbiddenEnvironmentNames.map(normalizeName)
-  );
+  const forbidden = new Set(forbiddenEnvironmentNames.map(normalizeName));
   const environment: Record<string, string> = {};
   for (const [name, value] of Object.entries(process.env)) {
     if (
       value !== undefined &&
       !forbidden.has(normalizeName(name)) &&
-      (
-        SAFE_INHERITED_ENVIRONMENT.has(name) ||
-        (
-          process.platform === 'win32' &&
-          SAFE_INHERITED_ENVIRONMENT_LOWER.has(name.toLowerCase())
-        ) ||
-        name.startsWith('LC_')
-      )
+      (SAFE_INHERITED_ENVIRONMENT.has(name) ||
+        (process.platform === 'win32' &&
+          SAFE_INHERITED_ENVIRONMENT_LOWER.has(name.toLowerCase())) ||
+        name.startsWith('LC_'))
     ) {
       environment[name] = value;
     }
   }
   let expanded: Record<string, string>;
   try {
-    expanded = expandEnvironmentTemplates(
-      configured,
-      process.env,
-      forbiddenEnvironmentNames
-    );
+    expanded = expandEnvironmentTemplates(configured, process.env, forbiddenEnvironmentNames);
   } catch (error) {
-    throw new McpError(
-      'configuration',
-      error instanceof Error ? error.message : String(error),
-      { cause: error }
-    );
+    throw new McpError('configuration', error instanceof Error ? error.message : String(error), {
+      cause: error
+    });
   }
   return {
     ...environment,
@@ -247,10 +231,7 @@ export function resolveMcpStdioInvocation(
   platform: NodeJS.Platform = process.platform,
   environment: NodeJS.ProcessEnv = process.env
 ): McpStdioInvocation {
-  if (
-    platform === 'win32' &&
-    /\.(?:cmd|bat)$/i.test(config.command)
-  ) {
+  if (platform === 'win32' && /\.(?:cmd|bat)$/i.test(config.command)) {
     return {
       command: environment.ComSpec || environment.COMSPEC || 'cmd.exe',
       args: ['/d', '/c', 'call', config.command, ...config.args]
@@ -268,24 +249,15 @@ function httpHeaders(
 ): Record<string, string> {
   let headers: Record<string, string>;
   try {
-    headers = expandEnvironmentTemplates(
-      configured,
-      process.env,
-      forbiddenEnvironmentNames
-    );
+    headers = expandEnvironmentTemplates(configured, process.env, forbiddenEnvironmentNames);
   } catch (error) {
-    throw new McpError(
-      'configuration',
-      error instanceof Error ? error.message : String(error),
-      { cause: error }
-    );
+    throw new McpError('configuration', error instanceof Error ? error.message : String(error), {
+      cause: error
+    });
   }
   for (const name of Object.keys(headers)) {
     if (FORBIDDEN_HTTP_HEADERS.has(name.toLowerCase())) {
-      throw new McpError(
-        'configuration',
-        `MCP HTTP header "${name}" is reserved`
-      );
+      throw new McpError('configuration', `MCP HTTP header "${name}" is reserved`);
     }
   }
   return headers;
@@ -293,16 +265,11 @@ function httpHeaders(
 
 function abortError(signal: AbortSignal): OperationAbortedError {
   return new OperationAbortedError(
-    signal.reason instanceof Error
-      ? signal.reason.message
-      : 'MCP operation cancelled'
+    signal.reason instanceof Error ? signal.reason.message : 'MCP operation cancelled'
   );
 }
 
-function withAbort<T>(
-  operation: Promise<T>,
-  signal: AbortSignal
-): Promise<T> {
+function withAbort<T>(operation: Promise<T>, signal: AbortSignal): Promise<T> {
   if (signal.aborted) {
     return Promise.reject(abortError(signal));
   }
@@ -328,11 +295,8 @@ function boundedStderr(current: string, chunk: string): string {
   return result;
 }
 
-function attachStderr(
-  stream: Readable | null,
-  onStderr: (chunk: string) => void
-): void {
-  stream?.on('data', chunk => {
+function attachStderr(stream: Readable | null, onStderr: (chunk: string) => void): void {
+  stream?.on('data', (chunk) => {
     onStderr(Buffer.isBuffer(chunk) ? chunk.toString('utf8') : String(chunk));
   });
 }
@@ -349,10 +313,7 @@ async function createSdkConnection(
     stdioTransport = new StdioClientTransport({
       command: invocation.command,
       args: invocation.args,
-      env: safeEnvironment(
-        config.env,
-        options.forbiddenEnvironmentNames
-      ),
+      env: safeEnvironment(config.env, options.forbiddenEnvironmentNames),
       cwd: options.workspaceRoot,
       stderr: 'pipe',
       maxBufferSize: MAX_STDIO_MESSAGE_BYTES
@@ -362,10 +323,7 @@ async function createSdkConnection(
   } else {
     transport = new StreamableHTTPClientTransport(new URL(config.url), {
       requestInit: {
-        headers: httpHeaders(
-          config.headers,
-          options.forbiddenEnvironmentNames
-        ),
+        headers: httpHeaders(config.headers, options.forbiddenEnvironmentNames),
         redirect: 'manual'
       },
       onInsufficientScope: 'throw'
@@ -373,13 +331,14 @@ async function createSdkConnection(
   }
 
   const client = new Client(
-    { name: 'syzzz-code', version: '1.0.0' },
+    { name: 'syzzz-code', version: PACKAGE_VERSION },
     {
       listMaxPages: MAX_LIST_PAGES,
       inputRequired: { autoFulfill: false },
-      versionNegotiation: config.protocolMode === 'legacy'
-        ? { mode: 'legacy' }
-        : { mode: { pin: MODERN_PROTOCOL_VERSION } },
+      versionNegotiation:
+        config.protocolMode === 'legacy'
+          ? { mode: 'legacy' }
+          : { mode: { pin: MODERN_PROTOCOL_VERSION } },
       listChanged: {
         tools: {
           onChanged: () => {
@@ -400,21 +359,15 @@ async function createSdkConnection(
     });
   } catch (error) {
     if (stdioTransport?.pid) {
-      await terminateProcessTree(
-        stdioTransport.pid,
-        process.platform,
-        500
-      ).catch(() => undefined);
+      await terminateProcessTree(stdioTransport.pid, process.platform, 500).catch(() => undefined);
     }
     await client.close().catch(() => undefined);
     if (signal.aborted || isAbortError(error)) {
       throw abortError(signal);
     }
-    throw new McpError(
-      'connection',
-      `Failed to connect MCP server ${options.server.name}`,
-      { cause: error }
-    );
+    throw new McpError('connection', `Failed to connect MCP server ${options.server.name}`, {
+      cause: error
+    });
   }
 
   return {
@@ -429,23 +382,24 @@ async function createSdkConnection(
       return result.tools;
     },
     async callTool(tool, input, callSignal, timeoutMs) {
-      return client.callTool({
-        name: tool.name,
-        arguments: input
-      }, {
-        signal: callSignal,
-        timeout: timeoutMs,
-        maxTotalTimeout: timeoutMs,
-        toolDefinition: tool
-      });
+      return client.callTool(
+        {
+          name: tool.name,
+          arguments: input
+        },
+        {
+          signal: callSignal,
+          timeout: timeoutMs,
+          maxTotalTimeout: timeoutMs,
+          toolDefinition: tool
+        }
+      );
     },
     async close() {
       if (stdioTransport?.pid) {
-        await terminateProcessTree(
-          stdioTransport.pid,
-          process.platform,
-          500
-        ).catch(() => undefined);
+        await terminateProcessTree(stdioTransport.pid, process.platform, 500).catch(
+          () => undefined
+        );
       }
       await client.close();
     }
@@ -465,17 +419,15 @@ function normalizeMcpError(error: unknown, signal?: AbortSignal): McpError {
   const lowered = message.toLowerCase();
   const code: McpErrorCode = lowered.includes('timeout')
     ? 'timeout'
-    : (
-        lowered.includes('connection') ||
+    : lowered.includes('connection') ||
         lowered.includes('network') ||
         lowered.includes('socket') ||
         lowered.includes('closed') ||
         lowered.includes('econn')
-      )
       ? 'connection'
-    : lowered.includes('invalid') || lowered.includes('schema')
-      ? 'protocol'
-      : 'remote_error';
+      : lowered.includes('invalid') || lowered.includes('schema')
+        ? 'protocol'
+        : 'remote_error';
   return new McpError(code, message, { cause: error });
 }
 
@@ -495,34 +447,33 @@ function validateCatalogTool(
   ) {
     return undefined;
   }
-  const description = typeof value.description === 'string'
-    ? value.description
-    : '';
-  const annotations = value.annotations && typeof value.annotations === 'object'
-    ? {
-        ...(typeof value.annotations.readOnlyHint === 'boolean'
-          ? { readOnlyHint: value.annotations.readOnlyHint }
-          : {}),
-        ...(typeof value.annotations.destructiveHint === 'boolean'
-          ? { destructiveHint: value.annotations.destructiveHint }
-          : {}),
-        ...(typeof value.annotations.idempotentHint === 'boolean'
-          ? { idempotentHint: value.annotations.idempotentHint }
-          : {}),
-        ...(typeof value.annotations.openWorldHint === 'boolean'
-          ? { openWorldHint: value.annotations.openWorldHint }
-          : {})
-      }
-    : undefined;
+  const description = typeof value.description === 'string' ? value.description : '';
+  const annotations =
+    value.annotations && typeof value.annotations === 'object'
+      ? {
+          ...(typeof value.annotations.readOnlyHint === 'boolean'
+            ? { readOnlyHint: value.annotations.readOnlyHint }
+            : {}),
+          ...(typeof value.annotations.destructiveHint === 'boolean'
+            ? { destructiveHint: value.annotations.destructiveHint }
+            : {}),
+          ...(typeof value.annotations.idempotentHint === 'boolean'
+            ? { idempotentHint: value.annotations.idempotentHint }
+            : {}),
+          ...(typeof value.annotations.openWorldHint === 'boolean'
+            ? { openWorldHint: value.annotations.openWorldHint }
+            : {})
+        }
+      : undefined;
   const qualifiedName = `${serverName}__${value.name}`;
   const annotationConflict =
-    annotations?.readOnlyHint === true &&
-    annotations?.destructiveHint === true;
-  const risk = policy?.policy === 'execute'
-    ? 'execute'
-    : annotations?.readOnlyHint === true && !annotationConflict
-      ? 'read'
-      : 'execute';
+    annotations?.readOnlyHint === true && annotations?.destructiveHint === true;
+  const risk =
+    policy?.policy === 'execute'
+      ? 'execute'
+      : annotations?.readOnlyHint === true && !annotationConflict
+        ? 'read'
+        : 'execute';
   return {
     qualifiedName,
     serverName,
@@ -531,11 +482,12 @@ function validateCatalogTool(
     inputSchema: value.inputSchema as Record<string, unknown>,
     ...(annotations ? { annotations } : {}),
     risk,
-    riskSource: policy?.policy === 'execute'
-      ? 'local-policy'
-      : risk === 'read'
-        ? 'remote-annotation'
-        : 'default',
+    riskSource:
+      policy?.policy === 'execute'
+        ? 'local-policy'
+        : risk === 'read'
+          ? 'remote-annotation'
+          : 'default',
     ...(policy
       ? {
           policy: policy.policy,
@@ -544,8 +496,7 @@ function validateCatalogTool(
       : {}),
     ...(annotationConflict
       ? {
-          annotationWarning:
-            'readOnlyHint conflicts with destructiveHint; treated as execute'
+          annotationWarning: 'readOnlyHint conflicts with destructiveHint; treated as execute'
         }
       : {}),
     raw: value
@@ -573,12 +524,9 @@ async function validateToolArguments(
   if ('issues' in validation && validation.issues) {
     const detail = validation.issues
       .slice(0, 5)
-      .map(issue => issue.message)
+      .map((issue) => issue.message)
       .join('; ');
-    throw new McpError(
-      'validation',
-      `Invalid input for ${tool.qualifiedName}: ${detail}`
-    );
+    throw new McpError('validation', `Invalid input for ${tool.qualifiedName}: ${detail}`);
   }
   return input as Record<string, unknown>;
 }
@@ -594,10 +542,7 @@ function stringifyStructuredContent(value: unknown): string | undefined {
   }
 }
 
-function formatCallResult(
-  tool: McpCatalogTool,
-  result: CallToolResult
-): McpCallOutput {
+function formatCallResult(tool: McpCatalogTool, result: CallToolResult): McpCallOutput {
   const sections: string[] = [];
   const structured = stringifyStructuredContent(result.structuredContent);
   if (structured !== undefined) {
@@ -611,9 +556,7 @@ function formatCallResult(
     if (block.type === 'resource') {
       const resource = block.resource;
       if ('text' in resource && typeof resource.text === 'string') {
-        sections.push(
-          `Embedded resource (${resource.uri}):\n${resource.text}`
-        );
+        sections.push(`Embedded resource (${resource.uri}):\n${resource.text}`);
       } else {
         sections.push(`[Binary embedded resource omitted: ${resource.uri}]`);
       }
@@ -633,7 +576,7 @@ function formatCallResult(
     }
     sections.push(
       `[Unsupported MCP content block omitted: ` +
-      `${String((block as { type?: unknown }).type ?? 'unknown')}]`
+        `${String((block as { type?: unknown }).type ?? 'unknown')}]`
     );
   }
   if (sections.length === 0) {
@@ -646,11 +589,7 @@ function formatCallResult(
     sections.join('\n\n'),
     '</untrusted_mcp_output>'
   ].join('\n');
-  const limited = limitUtf8Head(
-    wrapped,
-    MAX_RESULT_BYTES,
-    '\n[Truncated at the MCP result limit]'
-  );
+  const limited = limitUtf8Head(wrapped, MAX_RESULT_BYTES, '\n[Truncated at the MCP result limit]');
   return {
     content: limited.text,
     isError: result.isError === true,
@@ -675,11 +614,9 @@ export class McpManager {
   constructor(options: McpManagerOptions) {
     this.workspaceRoot = options.workspaceRoot;
     this.connectionFactory = options.connectionFactory ?? createSdkConnection;
-    this.forbiddenEnvironmentNames = [
-      ...new Set(options.forbiddenEnvironmentNames ?? [])
-    ];
+    this.forbiddenEnvironmentNames = [...new Set(options.forbiddenEnvironmentNames ?? [])];
     this.toolPolicies = new Map(
-      (options.toolPolicies ?? []).map(policy => [
+      (options.toolPolicies ?? []).map((policy) => [
         policy.qualifiedName,
         {
           ...policy,
@@ -688,7 +625,7 @@ export class McpManager {
       ])
     );
     this.runtimes = new Map(
-      options.servers.map(server => [
+      options.servers.map((server) => [
         server.name,
         {
           server,
@@ -701,62 +638,48 @@ export class McpManager {
   }
 
   getStatuses(): McpServerStatus[] {
-    return [...this.runtimes.values()].map(runtime => ({
+    return [...this.runtimes.values()].map((runtime) => ({
       name: runtime.server.name,
       source: runtime.server.source,
       transport: runtime.server.config.type,
       state: runtime.server.config.enabled ? runtime.state : 'disabled',
       toolCount: runtime.catalog?.length ?? 0,
       protocolMode: runtime.server.config.protocolMode,
-      ...(runtime.protocolVersion
-        ? { negotiatedProtocolVersion: runtime.protocolVersion }
-        : {}),
-      ...(runtime.lastConnectedAt
-        ? { lastConnectedAt: runtime.lastConnectedAt }
-        : {}),
+      ...(runtime.protocolVersion ? { negotiatedProtocolVersion: runtime.protocolVersion } : {}),
+      ...(runtime.lastConnectedAt ? { lastConnectedAt: runtime.lastConnectedAt } : {}),
       ...(runtime.errorCode ? { errorCode: runtime.errorCode } : {})
     }));
   }
 
   getServerConfigurations(): ResolvedMcpServerConfig[] {
-    return [...this.runtimes.values()].map(runtime => runtime.server);
+    return [...this.runtimes.values()].map((runtime) => runtime.server);
   }
 
   getToolPolicies(): ResolvedMcpToolPolicy[] {
-    return [...this.toolPolicies.values()].map(policy => ({
+    return [...this.toolPolicies.values()].map((policy) => ({
       ...policy,
       sources: [...policy.sources]
     }));
   }
 
-  async inspectServer(
-    name: string,
-    signal: AbortSignal
-  ): Promise<McpServerInspection> {
+  async inspectServer(name: string, signal: AbortSignal): Promise<McpServerInspection> {
     const runtime = this.requireRuntime(name);
     const catalog = await this.ensureCatalog(runtime, signal);
-    const status = this.getStatuses().find(entry => entry.name === name);
+    const status = this.getStatuses().find((entry) => entry.name === name);
     if (!status) {
       throw new McpError('not_found', `Unknown MCP server: ${name}`);
     }
-    const tools: McpServerInspection['tools'] = catalog.map(tool => ({
+    const tools: McpServerInspection['tools'] = catalog.map((tool) => ({
       qualifiedName: tool.qualifiedName,
       risk: tool.risk,
       riskSource: tool.riskSource,
       ...(tool.policy ? { policy: tool.policy } : {}),
-      ...(tool.policySources
-        ? { policySources: [...tool.policySources] }
-        : {}),
-      ...(tool.annotationWarning
-        ? { annotationWarning: tool.annotationWarning }
-        : {})
+      ...(tool.policySources ? { policySources: [...tool.policySources] } : {}),
+      ...(tool.annotationWarning ? { annotationWarning: tool.annotationWarning } : {})
     }));
-    const visibleNames = new Set(tools.map(tool => tool.qualifiedName));
+    const visibleNames = new Set(tools.map((tool) => tool.qualifiedName));
     for (const policy of this.toolPolicies.values()) {
-      if (
-        !policy.qualifiedName.startsWith(`${name}__`) ||
-        visibleNames.has(policy.qualifiedName)
-      ) {
+      if (!policy.qualifiedName.startsWith(`${name}__`) || visibleNames.has(policy.qualifiedName)) {
         continue;
       }
       tools.push({
@@ -767,9 +690,7 @@ export class McpManager {
         policySources: [...policy.sources]
       });
     }
-    tools.sort((left, right) =>
-      left.qualifiedName.localeCompare(right.qualifiedName)
-    );
+    tools.sort((left, right) => left.qualifiedName.localeCompare(right.qualifiedName));
     return {
       status,
       tools
@@ -785,7 +706,7 @@ export class McpManager {
       runtime.generation += 1;
     }
     this.toolPolicies = new Map(
-      toolPolicies.map(policy => [
+      toolPolicies.map((policy) => [
         policy.qualifiedName,
         {
           ...policy,
@@ -794,7 +715,7 @@ export class McpManager {
       ])
     );
     this.runtimes = new Map(
-      servers.map(server => [
+      servers.map((server) => [
         server.name,
         {
           server,
@@ -804,19 +725,18 @@ export class McpManager {
         }
       ])
     );
-    await Promise.all(previous.map(runtime =>
-      runtime.connection?.close().catch(() => undefined)
-    ));
+    await Promise.all(
+      previous.map(async (runtime) => {
+        await runtime.connection?.close().catch(() => undefined);
+      })
+    );
   }
 
-  async search(
-    input: McpSearchInput,
-    signal: AbortSignal
-  ): Promise<McpSearchResult> {
+  async search(input: McpSearchInput, signal: AbortSignal): Promise<McpSearchResult> {
     throwIfAborted(signal);
     const selected = input.server
       ? [this.requireRuntime(input.server)]
-      : [...this.runtimes.values()].filter(runtime => runtime.server.config.enabled);
+      : [...this.runtimes.values()].filter((runtime) => runtime.server.config.enabled);
     const errors: Array<{ server: string; code: McpErrorCode }> = [];
     const tools: McpCatalogTool[] = [];
     let totalCatalogBytes = 0;
@@ -834,10 +754,7 @@ export class McpManager {
           const bytes = Buffer.byteLength(JSON.stringify(tool.raw), 'utf8');
           totalCatalogBytes += bytes;
           if (totalCatalogBytes > MAX_CATALOG_BYTES) {
-            throw new McpError(
-              'output_limit',
-              `MCP catalog exceeds ${MAX_CATALOG_BYTES} bytes`
-            );
+            throw new McpError('output_limit', `MCP catalog exceeds ${MAX_CATALOG_BYTES} bytes`);
           }
           tools.push(tool);
         }
@@ -851,45 +768,40 @@ export class McpManager {
     }
 
     const query = input.query?.trim().toLowerCase() ?? '';
-    const matching = tools.filter(tool =>
-      !query ||
-      tool.qualifiedName.toLowerCase().includes(query) ||
-      tool.description.toLowerCase().includes(query)
+    const matching = tools.filter(
+      (tool) =>
+        !query ||
+        tool.qualifiedName.toLowerCase().includes(query) ||
+        tool.description.toLowerCase().includes(query)
     );
     const offset = input.offset ?? 0;
     const limit = input.limit ?? 10;
     const shown = matching.slice(offset, offset + limit);
     const detail = input.detail ?? 'descriptions';
-    const lines = shown.map(tool => {
+    const lines = shown.map((tool) => {
       const header = `${tool.qualifiedName} [${tool.risk}]`;
       if (detail === 'names') {
-        return tool.annotationWarning
-          ? `${header}\n[Warning: ${tool.annotationWarning}]`
-          : header;
+        return tool.annotationWarning ? `${header}\n[Warning: ${tool.annotationWarning}]` : header;
       }
       if (detail === 'schema') {
-        return `${header}\n${tool.description || '(no description)'}\n` +
-          `${tool.annotationWarning
-            ? `[Warning: ${tool.annotationWarning}]\n`
-            : ''}` +
-          `Input schema: ${JSON.stringify(tool.inputSchema)}`;
+        return (
+          `${header}\n${tool.description || '(no description)'}\n` +
+          `${tool.annotationWarning ? `[Warning: ${tool.annotationWarning}]\n` : ''}` +
+          `Input schema: ${JSON.stringify(tool.inputSchema)}`
+        );
       }
-      return `${header}\n${tool.description || '(no description)'}` +
-        `${tool.annotationWarning
-          ? `\n[Warning: ${tool.annotationWarning}]`
-          : ''}`;
+      return (
+        `${header}\n${tool.description || '(no description)'}` +
+        `${tool.annotationWarning ? `\n[Warning: ${tool.annotationWarning}]` : ''}`
+      );
     });
     if (errors.length > 0) {
       lines.push(
         '',
-        ...errors.map(error =>
-          `[Server unavailable: ${error.server} (${error.code})]`
-        )
+        ...errors.map((error) => `[Server unavailable: ${error.server} (${error.code})]`)
       );
     }
-    const catalogText = lines.length > 0
-      ? lines.join('\n\n')
-      : '(No matching MCP tools)';
+    const catalogText = lines.length > 0 ? lines.join('\n\n') : '(No matching MCP tools)';
     const limited = limitUtf8Head(
       [
         '<untrusted_mcp_catalog>',
@@ -906,38 +818,25 @@ export class McpManager {
       total: matching.length,
       offset,
       shown: shown.length,
-      ...(offset + shown.length < matching.length
-        ? { nextOffset: offset + shown.length }
-        : {}),
+      ...(offset + shown.length < matching.length ? { nextOffset: offset + shown.length } : {}),
       tools: shown,
       errors,
       truncated: limited.truncated
     };
   }
 
-  async resolveTool(
-    qualifiedName: string,
-    signal: AbortSignal
-  ): Promise<McpCatalogTool> {
+  async resolveTool(qualifiedName: string, signal: AbortSignal): Promise<McpCatalogTool> {
     const configuredPolicy = this.toolPolicies.get(qualifiedName);
     if (configuredPolicy?.policy === 'disabled') {
-      throw new McpError(
-        'policy_denied',
-        `MCP tool is disabled by local policy: ${qualifiedName}`
-      );
+      throw new McpError('policy_denied', `MCP tool is disabled by local policy: ${qualifiedName}`);
     }
     const separator = qualifiedName.indexOf('__');
     if (separator <= 0) {
-      throw new McpError(
-        'not_found',
-        'MCP tools must use the qualified name <server>__<tool>'
-      );
+      throw new McpError('not_found', 'MCP tools must use the qualified name <server>__<tool>');
     }
     const runtime = this.requireRuntime(qualifiedName.slice(0, separator));
     const catalog = await this.ensureCatalog(runtime, signal);
-    const tool = catalog.find(candidate =>
-      candidate.qualifiedName === qualifiedName
-    );
+    const tool = catalog.find((candidate) => candidate.qualifiedName === qualifiedName);
     if (!tool) {
       throw new McpError('not_found', `Unknown MCP tool: ${qualifiedName}`);
     }
@@ -956,11 +855,7 @@ export class McpManager {
     };
   }
 
-  async call(
-    qualifiedName: string,
-    input: unknown,
-    signal: AbortSignal
-  ): Promise<McpCallOutput> {
+  async call(qualifiedName: string, input: unknown, signal: AbortSignal): Promise<McpCallOutput> {
     throwIfAborted(signal);
     const prepared = await this.validateInput(qualifiedName, input, signal);
     const runtime = this.requireRuntime(prepared.tool.serverName);
@@ -1011,13 +906,8 @@ export class McpManager {
     }
   }
 
-  async doctor(
-    signal: AbortSignal,
-    name?: string
-  ): Promise<McpServerStatus[]> {
-    const selected = name
-      ? [this.requireRuntime(name)]
-      : [...this.runtimes.values()];
+  async doctor(signal: AbortSignal, name?: string): Promise<McpServerStatus[]> {
+    const selected = name ? [this.requireRuntime(name)] : [...this.runtimes.values()];
     for (const runtime of selected) {
       if (!runtime.server.config.enabled) {
         continue;
@@ -1031,23 +921,23 @@ export class McpManager {
         }
       }
     }
-    return this.getStatuses().filter(status =>
-      !name || status.name === name
-    );
+    return this.getStatuses().filter((status) => !name || status.name === name);
   }
 
   async close(): Promise<void> {
     const runtimes = [...this.runtimes.values()];
-    await Promise.all(runtimes.map(async runtime => {
-      runtime.generation += 1;
-      await runtime.connection?.close().catch(() => undefined);
-      runtime.connection = undefined;
-      runtime.connectPromise = undefined;
-      runtime.catalog = undefined;
-      runtime.catalogBytes = undefined;
-      runtime.protocolVersion = undefined;
-      runtime.state = runtime.server.config.enabled ? 'disconnected' : 'disabled';
-    }));
+    await Promise.all(
+      runtimes.map(async (runtime) => {
+        runtime.generation += 1;
+        await runtime.connection?.close().catch(() => undefined);
+        runtime.connection = undefined;
+        runtime.connectPromise = undefined;
+        runtime.catalog = undefined;
+        runtime.catalogBytes = undefined;
+        runtime.protocolVersion = undefined;
+        runtime.state = runtime.server.config.enabled ? 'disconnected' : 'disabled';
+      })
+    );
   }
 
   private requireRuntime(name: string): ServerRuntime {
@@ -1074,70 +964,73 @@ export class McpManager {
       runtime.errorCode = undefined;
       const generation = runtime.generation + 1;
       runtime.generation = generation;
-      pendingConnection = this.connectionFactory({
-        server: runtime.server,
-        workspaceRoot: this.workspaceRoot,
-        forbiddenEnvironmentNames: this.forbiddenEnvironmentNames,
-        onToolsChanged: () => {
-          runtime.catalog = undefined;
-          runtime.catalogBytes = undefined;
-        },
-        onStderr: chunk => {
-          runtime.stderr = boundedStderr(runtime.stderr, chunk);
-        },
-        onClose: () => {
-          if (runtime.generation !== generation) {
-            return;
+      pendingConnection = this.connectionFactory(
+        {
+          server: runtime.server,
+          workspaceRoot: this.workspaceRoot,
+          forbiddenEnvironmentNames: this.forbiddenEnvironmentNames,
+          onToolsChanged: () => {
+            runtime.catalog = undefined;
+            runtime.catalogBytes = undefined;
+          },
+          onStderr: (chunk) => {
+            runtime.stderr = boundedStderr(runtime.stderr, chunk);
+          },
+          onClose: () => {
+            if (runtime.generation !== generation) {
+              return;
+            }
+            runtime.generation += 1;
+            runtime.connection = undefined;
+            runtime.connectPromise = undefined;
+            runtime.catalog = undefined;
+            runtime.catalogBytes = undefined;
+            runtime.protocolVersion = undefined;
+            runtime.state = runtime.server.config.enabled ? 'disconnected' : 'disabled';
+          },
+          onError: () => {
+            if (runtime.generation !== generation) {
+              return;
+            }
+            const connection = runtime.connection;
+            runtime.generation += 1;
+            runtime.connection = undefined;
+            runtime.connectPromise = undefined;
+            runtime.catalog = undefined;
+            runtime.catalogBytes = undefined;
+            runtime.protocolVersion = undefined;
+            runtime.errorCode = 'connection';
+            runtime.state = 'error';
+            void connection?.close().catch(() => undefined);
           }
-          runtime.generation += 1;
-          runtime.connection = undefined;
-          runtime.connectPromise = undefined;
-          runtime.catalog = undefined;
-          runtime.catalogBytes = undefined;
-          runtime.protocolVersion = undefined;
-          runtime.state = runtime.server.config.enabled
-            ? 'disconnected'
-            : 'disabled';
         },
-        onError: () => {
+        signal
+      )
+        .then((connection) => {
           if (runtime.generation !== generation) {
-            return;
+            void connection.close().catch(() => undefined);
+            throw new McpError(
+              'connection',
+              `Stale MCP connection discarded for ${runtime.server.name}`
+            );
           }
-          const connection = runtime.connection;
-          runtime.generation += 1;
-          runtime.connection = undefined;
+          runtime.connection = connection;
+          runtime.state = 'ready';
+          runtime.protocolVersion = connection.protocolVersion;
+          runtime.lastConnectedAt = new Date().toISOString();
           runtime.connectPromise = undefined;
-          runtime.catalog = undefined;
-          runtime.catalogBytes = undefined;
-          runtime.protocolVersion = undefined;
-          runtime.errorCode = 'connection';
+          return connection;
+        })
+        .catch((error) => {
+          const normalized = normalizeMcpError(error, signal);
+          if (runtime.generation !== generation) {
+            throw normalized;
+          }
+          runtime.errorCode = normalized.code;
           runtime.state = 'error';
-          void connection?.close().catch(() => undefined);
-        }
-      }, signal).then(connection => {
-        if (runtime.generation !== generation) {
-          void connection.close().catch(() => undefined);
-          throw new McpError(
-            'connection',
-            `Stale MCP connection discarded for ${runtime.server.name}`
-          );
-        }
-        runtime.connection = connection;
-        runtime.state = 'ready';
-        runtime.protocolVersion = connection.protocolVersion;
-        runtime.lastConnectedAt = new Date().toISOString();
-        runtime.connectPromise = undefined;
-        return connection;
-      }).catch(error => {
-        const normalized = normalizeMcpError(error, signal);
-        if (runtime.generation !== generation) {
+          runtime.connectPromise = undefined;
           throw normalized;
-        }
-        runtime.errorCode = normalized.code;
-        runtime.state = 'error';
-        runtime.connectPromise = undefined;
-        throw normalized;
-      });
+        });
       if (runtime.generation === generation) {
         runtime.connectPromise = pendingConnection;
       }
@@ -1180,24 +1073,18 @@ export class McpManager {
       runtime.errorCode = 'output_limit';
       throw new McpError(
         'output_limit',
-        `MCP server ${runtime.server.name} exposes more than ` +
-        `${MAX_TOOLS_PER_SERVER} tools`
+        `MCP server ${runtime.server.name} exposes more than ` + `${MAX_TOOLS_PER_SERVER} tools`
       );
     }
     const seen = new Set<string>();
     let catalogBytes = 0;
-    const catalog = rawTools.flatMap(value => {
-      const qualifiedName =
-        `${runtime.server.name}__${typeof value.name === 'string' ? value.name : ''}`;
+    const catalog = rawTools.flatMap((value) => {
+      const qualifiedName = `${runtime.server.name}__${typeof value.name === 'string' ? value.name : ''}`;
       const policy = this.toolPolicies.get(qualifiedName);
       if (policy?.policy === 'disabled') {
         return [];
       }
-      const tool = validateCatalogTool(
-        runtime.server.name,
-        value,
-        policy
-      );
+      const tool = validateCatalogTool(runtime.server.name, value, policy);
       if (!tool || seen.has(tool.qualifiedName)) {
         return [];
       }
@@ -1212,8 +1099,7 @@ export class McpManager {
         runtime.errorCode = 'output_limit';
         throw new McpError(
           'output_limit',
-          `MCP server ${runtime.server.name} catalog exceeds ` +
-          `${MAX_CATALOG_BYTES} bytes`
+          `MCP server ${runtime.server.name} catalog exceeds ` + `${MAX_CATALOG_BYTES} bytes`
         );
       }
       catalogBytes += bytes;
@@ -1221,15 +1107,12 @@ export class McpManager {
       return [tool];
     });
     const otherCatalogBytes = [...this.runtimes.values()]
-      .filter(candidate => candidate !== runtime)
+      .filter((candidate) => candidate !== runtime)
       .reduce((total, candidate) => total + (candidate.catalogBytes ?? 0), 0);
     if (otherCatalogBytes + catalogBytes > MAX_CATALOG_BYTES) {
       runtime.state = 'error';
       runtime.errorCode = 'output_limit';
-      throw new McpError(
-        'output_limit',
-        `MCP catalogs exceed ${MAX_CATALOG_BYTES} total bytes`
-      );
+      throw new McpError('output_limit', `MCP catalogs exceed ${MAX_CATALOG_BYTES} total bytes`);
     }
     runtime.catalog = catalog;
     runtime.catalogBytes = catalogBytes;

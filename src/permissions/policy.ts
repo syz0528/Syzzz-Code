@@ -19,10 +19,7 @@ export function requiresUserApproval(
   return requiresUserApprovalForRisk(mode, tool.risk);
 }
 
-export function requiresUserApprovalForRisk(
-  mode: PermissionMode,
-  risk: ToolRisk
-): boolean {
+export function requiresUserApprovalForRisk(mode: PermissionMode, risk: ToolRisk): boolean {
   switch (mode) {
     case 'safe':
       // Read tools should declare approval: 'never'. If a read tool is marked

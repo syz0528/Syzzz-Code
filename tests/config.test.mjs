@@ -1,14 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import {
-  mkdirSync,
-  mkdtempSync,
-  readFileSync,
-  readdirSync,
-  rmSync,
-  writeFileSync
-} from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
@@ -45,30 +38,21 @@ test('rejects an unknown provider protocol type', () => {
   const config = createValidConfig();
   config.providers.local.type = 'custom';
 
-  assert.throws(
-    () => validateConfig(config),
-    /must be "anthropic" or "openai-compatible"/
-  );
+  assert.throws(() => validateConfig(config), /must be "anthropic" or "openai-compatible"/);
 });
 
 test('rejects a selected model missing from the configured model list', () => {
   const config = createValidConfig();
   config.providers.local.model = 'model-c';
 
-  assert.throws(
-    () => validateConfig(config),
-    /model must be included/
-  );
+  assert.throws(() => validateConfig(config), /model must be included/);
 });
 
 test('rejects a current provider that is not configured', () => {
   const config = createValidConfig();
   config.currentProvider = 'missing';
 
-  assert.throws(
-    () => validateConfig(config),
-    /does not exist in providers/
-  );
+  assert.throws(() => validateConfig(config), /does not exist in providers/);
 });
 
 test('importing configuration does not load a workspace .env file', () => {
@@ -78,26 +62,20 @@ test('importing configuration does not load a workspace .env file', () => {
   delete environment[variableName];
 
   try {
-    writeFileSync(
-      join(workingDirectory, '.env'),
-      `${variableName}=secret\n`,
-      'utf8'
-    );
-    const configModuleUrl = pathToFileURL(
-      join(projectDirectory, 'dist', 'config.js')
-    ).href;
+    writeFileSync(join(workingDirectory, '.env'), `${variableName}=secret\n`, 'utf8');
+    const configModuleUrl = pathToFileURL(join(projectDirectory, 'dist', 'config.js')).href;
     const script =
-      'await import(' + JSON.stringify(configModuleUrl) + ');' +
-      'console.log(process.env.' + variableName + " ?? 'unset');";
-    const result = spawnSync(
-      process.execPath,
-      ['--input-type=module', '--eval', script],
-      {
-        cwd: workingDirectory,
-        encoding: 'utf8',
-        env: environment
-      }
-    );
+      'await import(' +
+      JSON.stringify(configModuleUrl) +
+      ');' +
+      'console.log(process.env.' +
+      variableName +
+      " ?? 'unset');";
+    const result = spawnSync(process.execPath, ['--input-type=module', '--eval', script], {
+      cwd: workingDirectory,
+      encoding: 'utf8',
+      env: environment
+    });
 
     assert.equal(result.status, 0, result.stderr);
     assert.equal(result.stdout.trim(), 'unset');
@@ -123,10 +101,7 @@ test('UI streaming defaults safely and validates explicit configuration', () => 
 
   const invalid = createValidConfig();
   invalid.ui = { streamOutput: 'sometimes' };
-  assert.throws(
-    () => validateConfig(invalid),
-    /ui.streamOutput must be a boolean/
-  );
+  assert.throws(() => validateConfig(invalid), /ui.streamOutput must be a boolean/);
 });
 
 test('context configuration defaults safely and validates model overrides', () => {
@@ -156,20 +131,14 @@ test('context configuration defaults safely and validates model overrides', () =
   unknownModel.providers.local.modelContextWindows = {
     'model-c': 64_000
   };
-  assert.throws(
-    () => validateConfig(unknownModel),
-    /is not a configured model/
-  );
+  assert.throws(() => validateConfig(unknownModel), /is not a configured model/);
 
   const invalidWindow = createValidConfig();
   invalidWindow.context = {
     autoCompact: true,
     defaultWindowTokens: 8_000
   };
-  assert.throws(
-    () => validateConfig(invalidWindow),
-    /context.defaultWindowTokens/
-  );
+  assert.throws(() => validateConfig(invalidWindow), /context.defaultWindowTokens/);
 });
 
 test('validates audit retention and size bounds', () => {
@@ -178,20 +147,14 @@ test('validates audit retention and size bounds', () => {
     retentionDays: -1,
     maxBytes: 1024
   };
-  assert.throws(
-    () => validateConfig(invalidRetention),
-    /audit.retentionDays/
-  );
+  assert.throws(() => validateConfig(invalidRetention), /audit.retentionDays/);
 
   const invalidSize = createValidConfig();
   invalidSize.audit = {
     retentionDays: 30,
     maxBytes: 0
   };
-  assert.throws(
-    () => validateConfig(invalidSize),
-    /audit.maxBytes/
-  );
+  assert.throws(() => validateConfig(invalidSize), /audit.maxBytes/);
 
   const disabled = createValidConfig();
   disabled.audit = {
@@ -206,20 +169,12 @@ test('validates audit retention and size bounds', () => {
 
 test('rejects Provider URLs that could expose embedded credentials', () => {
   const embedded = createValidConfig();
-  embedded.providers.local.env.BASE_URL =
-    'https://user:secret@example.com/v1';
-  assert.throws(
-    () => validateConfig(embedded),
-    /must not contain embedded credentials/
-  );
+  embedded.providers.local.env.BASE_URL = 'https://user:secret@example.com/v1';
+  assert.throws(() => validateConfig(embedded), /must not contain embedded credentials/);
 
   const query = createValidConfig();
-  query.providers.local.env.BASE_URL =
-    'https://example.com/v1?api_key=secret';
-  assert.throws(
-    () => validateConfig(query),
-    /must not contain a query or fragment/
-  );
+  query.providers.local.env.BASE_URL = 'https://example.com/v1?api_key=secret';
+  assert.throws(() => validateConfig(query), /must not contain a query or fragment/);
 });
 
 test('configuration v1 adds session and subagent defaults and rejects future schemas', () => {
@@ -238,17 +193,11 @@ test('configuration v1 adds session and subagent defaults and rejects future sch
 
   const invalidSubagents = createValidConfig();
   invalidSubagents.subagents = { enabled: 'sometimes' };
-  assert.throws(
-    () => validateConfig(invalidSubagents),
-    /subagents.enabled must be a boolean/
-  );
+  assert.throws(() => validateConfig(invalidSubagents), /subagents.enabled must be a boolean/);
 
   const future = createValidConfig();
   future.schemaVersion = 99;
-  assert.throws(
-    () => validateConfig(future),
-    /unsupported configuration schemaVersion/
-  );
+  assert.throws(() => validateConfig(future), /unsupported configuration schemaVersion/);
 });
 
 test('environment credentials take precedence without mutating process.env', () => {
@@ -283,29 +232,23 @@ test('loading a legacy config creates a private migration backup', () => {
   try {
     mkdirSync(configDirectory);
     writeFileSync(configPath, JSON.stringify(createValidConfig()));
-    const configModuleUrl = pathToFileURL(
-      join(projectDirectory, 'dist', 'config.js')
-    ).href;
+    const configModuleUrl = pathToFileURL(join(projectDirectory, 'dist', 'config.js')).href;
     const script =
       `const m = await import(${JSON.stringify(configModuleUrl)});` +
       `console.log(JSON.stringify(m.loadConfig()));`;
-    const result = spawnSync(
-      process.execPath,
-      ['--input-type=module', '--eval', script],
-      {
-        cwd: projectDirectory,
-        encoding: 'utf8',
-        env: {
-          ...process.env,
-          HOME: testHome,
-          USERPROFILE: testHome
-        }
+    const result = spawnSync(process.execPath, ['--input-type=module', '--eval', script], {
+      cwd: projectDirectory,
+      encoding: 'utf8',
+      env: {
+        ...process.env,
+        HOME: testHome,
+        USERPROFILE: testHome
       }
-    );
+    });
     assert.equal(result.status, 0, result.stderr);
     assert.equal(JSON.parse(result.stdout).schemaVersion, 1);
     const files = readdirSync(configDirectory);
-    assert.ok(files.some(name => name.endsWith('.pre-v1.bak')));
+    assert.ok(files.some((name) => name.endsWith('.pre-v1.bak')));
     assert.equal(JSON.parse(readFileSync(configPath, 'utf8')).schemaVersion, 1);
   } finally {
     rmSync(testHome, { recursive: true, force: true });

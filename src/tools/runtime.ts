@@ -1,22 +1,18 @@
 import { z } from 'zod';
-import type {
-  ToolDefinition,
-  ToolResult,
-  TypedToolDefinition
-} from '../types.js';
+import type { ToolDefinition, ToolResult, TypedToolDefinition } from '../types.js';
 
 export function defineTool<Input, Output = unknown>(
   definition: TypedToolDefinition<Input, Output>
 ): ToolDefinition {
+  const { resolvePolicy, prepareApproval } = definition;
   return {
     ...definition,
     inputSchema: definition.inputSchema as z.ZodType<unknown>,
-    resolvePolicy: definition.resolvePolicy
-      ? async (input, context) =>
-          definition.resolvePolicy!(input as Input, context)
+    resolvePolicy: resolvePolicy
+      ? async (input, context) => resolvePolicy(input as Input, context)
       : undefined,
-    prepareApproval: definition.prepareApproval
-      ? async (input, context) => definition.prepareApproval!(input as Input, context)
+    prepareApproval: prepareApproval
+      ? async (input, context) => prepareApproval(input as Input, context)
       : undefined,
     execute: async (input, context): Promise<ToolResult> =>
       definition.execute(input as Input, context)
@@ -35,7 +31,7 @@ export function validateToolInput(
     };
   }
 
-  const issueDescriptions = validationResult.error.issues.map(issue => {
+  const issueDescriptions = validationResult.error.issues.map((issue) => {
     const issuePath = issue.path.length > 0 ? issue.path.join('.') : 'input';
     return `${issuePath}: ${issue.message}`;
   });
@@ -63,7 +59,7 @@ export function convertToolSchemaToJsonSchema(tool: ToolDefinition): {
     type: 'object',
     properties: properties as Record<string, unknown>,
     ...(Array.isArray(required)
-      ? { required: required.filter(item => typeof item === 'string') as string[] }
+      ? { required: required.filter((item) => typeof item === 'string') as string[] }
       : {})
   };
 }

@@ -2,7 +2,7 @@
 
 Syzzz Code 是一个使用 TypeScript 构建的实验性命令行 AI 编程 Agent。它提供统一的 Provider 接口、事件化 Agent Runtime、受约束的代码库工具、可靠编辑、上下文压缩、可恢复的本地会话，以及受信任边界约束的 MCP、Hooks 和只读 Subagent。
 
-Phase 5 与 Phase 5.1 已于 2026-07-29 完成自动化、人工扩展 dogfood 和真实远程 MCP 验证，状态为 **Frozen**。项目目标是成为一个安全边界清晰、可观察、可恢复，并适合在真实代码库中持续使用的本地编程助手。
+Phase 1 至 Phase 5.1 已完成并保持 **Frozen**。Phase 6 的本地实现和自动化已完成，当前状态为 **Implemented**；跨平台 CI、人工候选包验收与公开注册表发布尚未完成，因此不标记 Frozen。
 
 > [!WARNING]
 > Syzzz Code 仍处于实验阶段。文件工具受工作区边界、敏感路径和并发 hash 校验保护，但 Shell 不是 OS sandbox。获批或在 `fullAccess` 下自动执行的命令仍可产生工作区外副作用。
@@ -103,11 +103,19 @@ Phase 5 与 Phase 5.1 已于 2026-07-29 完成自动化、人工扩展 dogfood �
 
 ## 环境要求
 
-- Node.js 20 或更高版本
+- Node.js 22 或更高版本（CI 验证 Node 22 与 24）
 - npm
 - 一个 Anthropic 或 OpenAI-compatible API 服务
 
 ## 安装
+
+公开 npm 发布完成后可使用：
+
+```bash
+npm install --global syzzz-code
+```
+
+当前源码候选版本使用：
 
 ```bash
 git clone https://github.com/syz0528/Syzzz-Code.git
@@ -327,16 +335,24 @@ syzzz init
 ```bash
 npm run build
 npm test
-npm audit --omit=dev
-npm pack --dry-run --json
+npm run lint
+npm run format:check
+npm run test:coverage
+npm run test:providers
+npm run eval:offline
+npm run pack:check
+npm run smoke:package
+npm audit --omit=dev --audit-level=high
 git diff --check
 ```
 
-当前自动化套件包含 253 项测试，覆盖 Phase 1 至 Phase 5.1 的路径与权限安全、事件 Runtime、Provider 可靠性、终端交互、代码库上下文、压缩、会话恢复、配置迁移、Trust V2、MCP 传输与策略、Hooks 和只读 Subagent 预算。
+自动化套件覆盖 Phase 1 至 Phase 5.1 的路径与权限安全、事件 Runtime、Provider 可靠性、终端交互、代码库上下文、压缩、会话恢复、配置迁移、Trust V2、MCP 传输与策略、Hooks 和只读 Subagent 预算。Phase 6 另增加四种离线 Provider 协议 Profile、七项固定 Coding Agent Eval、覆盖率门槛、Git 历史 Secret 扫描、依赖许可证检查和候选包安装测试。
+
+当前本地基线为 277/277 项测试通过，覆盖率最新测得 Lines 83.61%、Branches 76.04%、Functions 86.57%，离线 Eval 7/7 通过；真实 DeepSeek/OpenCode Live Eval 同样以 7/7、功能成功率 100%、安全项通过且无基础设施错误完成。
 
 Phase 5 冻结验收还完成了 11 项真实终端 dogfood，覆盖未信任边界、Trust V2 复审、MCP 策略与惰性重连、Hook 拒绝与生命周期、取消清理、Subagent 预算、隐私恢复和撤销信任。公开 Streamable HTTP MCP 的真实握手、工具发现及只读天气调用同样通过；该外部服务只用于兼容性验证，不是 Syzzz 的运行依赖。
 
-npm 包使用 allowlist，只包含 `dist`、`README.md`、`SECURITY.md`、`docs` 和 npm 固定元数据，不包含 `src`、`tests`、`archive`、本地配置或历史报告。
+npm 包使用 allowlist，只包含 `dist`、README、SECURITY、LICENSE、CHANGELOG、ARCHITECTURE、TESTING、`docs` 和 npm 固定元数据，不包含 `src`、`tests`、`archive`、Eval fixture、本地配置或历史报告。测试与发布流程见 [TESTING.md](TESTING.md)，架构边界见 [ARCHITECTURE.md](ARCHITECTURE.md)。
 
 ## 已知边界
 
@@ -355,4 +371,4 @@ npm 包使用 allowlist，只包含 `dist`、`README.md`、`SECURITY.md`、`docs
 
 ## 当前阶段
 
-Phase 1 至 Phase 5 均保持 **Frozen**。Phase 5.0 Core 检查点为 `000bcaa`，Phase 5.1 实现验证基线为 `85b2558`；后续除 P0 安全、数据破坏或确定性扩展协议回归外，不再向 Phase 5 增加能力。下一阶段进入 Phase 6 持续评测、跨平台 CI、发布与工程治理。版本号保持 `1.0.0`，尚未发布 npm 包或创建 Tag。
+Phase 1 至 Phase 5.1 均保持 **Frozen**。Phase 6 位于 `codex/phase6-quality-release`，当前状态为 **Implemented**；只有跨平台 CI 和候选包 job 实际通过后才进入 **Validated**。人工 dogfood、npm、annotated Tag、GitHub Release 与 registry 安装复验完成前，版本 `1.0.0` 仍不是 Frozen。

@@ -17,15 +17,11 @@ export interface HiddenInputOptions {
   output?: WriteStream;
 }
 
-export async function readHiddenInput(
-  options: HiddenInputOptions
-): Promise<string> {
+export async function readHiddenInput(options: HiddenInputOptions): Promise<string> {
   const input = options.input ?? process.stdin;
   const output = options.output ?? process.stdout;
   if (!input.isTTY || !output.isTTY || typeof input.setRawMode !== 'function') {
-    throw new Error(
-      'Hidden input requires an interactive terminal; use --stdin or --from-env'
-    );
+    throw new Error('Hidden input requires an interactive terminal; use --stdin or --from-env');
   }
 
   options.signal?.throwIfAborted();
@@ -49,10 +45,7 @@ export async function readHiddenInput(
         // The terminal may already be closed; the secret still must settle.
       }
     };
-    const finish = (
-      callback: (value: string | Error) => void,
-      result: string | Error
-    ) => {
+    const finish = (callback: (value: string | Error) => void, result: string | Error) => {
       if (settled) {
         return;
       }
@@ -62,19 +55,13 @@ export async function readHiddenInput(
       callback(result);
     };
     const handleAbort = () => {
-      finish(
-        error => reject(error),
-        new OperationAbortedError('Secret input cancelled')
-      );
+      finish((error) => reject(error), new OperationAbortedError('Secret input cancelled'));
     };
     const handleEnd = () => {
-      finish(
-        error => reject(error),
-        new Error('Input closed before the secret was submitted')
-      );
+      finish((error) => reject(error), new Error('Input closed before the secret was submitted'));
     };
     const handleError = (error: Error) => {
-      finish(reason => reject(reason), error);
+      finish((reason) => reject(reason), error);
     };
     const handleKeypress = (text: string, key: KeyDescriptor = {}) => {
       if (key.ctrl && key.name === 'c') {
@@ -82,7 +69,7 @@ export async function readHiddenInput(
         return;
       }
       if (key.name === 'return' || key.name === 'enter') {
-        finish(result => resolve(String(result)), value);
+        finish((result) => resolve(String(result)), value);
         return;
       }
       if (key.name === 'backspace') {

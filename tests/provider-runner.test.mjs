@@ -1,13 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {
-  calculateBackoffDelay,
-  runProviderRequest
-} from '../dist/providers/runner.js';
-import {
-  normalizeProviderError,
-  ProviderError
-} from '../dist/providers/errors.js';
+import { calculateBackoffDelay, runProviderRequest } from '../dist/providers/runner.js';
+import { normalizeProviderError, ProviderError } from '../dist/providers/errors.js';
 
 function info(streaming = false, reasoningToggle = false) {
   return {
@@ -72,28 +66,29 @@ test('retries a network error with deterministic exponential backoff', async () 
   };
   let id = 0;
 
-  const { events, result } = await collect(runProviderRequest(
-    provider,
-    request,
-    {
+  const { events, result } = await collect(
+    runProviderRequest(provider, request, {
       random: () => 0.5,
-      sleep: async delay => delays.push(delay),
-      idFactory: () => 'attempt-' + (++id)
-    }
-  ));
+      sleep: async (delay) => delays.push(delay),
+      idFactory: () => 'attempt-' + ++id
+    })
+  );
 
   assert.equal(attempts, 2);
   assert.deepEqual(delays, [500]);
   assert.equal(result.message.content, 'Recovered.');
-  assert.deepEqual(events.map(event => event.type), [
-    'request_started',
-    'request_failed',
-    'retry_scheduled',
-    'request_started',
-    'text_delta',
-    'usage',
-    'request_completed'
-  ]);
+  assert.deepEqual(
+    events.map((event) => event.type),
+    [
+      'request_started',
+      'request_failed',
+      'retry_scheduled',
+      'request_started',
+      'text_delta',
+      'usage',
+      'request_completed'
+    ]
+  );
   assert.equal(events[1].willRetry, true);
 });
 
@@ -115,20 +110,17 @@ test('does not retry after a visible text delta', async () => {
     }
   };
 
-  const { events, error } = await collectFailure(runProviderRequest(
-    provider,
-    request,
-    { sleep: async () => assert.fail('retry sleep should not run') }
-  ));
+  const { events, error } = await collectFailure(
+    runProviderRequest(provider, request, {
+      sleep: async () => assert.fail('retry sleep should not run')
+    })
+  );
 
   assert.equal(attempts, 1);
   assert.equal(error.code, 'network');
+  assert.equal(events.find((event) => event.type === 'request_failed').willRetry, false);
   assert.equal(
-    events.find(event => event.type === 'request_failed').willRetry,
-    false
-  );
-  assert.equal(
-    events.some(event => event.type === 'retry_scheduled'),
+    events.some((event) => event.type === 'retry_scheduled'),
     false
   );
 });
@@ -157,15 +149,9 @@ test('does not retry after receiving any tool call fragment', async () => {
     }
   };
 
-  const { events } = await collectFailure(runProviderRequest(
-    provider,
-    request
-  ));
+  const { events } = await collectFailure(runProviderRequest(provider, request));
   assert.equal(attempts, 1);
-  assert.equal(
-    events.find(event => event.type === 'request_failed').willRetry,
-    false
-  );
+  assert.equal(events.find((event) => event.type === 'request_failed').willRetry, false);
 });
 
 test('recovers reasoning-only output inside the shared attempt budget', async () => {
@@ -207,32 +193,21 @@ test('recovers reasoning-only output inside the shared attempt budget', async ()
     }
   };
 
-  const { events, result } = await collect(runProviderRequest(
-    provider,
-    request,
-    {
+  const { events, result } = await collect(
+    runProviderRequest(provider, request, {
       sleep: async () => {},
       idFactory: () => 'attempt-id'
-    }
-  ));
+    })
+  );
 
   assert.deepEqual(optionsSeen, [
     { attempt: 1, disableReasoning: false },
     { attempt: 2, disableReasoning: true }
   ]);
   assert.equal(result.message.content, 'Visible answer.');
-  assert.equal(
-    events.filter(event => event.type === 'reasoning_status').length,
-    2
-  );
-  assert.equal(
-    events.find(event => event.type === 'retry_scheduled').delayMs,
-    0
-  );
-  assert.equal(
-    JSON.stringify(events).includes('private reasoning'),
-    false
-  );
+  assert.equal(events.filter((event) => event.type === 'reasoning_status').length, 2);
+  assert.equal(events.find((event) => event.type === 'retry_scheduled').delayMs, 0);
+  assert.equal(JSON.stringify(events).includes('private reasoning'), false);
 });
 
 test('retries without stream_options when the endpoint rejects it', async () => {
@@ -262,16 +237,14 @@ test('retries without stream_options when the endpoint rejects it', async () => 
     }
   };
 
-  const { events, result } = await collect(runProviderRequest(
-    provider,
-    request,
-    { sleep: async () => {} }
-  ));
+  const { events, result } = await collect(
+    runProviderRequest(provider, request, { sleep: async () => {} })
+  );
 
   assert.deepEqual(includeUsageValues, [true, false]);
   assert.equal(result.message.content, 'Compatible.');
   assert.equal(
-    events.find(event => event.type === 'retry_scheduled').reason,
+    events.find((event) => event.type === 'retry_scheduled').reason,
     'unsupported_feature'
   );
 });
@@ -291,27 +264,19 @@ test('refuses Retry-After beyond the configured maximum', async () => {
     }
   };
 
-  const { events, error } = await collectFailure(runProviderRequest(
-    provider,
-    request
-  ));
+  const { events, error } = await collectFailure(runProviderRequest(provider, request));
   assert.equal(attempts, 1);
   assert.equal(error.code, 'rate_limit');
-  assert.equal(
-    events.find(event => event.type === 'request_failed').willRetry,
-    false
-  );
+  assert.equal(events.find((event) => event.type === 'request_failed').willRetry, false);
 });
 
 test('distinguishes attempt timeout from user cancellation', async () => {
   const waitingProvider = {
     chat(providerRequest) {
       return new Promise((resolve, reject) => {
-        providerRequest.signal.addEventListener(
-          'abort',
-          () => reject(new Error('aborted')),
-          { once: true }
-        );
+        providerRequest.signal.addEventListener('abort', () => reject(new Error('aborted')), {
+          once: true
+        });
       });
     },
     getInfo() {
@@ -319,15 +284,13 @@ test('distinguishes attempt timeout from user cancellation', async () => {
     }
   };
 
-  const timeoutOutcome = await collectFailure(runProviderRequest(
-    waitingProvider,
-    request,
-    {
+  const timeoutOutcome = await collectFailure(
+    runProviderRequest(waitingProvider, request, {
       maxAttempts: 1,
       attemptTimeoutMs: 10,
       totalTimeoutMs: 100
-    }
-  ));
+    })
+  );
   assert.equal(timeoutOutcome.error.code, 'timeout');
   assert.equal(timeoutOutcome.events.at(-1).error.code, 'timeout');
 
@@ -340,50 +303,43 @@ test('distinguishes attempt timeout from user cancellation', async () => {
     }
   };
   const hardTimeoutStartedAt = Date.now();
-  const hardTimeoutOutcome = await collectFailure(runProviderRequest(
-    ignoresAbortProvider,
-    request,
-    {
+  const hardTimeoutOutcome = await collectFailure(
+    runProviderRequest(ignoresAbortProvider, request, {
       maxAttempts: 1,
       attemptTimeoutMs: 10,
       totalTimeoutMs: 100
-    }
-  ));
+    })
+  );
   assert.equal(hardTimeoutOutcome.error.code, 'timeout');
   assert.ok(Date.now() - hardTimeoutStartedAt < 500);
 
   const controller = new AbortController();
   let signalStarted;
-  const started = new Promise(resolve => {
+  const started = new Promise((resolve) => {
     signalStarted = resolve;
   });
   const cancellableProvider = {
     chat(providerRequest) {
       signalStarted();
       return new Promise((resolve, reject) => {
-        providerRequest.signal.addEventListener(
-          'abort',
-          () => reject(new Error('aborted')),
-          { once: true }
-        );
+        providerRequest.signal.addEventListener('abort', () => reject(new Error('aborted')), {
+          once: true
+        });
       });
     },
     getInfo() {
       return info();
     }
   };
-  const cancellation = collectFailure(runProviderRequest(
-    cancellableProvider,
-    { ...request, signal: controller.signal }
-  ));
+  const cancellation = collectFailure(
+    runProviderRequest(cancellableProvider, { ...request, signal: controller.signal })
+  );
   await started;
   controller.abort();
   const cancelledOutcome = await cancellation;
   assert.equal(cancelledOutcome.error.name, 'AbortError');
   assert.equal(
-    cancelledOutcome.events.some(event =>
-      event.type === 'request_failed'
-    ),
+    cancelledOutcome.events.some((event) => event.type === 'request_failed'),
     false
   );
 });
@@ -411,16 +367,13 @@ test('cancellation after request_started observes a late SDK stream rejection', 
       return info(true);
     }
   };
-  const runner = runProviderRequest(
-    provider,
-    { ...request, signal: controller.signal }
-  );
+  const runner = runProviderRequest(provider, { ...request, signal: controller.signal });
 
   const started = await runner.next();
   assert.equal(started.value.type, 'request_started');
   controller.abort();
   await assert.rejects(() => runner.next(), /cancel|abort/i);
-  await new Promise(resolve => setImmediate(resolve));
+  await new Promise((resolve) => setImmediate(resolve));
   assert.equal(streamStarted, true);
 });
 
@@ -431,32 +384,41 @@ test('maps SDK errors into stable public categories', () => {
     [{ status: 400, code: 'model_not_found' }, 'model_not_found'],
     [{ status: 404, message: 'route missing' }, 'not_found'],
     [{ status: 429 }, 'rate_limit'],
-    [{
-      status: 400,
-      code: 'context_length_exceeded'
-    }, 'context_exceeded'],
-    [{
-      status: 400,
-      message: 'stream_options is not supported'
-    }, 'unsupported_feature'],
-    [{
-      status: 503,
-      message: 'Gateway Timeout'
-    }, 'provider_internal'],
-    [{
-      name: 'APIConnectionError',
-      message: 'connection failed'
-    }, 'network'],
+    [
+      {
+        status: 400,
+        code: 'context_length_exceeded'
+      },
+      'context_exceeded'
+    ],
+    [
+      {
+        status: 400,
+        message: 'stream_options is not supported'
+      },
+      'unsupported_feature'
+    ],
+    [
+      {
+        status: 503,
+        message: 'Gateway Timeout'
+      },
+      'provider_internal'
+    ],
+    [
+      {
+        name: 'APIConnectionError',
+        message: 'connection failed'
+      },
+      'network'
+    ],
     [{ status: 422, message: 'bad input' }, 'unknown']
   ];
 
   for (const [shape, expectedCode] of cases) {
     const error = new Error(shape.message ?? 'failure');
     Object.assign(error, shape);
-    assert.equal(
-      normalizeProviderError(error, 'Mapped').code,
-      expectedCode
-    );
+    assert.equal(normalizeProviderError(error, 'Mapped').code, expectedCode);
   }
 
   const rejectedStreamUsage = new Error('stream_options is unsupported');
@@ -476,22 +438,36 @@ test('maps SDK errors into stable public categories', () => {
   assert.equal(mapped.retryAfterMs, 2_000);
 });
 
+test('maps Provider JSON parsing failures to malformed_response', () => {
+  const error = new SyntaxError('Unexpected token in provider JSON');
+  assert.equal(normalizeProviderError(error, 'Mapped').code, 'malformed_response');
+});
+
 test('backoff jitter stays inside twenty percent', () => {
-  assert.equal(calculateBackoffDelay(1, {
-    baseDelayMs: 500,
-    maxDelayMs: 10_000,
-    random: () => 0
-  }), 400);
-  assert.equal(calculateBackoffDelay(1, {
-    baseDelayMs: 500,
-    maxDelayMs: 10_000,
-    random: () => 1
-  }), 600);
-  assert.equal(calculateBackoffDelay(10, {
-    baseDelayMs: 500,
-    maxDelayMs: 10_000,
-    random: () => 0.5
-  }), 10_000);
+  assert.equal(
+    calculateBackoffDelay(1, {
+      baseDelayMs: 500,
+      maxDelayMs: 10_000,
+      random: () => 0
+    }),
+    400
+  );
+  assert.equal(
+    calculateBackoffDelay(1, {
+      baseDelayMs: 500,
+      maxDelayMs: 10_000,
+      random: () => 1
+    }),
+    600
+  );
+  assert.equal(
+    calculateBackoffDelay(10, {
+      baseDelayMs: 500,
+      maxDelayMs: 10_000,
+      random: () => 0.5
+    }),
+    10_000
+  );
 });
 test('retries only documented transient categories up to three attempts', async () => {
   const transientErrors = [
@@ -521,17 +497,13 @@ test('retries only documented transient categories up to three attempts', async 
         return info();
       }
     };
-    const outcome = await collectFailure(runProviderRequest(
-      provider,
-      request,
-      { sleep: async () => {} }
-    ));
+    const outcome = await collectFailure(
+      runProviderRequest(provider, request, { sleep: async () => {} })
+    );
 
     assert.equal(attempts, 3, transientError.code);
     assert.equal(
-      outcome.events.filter(event =>
-        event.type === 'retry_scheduled'
-      ).length,
+      outcome.events.filter((event) => event.type === 'retry_scheduled').length,
       2,
       transientError.code
     );
@@ -551,11 +523,11 @@ test('retries only documented transient categories up to three attempts', async 
       return info();
     }
   };
-  await collectFailure(runProviderRequest(
-    permanentProvider,
-    request,
-    { sleep: async () => assert.fail('must not retry') }
-  ));
+  await collectFailure(
+    runProviderRequest(permanentProvider, request, {
+      sleep: async () => assert.fail('must not retry')
+    })
+  );
   assert.equal(permanentAttempts, 1);
 });
 
@@ -583,11 +555,9 @@ test('honors an acceptable Retry-After value', async () => {
     }
   };
 
-  const { result } = await collect(runProviderRequest(
-    provider,
-    request,
-    { sleep: async delay => delays.push(delay) }
-  ));
+  const { result } = await collect(
+    runProviderRequest(provider, request, { sleep: async (delay) => delays.push(delay) })
+  );
   assert.deepEqual(delays, [2_000]);
   assert.equal(result.message.content, 'After waiting.');
 });
@@ -608,30 +578,23 @@ test('stops retries when the total budget is exhausted', async () => {
     }
   };
 
-  const outcome = await collectFailure(runProviderRequest(
-    provider,
-    request,
-    {
+  const outcome = await collectFailure(
+    runProviderRequest(provider, request, {
       totalTimeoutMs: 150,
       attemptTimeoutMs: 120,
       baseDelayMs: 10,
       maxDelayMs: 10,
       random: () => 0.5,
       now: () => clock,
-      sleep: async delay => {
+      sleep: async (delay) => {
         clock += delay;
       }
-    }
-  ));
+    })
+  );
 
   assert.equal(attempts, 2);
   assert.equal(outcome.error.code, 'network');
-  assert.equal(
-    outcome.events.filter(event =>
-      event.type === 'retry_scheduled'
-    ).length,
-    1
-  );
+  assert.equal(outcome.events.filter((event) => event.type === 'retry_scheduled').length, 1);
 });
 
 test('stream_options compatibility recovery is attempted only once', async () => {
@@ -652,19 +615,12 @@ test('stream_options compatibility recovery is attempted only once', async () =>
     }
   };
 
-  const outcome = await collectFailure(runProviderRequest(
-    provider,
-    request,
-    { sleep: async () => {} }
-  ));
+  const outcome = await collectFailure(
+    runProviderRequest(provider, request, { sleep: async () => {} })
+  );
   assert.equal(attempts, 2);
   assert.equal(outcome.error.code, 'unsupported_feature');
-  assert.equal(
-    outcome.events.filter(event =>
-      event.type === 'retry_scheduled'
-    ).length,
-    1
-  );
+  assert.equal(outcome.events.filter((event) => event.type === 'retry_scheduled').length, 1);
 });
 test('closing the runner closes the underlying provider stream', async () => {
   let streamClosed = false;

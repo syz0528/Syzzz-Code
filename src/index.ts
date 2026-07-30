@@ -13,7 +13,6 @@ import {
   turnResultExitCode
 } from './cli-renderer.js';
 import {
-  getCurrentProviderConfig,
   inspectConfig,
   loadConfig,
   repairConfig,
@@ -25,18 +24,9 @@ import {
 import { runDoctor } from './doctor.js';
 import { QueryEngine } from './engine.js';
 import { ExtensionRuntime } from './extensions/runtime.js';
-import {
-  manageHooks,
-  manageMcp
-} from './extensions/management.js';
-import {
-  runInteractiveSession,
-  type InteractiveProviderOption
-} from './interactive.js';
-import {
-  parseAgentMode,
-  type AgentMode
-} from './modes.js';
+import { manageHooks, manageMcp } from './extensions/management.js';
+import { runInteractiveSession, type InteractiveProviderOption } from './interactive.js';
+import { parseAgentMode, type AgentMode } from './modes.js';
 import { createProvider } from './providers/factory.js';
 import { readHiddenInput } from './secret-input.js';
 import {
@@ -44,6 +34,7 @@ import {
   type SessionEngineRequest,
   type SessionEngineResult
 } from './session-controller.js';
+import { PACKAGE_VERSION } from './version.js';
 import { SessionStore } from './session-store.js';
 import { isAbortError, OperationAbortedError } from './tools/abort.js';
 
@@ -84,10 +75,7 @@ function parseMode(value: string): AgentMode {
   return mode;
 }
 
-function providerWithModel(
-  provider: ProviderConfigItem,
-  model: string
-): ProviderConfigItem {
+function providerWithModel(provider: ProviderConfigItem, model: string): ProviderConfigItem {
   return {
     ...provider,
     model,
@@ -116,7 +104,7 @@ function providerCredentialEnvironmentNames(config: Config): string[] {
   return [
     ...new Set(
       Object.values(config.providers)
-        .map(provider => provider.env.API_KEY_ENV)
+        .map((provider) => provider.env.API_KEY_ENV)
         .filter((name): name is string => Boolean(name))
     )
   ];
@@ -124,14 +112,10 @@ function providerCredentialEnvironmentNames(config: Config): string[] {
 
 function configuredProviderCredentialEnvironmentNames(): string[] {
   const inspection = inspectConfig();
-  return inspection.status === 'valid'
-    ? providerCredentialEnvironmentNames(inspection.config)
-    : [];
+  return inspection.status === 'valid' ? providerCredentialEnvironmentNames(inspection.config) : [];
 }
 
-function createConfiguredEngine(
-  request: SessionEngineRequest
-): SessionEngineResult {
+function createConfiguredEngine(request: SessionEngineRequest): SessionEngineResult {
   const config = loadConfig();
   const warnings: string[] = [];
   let selected = usableProvider(config, request.providerId);
@@ -140,14 +124,14 @@ function createConfiguredEngine(
     if (request.providerId && request.providerId !== config.currentProvider) {
       warnings.push(
         `Saved Provider "${request.providerId}" is unavailable; ` +
-        `using "${config.currentProvider}".`
+          `using "${config.currentProvider}".`
       );
     }
   }
   if (!selected) {
     throw new Error(
       `No API key found for Provider "${config.currentProvider}". ` +
-      'Run "syzzz config set apiKey" or configure API_KEY_ENV.'
+        'Run "syzzz config set apiKey" or configure API_KEY_ENV.'
     );
   }
 
@@ -156,9 +140,7 @@ function createConfiguredEngine(
     if (selected.provider.models.includes(request.model)) {
       model = request.model;
     } else {
-      warnings.push(
-        `Saved model "${request.model}" is unavailable; using "${model}".`
-      );
+      warnings.push(`Saved model "${request.model}" is unavailable; using "${model}".`);
     }
   }
   const provider = createProvider(providerWithModel(selected.provider, model));
@@ -210,16 +192,12 @@ function providerOptions(): InteractiveProviderOption[] {
   });
 }
 
-function createInteractiveOptions(
-  controller: SessionController,
-  streamOutput?: boolean
-) {
+function createInteractiveOptions(controller: SessionController, streamOutput?: boolean) {
   const config = loadConfig();
   const provider = config.providers[controller.providerId];
   return {
     streamOutput: streamOutput ?? config.ui.streamOutput,
-    availableModels: provider?.models ??
-      [controller.engine.getProviderInfo().model],
+    availableModels: provider?.models ?? [controller.engine.getProviderInfo().model],
     session: controller,
     persistStreamOutput(enabled: boolean) {
       const latest = loadConfig();
@@ -236,14 +214,10 @@ function createInteractiveOptions(
       const resolvedProviderId = providerId || latest.currentProvider;
       const latestProvider = latest.providers[resolvedProviderId];
       if (!latestProvider) {
-        throw new Error(
-          `Provider ${resolvedProviderId} no longer exists in configuration`
-        );
+        throw new Error(`Provider ${resolvedProviderId} no longer exists in configuration`);
       }
       if (!latestProvider.models.includes(model)) {
-        throw new Error(
-          `Model ${model} is not configured for Provider ${resolvedProviderId}`
-        );
+        throw new Error(`Model ${model} is not configured for Provider ${resolvedProviderId}`);
       }
       latestProvider.model = model;
       saveConfig(latest);
@@ -274,9 +248,7 @@ function createInteractiveOptions(
   };
 }
 
-async function startInteractive(
-  options: InteractiveStartupOptions = {}
-): Promise<void> {
+async function startInteractive(options: InteractiveStartupOptions = {}): Promise<void> {
   if (options.continue && options.resume) {
     throw new Error('--continue and --resume cannot be used together');
   }
@@ -340,7 +312,7 @@ async function runSingleMessage(
     }
     const result = await consumeAgentTurn(
       engine.runTurn(message, { signal: abortController.signal }),
-      event => {
+      (event) => {
         if (outputFormat === 'stream-json') {
           process.stdout.write(`${serializeAgentEvent(event)}\n`);
         } else {
@@ -379,11 +351,7 @@ async function selectFromList(
     return defaultIndex;
   }
   const selectedIndex = Number.parseInt(nextLine.value.trim(), 10) - 1;
-  if (
-    !Number.isInteger(selectedIndex) ||
-    selectedIndex < 0 ||
-    selectedIndex >= optionCount
-  ) {
+  if (!Number.isInteger(selectedIndex) || selectedIndex < 0 || selectedIndex >= optionCount) {
     throw new Error(`Please enter a number between 1 and ${optionCount}`);
   }
   return selectedIndex;
@@ -420,10 +388,10 @@ async function confirmAction(prompt: string): Promise<boolean> {
 program
   .name('syzzz')
   .description('Syzzz Code - AI Programming Assistant')
-  .version('1.0.0')
+  .version(PACKAGE_VERSION)
   .option('-c, --continue', 'Resume the latest session in this workspace')
   .option('-r, --resume <id>', 'Resume a session by ID or unique prefix')
-  .action(async options => {
+  .action(async (options) => {
     try {
       await startInteractive(options);
     } catch (error) {
@@ -456,9 +424,9 @@ const configCommand = program
         console.log(`Streaming:   ${config.ui.streamOutput ? 'on' : 'off'}`);
         console.log(`Autosave:    ${config.sessions.autoSave ? 'on' : 'off'}`);
         console.log(
-          `API Key:     ${credential.source === 'missing'
-            ? 'not configured'
-            : `configured (${credential.source})`}\n`
+          `API Key:     ${
+            credential.source === 'missing' ? 'not configured' : `configured (${credential.source})`
+          }\n`
         );
         return;
       }
@@ -467,7 +435,7 @@ const configCommand = program
         if (value) {
           throw new Error(
             'API keys are not accepted as command-line values; ' +
-            'use hidden input, --stdin, or --from-env'
+              'use hidden input, --stdin, or --from-env'
           );
         }
         if (options.stdin && options.fromEnv) {
@@ -487,28 +455,24 @@ const configCommand = program
           delete current.env.API_KEY_ENV;
         }
         saveConfig(config);
-        console.log(chalk.green(
-          `\nAPI key configuration updated for ${config.currentProvider}.\n`
-        ));
+        console.log(
+          chalk.green(`\nAPI key configuration updated for ${config.currentProvider}.\n`)
+        );
         return;
       }
 
-      if (
-        action === 'set' &&
-        key === 'sessions.autoSave' &&
-        value
-      ) {
+      if (action === 'set' && key === 'sessions.autoSave' && value) {
         const normalized = value.toLowerCase();
         if (!['on', 'off', 'true', 'false'].includes(normalized)) {
           throw new Error('sessions.autoSave must be on or off');
         }
-        config.sessions.autoSave =
-          normalized === 'on' || normalized === 'true';
+        config.sessions.autoSave = normalized === 'on' || normalized === 'true';
         saveConfig(config);
-        console.log(chalk.green(
-          `\nSession autosave set to ` +
-          `${config.sessions.autoSave ? 'on' : 'off'}.\n`
-        ));
+        console.log(
+          chalk.green(
+            `\nSession autosave set to ` + `${config.sessions.autoSave ? 'on' : 'off'}.\n`
+          )
+        );
         return;
       }
 
@@ -522,8 +486,8 @@ const configCommand = program
 
       throw new Error(
         'Usage: syzzz config list | syzzz config set apiKey ' +
-        '[--stdin|--from-env NAME] | ' +
-        'syzzz config set sessions.autoSave on|off'
+          '[--stdin|--from-env NAME] | ' +
+          'syzzz config set sessions.autoSave on|off'
       );
     } catch (error) {
       const reason = error instanceof Error ? error.message : String(error);
@@ -562,10 +526,7 @@ program
         defaultProviderIndex
       );
       const [selectedId, selected] = providerEntries[providerIndex];
-      const defaultModelIndex = Math.max(
-        0,
-        selected.models.indexOf(selected.model)
-      );
+      const defaultModelIndex = Math.max(0, selected.models.indexOf(selected.model));
       console.log(chalk.cyan(`\nAvailable models for ${selected.name}:\n`));
       selected.models.forEach((model, index) => {
         const marker = model === selected.model ? ' (current)' : '';
@@ -580,9 +541,7 @@ program
       selected.model = selected.models[modelIndex];
       config.currentProvider = selectedId;
       saveConfig(config);
-      console.log(chalk.green(
-        `\nSwitched to ${selected.name} (${selected.model})\n`
-      ));
+      console.log(chalk.green(`\nSwitched to ${selected.name} (${selected.model})\n`));
       if (!resolveProviderCredential(selected).value) {
         console.log(chalk.yellow('This Provider has no usable API key.'));
         console.log(chalk.gray('Run: syzzz config set apiKey\n'));
@@ -617,8 +576,8 @@ program
         for (const session of sessions) {
           console.log(
             `${session.sessionId}  ${session.updatedAt}  ` +
-            `${session.mode.padEnd(4)}  ${session.title}` +
-            `${session.available ? '' : ' [unavailable]'}`
+              `${session.mode.padEnd(4)}  ${session.title}` +
+              `${session.available ? '' : ' [unavailable]'}`
           );
         }
         return;
@@ -627,10 +586,7 @@ program
         if (!id) {
           throw new Error('sessions delete requires an ID or unique prefix');
         }
-        if (
-          !options.yes &&
-          !await confirmAction(`Delete session ${id}?`)
-        ) {
+        if (!options.yes && !(await confirmAction(`Delete session ${id}?`))) {
           console.log('Session was not deleted.');
           return;
         }
@@ -645,7 +601,7 @@ program
         }
         if (
           !options.yes &&
-          !await confirmAction(`Delete unlocked sessions older than ${days} days?`)
+          !(await confirmAction(`Delete unlocked sessions older than ${days} days?`))
         ) {
           console.log('Sessions were not pruned.');
           return;
@@ -669,9 +625,7 @@ program
   .option('--json', 'Emit machine-readable JSON')
   .action(async (action, options) => {
     if (String(action).toLowerCase() !== 'status') {
-      console.error(chalk.red(
-        '\nExtensions command failed: action must be status\n'
-      ));
+      console.error(chalk.red('\nExtensions command failed: action must be status\n'));
       process.exitCode = 1;
       return;
     }
@@ -679,8 +633,7 @@ program
       workspaceRoot: process.cwd(),
       subagentsEnabled: loadConfig().subagents.enabled,
       subagentsAvailable: false,
-      forbiddenEnvironmentNames:
-        configuredProviderCredentialEnvironmentNames()
+      forbiddenEnvironmentNames: configuredProviderCredentialEnvironmentNames()
     });
     try {
       const status = runtime.getStatus();
@@ -692,27 +645,22 @@ program
         `Trust: ${status.trustState}`,
         `MCP: ${status.mcp.configured} configured, ` +
           `${status.mcp.disconnected} disconnected, ${status.mcp.error} error`,
-        `Hooks: ${status.hooks.enabled} enabled / ` +
-          `${status.hooks.configured} configured`,
+        `Hooks: ${status.hooks.enabled} enabled / ` + `${status.hooks.configured} configured`,
         `Subagents: ${status.subagents.enabled ? 'enabled' : 'disabled'}`
       ];
       for (const server of status.mcp.servers) {
         lines.push(
-          `  MCP ${server.name}: ${server.state}, ` +
-          `${server.protocolMode} [${server.source}]`
+          `  MCP ${server.name}: ${server.state}, ` + `${server.protocolMode} [${server.source}]`
         );
       }
       for (const hook of status.hooks.entries) {
         lines.push(
           `  Hook ${hook.name}: ${hook.event}, ` +
-          `${hook.enabled ? 'enabled' : 'disabled'} [${hook.source}]`
+            `${hook.enabled ? 'enabled' : 'disabled'} [${hook.source}]`
         );
       }
       if (status.warnings.length > 0) {
-        lines.push(
-          'Warnings:',
-          ...status.warnings.map(warning => `  ${warning}`)
-        );
+        lines.push('Warnings:', ...status.warnings.map((warning) => `  ${warning}`));
       }
       console.log(lines.join('\n'));
     } catch (error) {
@@ -727,10 +675,7 @@ program
 program
   .command('mcp')
   .description('Manage and diagnose MCP servers')
-  .argument(
-    '<action>',
-    'Action: list, add, remove, enable, disable, policy, doctor'
-  )
+  .argument('<action>', 'Action: list, add, remove, enable, disable, policy, doctor')
   .argument('[name]', 'MCP server name')
   .argument('[command...]', 'stdio command and arguments after the server name')
   .option('--scope <scope>', 'Configuration scope: user or project', 'user')
@@ -768,8 +713,7 @@ program
         json: options.json,
         workspaceRoot: process.cwd(),
         signal: abortController.signal,
-        forbiddenEnvironmentNames:
-          configuredProviderCredentialEnvironmentNames()
+        forbiddenEnvironmentNames: configuredProviderCredentialEnvironmentNames()
       });
       console.log(options.json ? JSON.stringify(result.json) : result.text);
     } catch (error) {
@@ -827,7 +771,7 @@ program
   .description('Run offline configuration and runtime diagnostics')
   .option('--repair-config', 'Back up and reset a damaged configuration')
   .option('-y, --yes', 'Skip repair confirmation')
-  .action(async options => {
+  .action(async (options) => {
     try {
       if (options.repairConfig) {
         const inspection = inspectConfig();
@@ -836,26 +780,21 @@ program
         } else if (inspection.status === 'unsupported') {
           throw new Error(
             `Configuration schemaVersion ${inspection.version} cannot be ` +
-            'repaired by this build; upgrade Syzzz Code instead'
+              'repaired by this build; upgrade Syzzz Code instead'
           );
         } else if (
           options.yes ||
-          await confirmAction(
+          (await confirmAction(
             inspection.status === 'valid' && inspection.legacy
               ? 'Back up and migrate the legacy configuration?'
               : 'Back up and reset the configuration?'
-          )
+          ))
         ) {
           const repaired = repairConfig();
           if (repaired.action === 'migrated') {
-            console.log(
-              `Configuration migrated to schema v1. Backup: ` +
-              `${repaired.backupPath}`
-            );
+            console.log(`Configuration migrated to schema v1. Backup: ` + `${repaired.backupPath}`);
           } else if (repaired.action === 'repaired') {
-            console.log(
-              `Configuration reset. Backup: ${repaired.backupPath}`
-            );
+            console.log(`Configuration reset. Backup: ${repaired.backupPath}`);
           } else if (repaired.action === 'initialized') {
             console.log('Configuration initialized.');
           }
@@ -866,11 +805,8 @@ program
       const result = await runDoctor();
       console.log(chalk.cyan('\nSyzzz doctor\n'));
       for (const item of result.checks) {
-        const marker = item.status === 'ok'
-          ? '[OK]'
-          : item.status === 'warning'
-            ? '[WARN]'
-            : '[ERROR]';
+        const marker =
+          item.status === 'ok' ? '[OK]' : item.status === 'warning' ? '[WARN]' : '[ERROR]';
         console.log(`${marker.padEnd(7)} ${item.name}: ${item.message}`);
       }
       console.log('');
@@ -891,23 +827,20 @@ program
   .option('--mode <mode>', 'Work mode: ask, plan, or code', 'code')
   .option('-c, --continue', 'Resume the latest interactive session')
   .option('-r, --resume <id>', 'Resume an interactive session by ID or prefix')
-  .action(async options => {
+  .action(async (options) => {
     try {
       const outputFormat = parseOutputFormat(options.outputFormat);
       if (outputFormat === 'stream-json' && options.stream !== undefined) {
-        throw new Error(
-          '--stream cannot be used with --output-format stream-json'
-        );
+        throw new Error('--stream cannot be used with --output-format stream-json');
       }
       const config = loadConfig();
-      const streamOutput = options.stream === undefined
-        ? config.ui.streamOutput
-        : parseStreamDisplayMode(options.stream) === 'on';
+      const streamOutput =
+        options.stream === undefined
+          ? config.ui.streamOutput
+          : parseStreamDisplayMode(options.stream) === 'on';
       if (options.message) {
         if (options.continue || options.resume) {
-          throw new Error(
-            '--continue and --resume are available only for interactive sessions'
-          );
+          throw new Error('--continue and --resume are available only for interactive sessions');
         }
         const created = createConfiguredEngine({
           sessionId: randomUUID(),

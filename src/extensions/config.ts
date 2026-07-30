@@ -104,11 +104,7 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
-function requireString(
-  value: unknown,
-  field: string,
-  maximum: number
-): string {
+function requireString(value: unknown, field: string, maximum: number): string {
   if (typeof value !== 'string' || !value.trim()) {
     throw new Error(`${field} must be a non-empty string`);
   }
@@ -118,11 +114,7 @@ function requireString(
   return value;
 }
 
-function optionalBoolean(
-  value: unknown,
-  fallback: boolean,
-  field: string
-): boolean {
+function optionalBoolean(value: unknown, fallback: boolean, field: string): boolean {
   if (value === undefined) {
     return fallback;
   }
@@ -132,12 +124,7 @@ function optionalBoolean(
   return value;
 }
 
-function timeoutValue(
-  value: unknown,
-  fallback: number,
-  maximum: number,
-  field: string
-): number {
+function timeoutValue(value: unknown, fallback: number, maximum: number, field: string): number {
   if (value === undefined) {
     return fallback;
   }
@@ -204,8 +191,7 @@ function validateHeaderRecord(
     }
     if (!/\$\{[A-Za-z_][A-Za-z0-9_]*\}/.test(value)) {
       throw new Error(
-        `${field}.${name} must reference an environment variable as ` +
-        '${ENV_NAME}'
+        `${field}.${name} must reference an environment variable as ` + '${ENV_NAME}'
       );
     }
   }
@@ -253,7 +239,7 @@ export function validateMcpServerName(name: string): string {
   ) {
     throw new Error(
       `MCP server names must match ${MCP_SERVER_NAME_PATTERN}, must not contain ` +
-      `"__", and must contain at most ${MAX_SERVER_NAME_CHARACTERS} characters`
+        `"__", and must contain at most ${MAX_SERVER_NAME_CHARACTERS} characters`
     );
   }
   return name;
@@ -267,9 +253,7 @@ export function validateQualifiedMcpToolName(name: string): string {
     name.length > 512 ||
     /[\u0000-\u001f\u007f]/.test(name)
   ) {
-    throw new Error(
-      'MCP tool policies must use a bounded <server>__<tool> name'
-    );
+    throw new Error('MCP tool policies must use a bounded <server>__<tool> name');
   }
   validateMcpServerName(name.slice(0, separator));
   return name;
@@ -288,16 +272,12 @@ function validateMcpToolPolicies(
   }
   const entries = Object.entries(value);
   if (entries.length > MAX_MCP_TOOL_POLICIES) {
-    throw new Error(
-      `${field} exceeds ${MAX_MCP_TOOL_POLICIES} entries`
-    );
+    throw new Error(`${field} exceeds ${MAX_MCP_TOOL_POLICIES} entries`);
   }
   return entries.map(([qualifiedName, policy]) => {
     validateQualifiedMcpToolName(qualifiedName);
     if (policy !== 'execute' && policy !== 'disabled') {
-      throw new Error(
-        `${field}.${qualifiedName} must be "execute" or "disabled"`
-      );
+      throw new Error(`${field}.${qualifiedName} must be "execute" or "disabled"`);
     }
     return {
       qualifiedName,
@@ -308,11 +288,7 @@ function validateMcpToolPolicies(
 }
 
 export function validateHookName(name: string): string {
-  if (
-    !name ||
-    name.length > 128 ||
-    !HOOK_NAME_PATTERN.test(name)
-  ) {
+  if (!name || name.length > 128 || !HOOK_NAME_PATTERN.test(name)) {
     throw new Error(
       `Hook names must match ${HOOK_NAME_PATTERN} and contain at most 128 characters`
     );
@@ -320,14 +296,12 @@ export function validateHookName(name: string): string {
   return name;
 }
 
-export function validateMcpServerConfig(
-  value: unknown,
-  field = 'mcpServer'
-): McpServerConfig {
+export function validateMcpServerConfig(value: unknown, field = 'mcpServer'): McpServerConfig {
   if (!isRecord(value)) {
     throw new Error(`${field} must be an object`);
   }
-  const inferredType = value.type ??
+  const inferredType =
+    value.type ??
     (value.command !== undefined ? 'stdio' : value.url !== undefined ? 'http' : undefined);
   if (inferredType !== 'stdio' && inferredType !== 'http') {
     throw new Error(`${field}.type must be "stdio" or "http"`);
@@ -351,16 +325,9 @@ export function validateMcpServerConfig(
   if (inferredType === 'stdio') {
     return {
       type: 'stdio',
-      command: requireString(
-        value.command,
-        `${field}.command`,
-        MAX_COMMAND_CHARACTERS
-      ),
+      command: requireString(value.command, `${field}.command`, MAX_COMMAND_CHARACTERS),
       args: stringArray(value.args, `${field}.args`),
-      env: validateEnvironmentRecord(
-        stringRecord(value.env, `${field}.env`),
-        `${field}.env`
-      ),
+      env: validateEnvironmentRecord(stringRecord(value.env, `${field}.env`), `${field}.env`),
       ...common
     };
   }
@@ -390,9 +357,10 @@ export function validateHookConfig(value: unknown, field: string): HookConfig {
   if (onError === 'deny' && event !== 'PreToolUse') {
     throw new Error(`${field}.onError "deny" is valid only for PreToolUse`);
   }
-  const matcher = value.matcher === undefined
-    ? undefined
-    : requireString(value.matcher, `${field}.matcher`, 1_024);
+  const matcher =
+    value.matcher === undefined
+      ? undefined
+      : requireString(value.matcher, `${field}.matcher`, 1_024);
   if (
     matcher &&
     event !== 'PreToolUse' &&
@@ -402,9 +370,7 @@ export function validateHookConfig(value: unknown, field: string): HookConfig {
     event !== 'SubagentStart' &&
     event !== 'SubagentStop'
   ) {
-    throw new Error(
-      `${field}.matcher is valid only for tool, compaction, or subagent Hooks`
-    );
+    throw new Error(`${field}.matcher is valid only for tool, compaction, or subagent Hooks`);
   }
   if (matcher) {
     try {
@@ -414,15 +380,9 @@ export function validateHookConfig(value: unknown, field: string): HookConfig {
     }
   }
   return {
-    name: validateHookName(
-      requireString(value.name, `${field}.name`, 128)
-    ),
+    name: validateHookName(requireString(value.name, `${field}.name`, 128)),
     event,
-    command: requireString(
-      value.command,
-      `${field}.command`,
-      MAX_COMMAND_CHARACTERS
-    ),
+    command: requireString(value.command, `${field}.command`, MAX_COMMAND_CHARACTERS),
     args: stringArray(value.args, `${field}.args`),
     ...(matcher ? { matcher } : {}),
     timeoutMs: timeoutValue(
@@ -432,17 +392,12 @@ export function validateHookConfig(value: unknown, field: string): HookConfig {
       `${field}.timeoutMs`
     ),
     onError: onError as HookErrorPolicy,
-    env: validateEnvironmentRecord(
-      stringRecord(value.env, `${field}.env`),
-      `${field}.env`
-    ),
+    env: validateEnvironmentRecord(stringRecord(value.env, `${field}.env`), `${field}.env`),
     enabled: optionalBoolean(value.enabled, true, `${field}.enabled`)
   };
 }
 
-export function getExtensionConfigPaths(
-  workspaceRoot: string
-): ExtensionConfigPaths {
+export function getExtensionConfigPaths(workspaceRoot: string): ExtensionConfigPaths {
   const userRoot = join(homedir(), '.syzzz-code');
   const projectRoot = resolve(workspaceRoot);
   return {
@@ -462,7 +417,7 @@ function readJsonFile(path: string): unknown | undefined {
   let inString = false;
   let escaped = false;
   for (let index = 0; index < source.length; index++) {
-    const character = source[index]!;
+    const character = source.charAt(index);
     const next = source[index + 1];
     if (inString) {
       sanitized += character;
@@ -484,7 +439,7 @@ function readJsonFile(path: string): unknown | undefined {
       sanitized += '  ';
       index += 1;
       while (index + 1 < source.length) {
-        const commentCharacter = source[index + 1]!;
+        const commentCharacter = source.charAt(index + 1);
         if (commentCharacter === '\r' || commentCharacter === '\n') {
           break;
         }
@@ -498,7 +453,7 @@ function readJsonFile(path: string): unknown | undefined {
       index += 1;
       let closed = false;
       while (index + 1 < source.length) {
-        const commentCharacter = source[index + 1]!;
+        const commentCharacter = source.charAt(index + 1);
         const commentNext = source[index + 2];
         if (commentCharacter === '*' && commentNext === '/') {
           sanitized += '  ';
@@ -507,9 +462,7 @@ function readJsonFile(path: string): unknown | undefined {
           break;
         }
         sanitized +=
-          commentCharacter === '\r' || commentCharacter === '\n'
-            ? commentCharacter
-            : ' ';
+          commentCharacter === '\r' || commentCharacter === '\n' ? commentCharacter : ' ';
         index += 1;
       }
       if (!closed) {
@@ -534,7 +487,7 @@ function readMcpScope(
   } catch (error) {
     warnings.push(
       `${source} MCP configuration disabled: ` +
-      `${error instanceof Error ? error.message : String(error)}`
+        `${error instanceof Error ? error.message : String(error)}`
     );
     return { servers: [], toolPolicies: [], present: true, valid: false };
   }
@@ -560,7 +513,7 @@ function readMcpScope(
       valid = false;
       warnings.push(
         `${source} MCP server "${name}" disabled: ` +
-        `${error instanceof Error ? error.message : String(error)}`
+          `${error instanceof Error ? error.message : String(error)}`
       );
     }
   }
@@ -578,7 +531,7 @@ function readMcpScope(
     valid = false;
     warnings.push(
       `${source} MCP tool policies disabled: ` +
-      `${error instanceof Error ? error.message : String(error)}`
+        `${error instanceof Error ? error.message : String(error)}`
     );
   }
   return { servers, toolPolicies, present: true, valid };
@@ -596,18 +549,14 @@ function readHookScope(
   } catch (error) {
     warnings.push(
       `${source} Hooks configuration disabled: ` +
-      `${error instanceof Error ? error.message : String(error)}`
+        `${error instanceof Error ? error.message : String(error)}`
     );
     return { hooks: [], present: true, valid: false };
   }
   if (raw === undefined) {
     return { hooks: [], present: false, valid: true };
   }
-  if (
-    !isRecord(raw) ||
-    raw.schemaVersion !== 1 ||
-    !Array.isArray(raw.hooks)
-  ) {
+  if (!isRecord(raw) || raw.schemaVersion !== 1 || !Array.isArray(raw.hooks)) {
     warnings.push(
       `${source} Hooks configuration disabled: schemaVersion 1 and hooks[] are required`
     );
@@ -621,9 +570,7 @@ function readHookScope(
       const config = validateHookConfig(value, `hooks[${index}]`);
       if (names.has(config.name)) {
         valid = false;
-        warnings.push(
-          `${source} Hook at index ${index} disabled: duplicate name "${config.name}"`
-        );
+        warnings.push(`${source} Hook at index ${index} disabled: duplicate name "${config.name}"`);
         continue;
       }
       names.add(config.name);
@@ -636,23 +583,16 @@ function readHookScope(
       valid = false;
       warnings.push(
         `${source} Hook at index ${index} disabled: ` +
-        `${error instanceof Error ? error.message : String(error)}`
+          `${error instanceof Error ? error.message : String(error)}`
       );
     }
   }
   return { hooks, present: true, valid };
 }
 
-function mergeByName<T>(
-  userEntries: T[],
-  projectEntries: T[],
-  nameOf: (entry: T) => string
-): T[] {
+function mergeByName<T>(userEntries: T[], projectEntries: T[], nameOf: (entry: T) => string): T[] {
   const projectNames = new Set(projectEntries.map(nameOf));
-  return [
-    ...userEntries.filter(entry => !projectNames.has(nameOf(entry))),
-    ...projectEntries
-  ];
+  return [...userEntries.filter((entry) => !projectNames.has(nameOf(entry))), ...projectEntries];
 }
 
 function mergeToolPolicies(
@@ -675,9 +615,7 @@ function mergeToolPolicies(
     }
     merged.set(entry.qualifiedName, {
       qualifiedName: entry.qualifiedName,
-      policy: rank[entry.policy] > rank[previous.policy]
-        ? entry.policy
-        : previous.policy,
+      policy: rank[entry.policy] > rank[previous.policy] ? entry.policy : previous.policy,
       sources: [...new Set([...previous.sources, ...entry.sources])]
     });
   }
@@ -694,7 +632,7 @@ function canonicalize(value: unknown): unknown {
     return Object.fromEntries(
       Object.keys(value)
         .sort()
-        .map(key => [key, canonicalize(value[key])])
+        .map((key) => [key, canonicalize(value[key])])
     );
   }
   return value;
@@ -708,57 +646,38 @@ function digestProjectExtensions(
   const normalized = canonicalize({
     mcpServers: [...mcpServers]
       .sort((left, right) => left.name.localeCompare(right.name))
-      .map(entry => ({ name: entry.name, config: entry.config })),
+      .map((entry) => ({ name: entry.name, config: entry.config })),
     toolPolicies: [...toolPolicies]
-      .sort((left, right) =>
-        left.qualifiedName.localeCompare(right.qualifiedName)
-      )
-      .map(entry => ({
+      .sort((left, right) => left.qualifiedName.localeCompare(right.qualifiedName))
+      .map((entry) => ({
         qualifiedName: entry.qualifiedName,
         policy: entry.policy
       })),
-    hooks: hooks.map(entry => entry.config)
+    hooks: hooks.map((entry) => entry.config)
   });
-  return createHash('sha256')
-    .update(JSON.stringify(normalized), 'utf8')
-    .digest('hex');
+  return createHash('sha256').update(JSON.stringify(normalized), 'utf8').digest('hex');
 }
 
-export function loadExtensionConfiguration(
-  workspaceRoot: string
-): ExtensionConfiguration {
+export function loadExtensionConfiguration(workspaceRoot: string): ExtensionConfiguration {
   const paths = getExtensionConfigPaths(workspaceRoot);
   const project = inspectProjectExtensions(workspaceRoot);
   const trust = inspectWorkspaceTrust(workspaceRoot, project.digest);
   const warnings = [...trust.warnings, ...project.warnings];
   if (project.configurationPresent && !project.valid) {
-    warnings.push(
-      'Project extensions are disabled until their configuration is valid'
-    );
+    warnings.push('Project extensions are disabled until their configuration is valid');
   } else if (trust.trustState === 'review-required') {
-    warnings.push(
-      'Project extension configuration changed and requires /trust review'
-    );
+    warnings.push('Project extension configuration changed and requires /trust review');
   }
   const userMcp = readMcpScope(paths.userMcp, 'user', true, warnings);
-  const userHookScope = readHookScope(
-    paths.userHooks,
-    'user',
-    true,
-    warnings
-  );
+  const userHookScope = readHookScope(paths.userHooks, 'user', true, warnings);
   const projectServers = trust.trusted ? project.mcpServers : [];
   const projectPolicies = trust.trusted ? project.mcpToolPolicies : [];
   const projectHooks = trust.trusted ? project.hooks : [];
-  const mcpServers = mergeByName(
-    userMcp.servers,
-    projectServers,
-    entry => entry.name
-  );
+  const mcpServers = mergeByName(userMcp.servers, projectServers, (entry) => entry.name);
   if (mcpServers.length > MAX_MCP_SERVERS) {
     warnings.push(
       `MCP configuration exceeds ${MAX_MCP_SERVERS} merged servers; ` +
-      'servers after the limit are disabled'
+        'servers after the limit are disabled'
     );
   }
   return {
@@ -767,36 +686,17 @@ export function loadExtensionConfiguration(
     workspaceTrusted: trust.trusted,
     ...(project.digest ? { projectDigest: project.digest } : {}),
     mcpServers: mcpServers.slice(0, MAX_MCP_SERVERS),
-    mcpToolPolicies: mergeToolPolicies(
-      userMcp.toolPolicies,
-      projectPolicies
-    ),
-    hooks: mergeByName(
-      userHookScope.hooks,
-      projectHooks,
-      entry => entry.config.name
-    ),
+    mcpToolPolicies: mergeToolPolicies(userMcp.toolPolicies, projectPolicies),
+    hooks: mergeByName(userHookScope.hooks, projectHooks, (entry) => entry.config.name),
     warnings
   };
 }
 
-export function inspectProjectExtensions(
-  workspaceRoot: string
-): ProjectExtensionInspection {
+export function inspectProjectExtensions(workspaceRoot: string): ProjectExtensionInspection {
   const paths = getExtensionConfigPaths(workspaceRoot);
   const warnings: string[] = [];
-  const mcp = readMcpScope(
-    paths.projectMcp,
-    'project',
-    false,
-    warnings
-  );
-  const hookScope = readHookScope(
-    paths.projectHooks,
-    'project',
-    false,
-    warnings
-  );
+  const mcp = readMcpScope(paths.projectMcp, 'project', false, warnings);
+  const hookScope = readHookScope(paths.projectHooks, 'project', false, warnings);
   const valid = mcp.valid && hookScope.valid;
   return {
     mcpServers: mcp.servers,
@@ -806,11 +706,7 @@ export function inspectProjectExtensions(
     valid,
     ...(valid
       ? {
-          digest: digestProjectExtensions(
-            mcp.servers,
-            mcp.toolPolicies,
-            hookScope.hooks
-          )
+          digest: digestProjectExtensions(mcp.servers, mcp.toolPolicies, hookScope.hooks)
         }
       : {}),
     warnings
@@ -845,10 +741,7 @@ function writeJsonAtomically(path: string, value: unknown): void {
   }
 }
 
-export function loadRawMcpConfig(
-  scope: ExtensionSource,
-  workspaceRoot: string
-): McpConfigFile {
+export function loadRawMcpConfig(scope: ExtensionSource, workspaceRoot: string): McpConfigFile {
   const paths = getExtensionConfigPaths(workspaceRoot);
   const path = scope === 'user' ? paths.userMcp : paths.projectMcp;
   const raw = readJsonFile(path);
@@ -872,7 +765,7 @@ export function loadRawMcpConfig(
       ? {
           syzzz: {
             toolPolicies: Object.fromEntries(
-              policies.map(entry => [entry.qualifiedName, entry.policy])
+              policies.map((entry) => [entry.qualifiedName, entry.policy])
             )
           }
         }
@@ -886,27 +779,17 @@ export function saveRawMcpConfig(
   config: McpConfigFile
 ): void {
   const paths = getExtensionConfigPaths(workspaceRoot);
-  writeJsonAtomically(
-    scope === 'user' ? paths.userMcp : paths.projectMcp,
-    config
-  );
+  writeJsonAtomically(scope === 'user' ? paths.userMcp : paths.projectMcp, config);
 }
 
-export function loadRawHookConfig(
-  scope: ExtensionSource,
-  workspaceRoot: string
-): HookConfigFile {
+export function loadRawHookConfig(scope: ExtensionSource, workspaceRoot: string): HookConfigFile {
   const paths = getExtensionConfigPaths(workspaceRoot);
   const path = scope === 'user' ? paths.userHooks : paths.projectHooks;
   const raw = readJsonFile(path);
   if (raw === undefined) {
     return { schemaVersion: 1, hooks: [] };
   }
-  if (
-    !isRecord(raw) ||
-    raw.schemaVersion !== 1 ||
-    !Array.isArray(raw.hooks)
-  ) {
+  if (!isRecord(raw) || raw.schemaVersion !== 1 || !Array.isArray(raw.hooks)) {
     throw new Error(`Invalid Hooks configuration at ${path}`);
   }
   return { schemaVersion: 1, hooks: [...raw.hooks] };
@@ -918,10 +801,7 @@ export function saveRawHookConfig(
   config: HookConfigFile
 ): void {
   const paths = getExtensionConfigPaths(workspaceRoot);
-  writeJsonAtomically(
-    scope === 'user' ? paths.userHooks : paths.projectHooks,
-    config
-  );
+  writeJsonAtomically(scope === 'user' ? paths.userHooks : paths.projectHooks, config);
 }
 
 export function expandEnvironmentTemplates(
@@ -931,30 +811,22 @@ export function expandEnvironmentTemplates(
 ): Record<string, string> {
   const normalizeName = (name: string): string =>
     process.platform === 'win32' ? name.toUpperCase() : name;
-  const forbidden = new Set(
-    [...forbiddenEnvironmentNames].map(normalizeName)
-  );
+  const forbidden = new Set([...forbiddenEnvironmentNames].map(normalizeName));
   const expanded: Record<string, string> = {};
   for (const [key, template] of Object.entries(values)) {
     if (forbidden.has(normalizeName(key))) {
-      throw new Error(
-        `Environment variable ${key} is reserved for Provider credentials`
-      );
+      throw new Error(`Environment variable ${key} is reserved for Provider credentials`);
     }
-    expanded[key] = template.replace(
-      /\$\{([A-Za-z_][A-Za-z0-9_]*)\}/g,
-      (_match, name: string) => {
-        if (forbidden.has(normalizeName(name))) {
-          throw new Error(
-            `Environment variable ${name} is reserved for Provider credentials`
-          );
-        }
-        if (!ENVIRONMENT_NAME_PATTERN.test(name) || environment[name] === undefined) {
-          throw new Error(`Required environment variable ${name} is not set`);
-        }
-        return environment[name]!;
+    expanded[key] = template.replace(/\$\{([A-Za-z_][A-Za-z0-9_]*)\}/g, (_match, name: string) => {
+      if (forbidden.has(normalizeName(name))) {
+        throw new Error(`Environment variable ${name} is reserved for Provider credentials`);
       }
-    );
+      const value = environment[name];
+      if (!ENVIRONMENT_NAME_PATTERN.test(name) || value === undefined) {
+        throw new Error(`Required environment variable ${name} is not set`);
+      }
+      return value;
+    });
   }
   return expanded;
 }

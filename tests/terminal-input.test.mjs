@@ -3,14 +3,14 @@ import assert from 'node:assert/strict';
 import { PassThrough } from 'node:stream';
 import { TerminalInputController } from '../dist/terminal-input.js';
 
-const delay = milliseconds => new Promise(resolve => setTimeout(resolve, milliseconds));
+const delay = (milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds));
 
 function createFakeTty() {
   const input = new PassThrough();
   const output = new PassThrough();
   input.isTTY = true;
   input.isRaw = false;
-  input.setRawMode = mode => {
+  input.setRawMode = (mode) => {
     input.isRaw = mode;
   };
   output.isTTY = true;
@@ -18,7 +18,7 @@ function createFakeTty() {
   output.rows = 24;
 
   let transcript = '';
-  output.on('data', chunk => {
+  output.on('data', (chunk) => {
     transcript += chunk.toString('utf8');
   });
   return { input, output, transcript: () => transcript };
@@ -41,15 +41,10 @@ test('enhanced input renders, navigates and accepts slash suggestions', async ()
   const provider = {
     trigger: '/',
     match(value, cursor) {
-      return value.startsWith('/') && cursor === value.length
-        ? { query: value.slice(1) }
-        : null;
+      return value.startsWith('/') && cursor === value.length ? { query: value.slice(1) } : null;
     },
     suggest() {
-      return [
-        suggestion('help', '/help', '/help'),
-        suggestion('model', '/model', '/model')
-      ];
+      return [suggestion('help', '/help', '/help'), suggestion('model', '/model', '/model')];
     }
   };
 
@@ -152,9 +147,7 @@ test('enhanced input discards stale asynchronous suggestions', async () => {
   const provider = {
     trigger: '/',
     match(value, cursor) {
-      return value.startsWith('/') && cursor === value.length
-        ? { query: value.slice(1) }
-        : null;
+      return value.startsWith('/') && cursor === value.length ? { query: value.slice(1) } : null;
     },
     async suggest(request, signal) {
       await delay(request.query ? 5 : 30);
@@ -214,10 +207,10 @@ test('non-TTY input falls back to complete line processing', async () => {
   const terminal = new TerminalInputController(input, output);
   input.write('first line\n');
 
-  assert.deepEqual(
-    await terminal.readLine({ prompt: 'You: ', history: true }),
-    { type: 'line', value: 'first line' }
-  );
+  assert.deepEqual(await terminal.readLine({ prompt: 'You: ', history: true }), {
+    type: 'line',
+    value: 'first line'
+  });
   input.end();
   assert.deepEqual(await terminal.readLine({ prompt: 'You: ' }), { type: 'eof' });
   terminal.close();

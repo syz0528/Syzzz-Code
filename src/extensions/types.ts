@@ -4,10 +4,7 @@ import type { PermissionMode } from '../permissions/mode.js';
 export type ExtensionSource = 'user' | 'project';
 export type McpProtocolMode = 'legacy' | 'modern';
 export type McpToolPolicy = 'execute' | 'disabled';
-export type ExtensionTrustState =
-  | 'untrusted'
-  | 'trusted'
-  | 'review-required';
+export type ExtensionTrustState = 'untrusted' | 'trusted' | 'review-required';
 
 interface McpServerConfigBase {
   enabled: boolean;
@@ -29,9 +26,7 @@ export interface HttpMcpServerConfig extends McpServerConfigBase {
   headers: Record<string, string>;
 }
 
-export type McpServerConfig =
-  | StdioMcpServerConfig
-  | HttpMcpServerConfig;
+export type McpServerConfig = StdioMcpServerConfig | HttpMcpServerConfig;
 
 export interface ResolvedMcpServerConfig {
   name: string;
@@ -89,12 +84,7 @@ export interface ExtensionConfiguration {
   warnings: string[];
 }
 
-export type McpServerState =
-  | 'disabled'
-  | 'disconnected'
-  | 'connecting'
-  | 'ready'
-  | 'error';
+export type McpServerState = 'disabled' | 'disconnected' | 'connecting' | 'ready' | 'error';
 
 export interface McpServerStatus {
   name: string;

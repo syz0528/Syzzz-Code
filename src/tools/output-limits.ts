@@ -62,10 +62,7 @@ export function limitUtf8Head(
 
   const fittedMarker = takeUtf8Prefix(marker, normalizedMaximumBytes);
   const markerBytes = Buffer.byteLength(fittedMarker, 'utf8');
-  const prefix = takeUtf8Prefix(
-    value,
-    Math.max(0, normalizedMaximumBytes - markerBytes)
-  );
+  const prefix = takeUtf8Prefix(value, Math.max(0, normalizedMaximumBytes - markerBytes));
   const text = `${prefix}${fittedMarker}`;
   return {
     text,

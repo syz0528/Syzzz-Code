@@ -1,8 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {
-  OpenAICompatibleProvider
-} from '../dist/providers/openai-compatible.js';
+import { OpenAICompatibleProvider } from '../dist/providers/openai-compatible.js';
 
 function streamFrom(chunks) {
   return {
@@ -27,15 +25,17 @@ async function collect(generator) {
 
 const basicRequest = {
   messages: [{ role: 'user', content: 'read a file' }],
-  tools: [{
-    name: 'Read',
-    description: 'Read a file',
-    inputSchema: {
-      type: 'object',
-      properties: { path: { type: 'string' } },
-      required: ['path']
+  tools: [
+    {
+      name: 'Read',
+      description: 'Read a file',
+      inputSchema: {
+        type: 'object',
+        properties: { path: { type: 'string' } },
+        required: ['path']
+      }
     }
-  }],
+  ],
   systemPrompt: 'system'
 };
 
@@ -75,48 +75,58 @@ test('streaming aggregates reasoning, usage and tool fragments', async () => {
     {
       id: 'chat-1',
       model: 'reported-model',
-      choices: [{
-        index: 0,
-        finish_reason: null,
-        delta: { reasoning_content: 'private ' }
-      }]
+      choices: [
+        {
+          index: 0,
+          finish_reason: null,
+          delta: { reasoning_content: 'private ' }
+        }
+      ]
     },
     {
       id: 'chat-1',
       model: 'reported-model',
-      choices: [{
-        index: 0,
-        finish_reason: null,
-        delta: {
-          reasoning_content: 'thought',
-          tool_calls: [{
-            index: 0,
-            id: 'call-1',
-            type: 'function',
-            function: {
-              name: 'Re',
-              arguments: '{"pa'
-            }
-          }]
+      choices: [
+        {
+          index: 0,
+          finish_reason: null,
+          delta: {
+            reasoning_content: 'thought',
+            tool_calls: [
+              {
+                index: 0,
+                id: 'call-1',
+                type: 'function',
+                function: {
+                  name: 'Re',
+                  arguments: '{"pa'
+                }
+              }
+            ]
+          }
         }
-      }]
+      ]
     },
     {
       id: 'chat-1',
       model: 'reported-model',
-      choices: [{
-        index: 0,
-        finish_reason: 'tool_calls',
-        delta: {
-          tool_calls: [{
-            index: 0,
-            function: {
-              name: 'ad',
-              arguments: 'th":"package.json"}'
-            }
-          }]
+      choices: [
+        {
+          index: 0,
+          finish_reason: 'tool_calls',
+          delta: {
+            tool_calls: [
+              {
+                index: 0,
+                function: {
+                  name: 'ad',
+                  arguments: 'th":"package.json"}'
+                }
+              }
+            ]
+          }
         }
-      }]
+      ]
     },
     {
       id: 'chat-1',
@@ -147,31 +157,29 @@ test('streaming aggregates reasoning, usage and tool fragments', async () => {
     }
   };
 
-  const { deltas, response } = await collect(provider.chatStream(
-    basicRequest,
-    {
+  const { deltas, response } = await collect(
+    provider.chatStream(basicRequest, {
       signal: new AbortController().signal,
       attempt: 1,
       attemptId: 'attempt-1',
       includeUsage: true,
       disableReasoning: false
-    }
-  ));
+    })
+  );
 
   assert.equal(requests[0].stream, true);
   assert.deepEqual(requests[0].stream_options, {
     include_usage: true
   });
   assert.equal(requests[0].thinking, undefined);
-  assert.deepEqual(response.message.toolCalls, [{
-    id: 'call-1',
-    name: 'Read',
-    input: { path: 'package.json' }
-  }]);
-  assert.equal(
-    response.message.reasoningContent,
-    'private thought'
-  );
+  assert.deepEqual(response.message.toolCalls, [
+    {
+      id: 'call-1',
+      name: 'Read',
+      input: { path: 'package.json' }
+    }
+  ]);
+  assert.equal(response.message.reasoningContent, 'private thought');
   assert.deepEqual(response.usage, {
     inputTokens: 10,
     outputTokens: 5,
@@ -180,13 +188,10 @@ test('streaming aggregates reasoning, usage and tool fragments', async () => {
   assert.equal(response.finishReason, 'tool_calls');
   assert.equal(response.requestId, 'req-stream');
   assert.equal(response.reportedModel, 'reported-model');
-  assert.deepEqual(deltas.map(delta => delta.type), [
-    'reasoning_delta',
-    'reasoning_delta',
-    'tool_call_delta',
-    'tool_call_delta',
-    'usage'
-  ]);
+  assert.deepEqual(
+    deltas.map((delta) => delta.type),
+    ['reasoning_delta', 'reasoning_delta', 'tool_call_delta', 'tool_call_delta', 'usage']
+  );
 });
 
 test('detects a DeepSeek V4 thinking toggle behind a neutral gateway', () => {
@@ -214,30 +219,33 @@ test('streaming can disable reasoning and omit stream_options', async () => {
       completions: {
         create(request) {
           capturedRequest = request;
-          return streamFrom([{
-            id: 'chat-2',
-            model: 'model',
-            choices: [{
-              index: 0,
-              finish_reason: 'stop',
-              delta: { content: 'hello' }
-            }]
-          }]);
+          return streamFrom([
+            {
+              id: 'chat-2',
+              model: 'model',
+              choices: [
+                {
+                  index: 0,
+                  finish_reason: 'stop',
+                  delta: { content: 'hello' }
+                }
+              ]
+            }
+          ]);
         }
       }
     }
   };
 
-  const { response } = await collect(provider.chatStream(
-    basicRequest,
-    {
+  const { response } = await collect(
+    provider.chatStream(basicRequest, {
       signal: new AbortController().signal,
       attempt: 2,
       attemptId: 'attempt-2',
       includeUsage: false,
       disableReasoning: true
-    }
-  ));
+    })
+  );
 
   assert.equal(capturedRequest.stream_options, undefined);
   assert.deepEqual(capturedRequest.thinking, {
@@ -258,37 +266,45 @@ test('streaming rejects malformed aggregated tool JSON', async () => {
     chat: {
       completions: {
         create() {
-          return streamFrom([{
-            id: 'chat-3',
-            model: 'model',
-            choices: [{
-              index: 0,
-              finish_reason: 'tool_calls',
-              delta: {
-                tool_calls: [{
+          return streamFrom([
+            {
+              id: 'chat-3',
+              model: 'model',
+              choices: [
+                {
                   index: 0,
-                  id: 'call-bad',
-                  function: {
-                    name: 'Read',
-                    arguments: '{bad'
+                  finish_reason: 'tool_calls',
+                  delta: {
+                    tool_calls: [
+                      {
+                        index: 0,
+                        id: 'call-bad',
+                        function: {
+                          name: 'Read',
+                          arguments: '{bad'
+                        }
+                      }
+                    ]
                   }
-                }]
-              }
-            }]
-          }]);
+                }
+              ]
+            }
+          ]);
         }
       }
     }
   };
 
   await assert.rejects(
-    collect(provider.chatStream(basicRequest, {
-      signal: new AbortController().signal,
-      attempt: 1,
-      attemptId: 'attempt-bad',
-      includeUsage: false,
-      disableReasoning: false
-    })),
-    error => error?.code === 'malformed_response'
+    collect(
+      provider.chatStream(basicRequest, {
+        signal: new AbortController().signal,
+        attempt: 1,
+        attemptId: 'attempt-bad',
+        includeUsage: false,
+        disableReasoning: false
+      })
+    ),
+    (error) => error?.code === 'malformed_response'
   );
 });

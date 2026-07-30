@@ -57,13 +57,9 @@ export interface DiagnosticsWorkerResult {
   fileCount: number;
 }
 
-export type AnalysisWorkerRequest =
-  | RepoMapWorkerRequest
-  | DiagnosticsWorkerRequest;
+export type AnalysisWorkerRequest = RepoMapWorkerRequest | DiagnosticsWorkerRequest;
 
-export type AnalysisWorkerResult =
-  | RepoMapWorkerResult
-  | DiagnosticsWorkerResult;
+export type AnalysisWorkerResult = RepoMapWorkerResult | DiagnosticsWorkerResult;
 
 interface WorkerRequestEnvelope {
   id: string;
@@ -147,21 +143,16 @@ function createWorkerHandle(workspaceRoot: string): WorkerHandle {
       pending.resolve(message.result);
       return;
     }
-    const error = new Error(
-      message.error?.message ?? 'TypeScript analysis worker failed'
-    );
+    const error = new Error(message.error?.message ?? 'TypeScript analysis worker failed');
     error.name = message.error?.name ?? 'AnalysisWorkerError';
     pending.reject(error);
   });
-  worker.on('error', error => {
+  worker.on('error', (error) => {
     terminateHandle(handle, error);
   });
-  worker.on('exit', code => {
+  worker.on('exit', (code) => {
     if (!handle.terminated && handle.pending.size > 0) {
-      terminateHandle(
-        handle,
-        new Error(`TypeScript analysis worker exited with code ${code}`)
-      );
+      terminateHandle(handle, new Error(`TypeScript analysis worker exited with code ${code}`));
       return;
     }
     if (!handle.terminated) {
@@ -176,9 +167,7 @@ function createWorkerHandle(workspaceRoot: string): WorkerHandle {
 
 function getWorkerHandle(workspaceRoot: string): WorkerHandle {
   const existing = workerHandles.get(workspaceRoot);
-  return existing && !existing.terminated
-    ? existing
-    : createWorkerHandle(workspaceRoot);
+  return existing && !existing.terminated ? existing : createWorkerHandle(workspaceRoot);
 }
 
 export function runAnalysisWorker(
@@ -201,9 +190,7 @@ export function runAnalysisWorker(
     const handleAbort = () => {
       terminateHandle(
         handle,
-        signal.reason instanceof Error
-          ? signal.reason
-          : new OperationAbortedError()
+        signal.reason instanceof Error ? signal.reason : new OperationAbortedError()
       );
     };
     const timeout = setTimeout(() => {

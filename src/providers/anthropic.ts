@@ -7,11 +7,7 @@ import type {
   ProviderTool,
   ToolCall
 } from './base.js';
-import {
-  isProviderAbort,
-  normalizeProviderError,
-  ProviderError
-} from './errors.js';
+import { isProviderAbort, normalizeProviderError, ProviderError } from './errors.js';
 
 export function convertMessagesToAnthropic(
   messages: ConversationMessage[]
@@ -70,7 +66,7 @@ export function convertMessagesToAnthropic(
 }
 
 export function convertToolsToAnthropic(tools: ProviderTool[]): Array<Record<string, unknown>> {
-  return tools.map(tool => ({
+  return tools.map((tool) => ({
     name: tool.name,
     description: tool.description,
     input_schema: tool.inputSchema
@@ -118,7 +114,8 @@ export class AnthropicProvider implements AIProvider {
       if (typeof requestPromise.withResponse === 'function') {
         const result = await requestPromise.withResponse();
         response = result.data;
-        requestId = result.response.headers.get('request-id') ??
+        requestId =
+          result.response.headers.get('request-id') ??
           result.response.headers.get('x-request-id') ??
           undefined;
       } else {
@@ -154,11 +151,13 @@ export class AnthropicProvider implements AIProvider {
           toolCalls: toolCalls.length > 0 ? toolCalls : undefined
         },
         finishReason: response.stop_reason,
-        usage: response.usage ? {
-          inputTokens: response.usage.input_tokens,
-          outputTokens: response.usage.output_tokens,
-          totalTokens: response.usage.input_tokens + response.usage.output_tokens
-        } : undefined,
+        usage: response.usage
+          ? {
+              inputTokens: response.usage.input_tokens,
+              outputTokens: response.usage.output_tokens,
+              totalTokens: response.usage.input_tokens + response.usage.output_tokens
+            }
+          : undefined,
         ...(requestId ? { requestId } : {}),
         ...(typeof response.model === 'string' ? { reportedModel: response.model } : {})
       };
@@ -193,11 +192,6 @@ export class AnthropicProvider implements AIProvider {
   }
 
   fork(): AIProvider {
-    return new AnthropicProvider(
-      this.apiKey,
-      this.baseURL,
-      this.model,
-      this.modelContextWindows
-    );
+    return new AnthropicProvider(this.apiKey, this.baseURL, this.model, this.modelContextWindows);
   }
 }

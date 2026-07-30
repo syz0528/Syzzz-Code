@@ -1,21 +1,12 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {
-  existsSync,
-  mkdirSync,
-  mkdtempSync,
-  rmSync,
-  writeFileSync
-} from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 
-const projectDirectory = join(
-  fileURLToPath(new URL('.', import.meta.url)),
-  '..'
-);
+const projectDirectory = join(fileURLToPath(new URL('.', import.meta.url)), '..');
 const cliPath = join(projectDirectory, 'dist', 'index.js');
 
 function runCli(home, workspace, args) {
@@ -34,11 +25,7 @@ function runCli(home, workspace, args) {
 }
 
 function assertSucceeded(result) {
-  assert.equal(
-    result.status,
-    0,
-    result.stderr || result.error?.message
-  );
+  assert.equal(result.status, 0, result.stderr || result.error?.message);
 }
 
 test('MCP management supports lifecycle operations without printing secrets', () => {
@@ -88,7 +75,7 @@ test('MCP management supports lifecycle operations without printing secrets', ()
     const entries = JSON.parse(listed.stdout);
     assert.equal(entries.length, 2);
     assert.equal(
-      entries.find(entry => entry.name === 'remote').target,
+      entries.find((entry) => entry.name === 'remote').target,
       'https://example.test/mcp?[redacted]'
     );
     assert.doesNotMatch(
@@ -96,21 +83,11 @@ test('MCP management supports lifecycle operations without printing secrets', ()
       /query-secret|resolved-but-never-printed|Authorization|Bearer/
     );
 
-    const disabled = runCli(home, workspace, [
-      'mcp',
-      'disable',
-      'fixture',
-      '--json'
-    ]);
+    const disabled = runCli(home, workspace, ['mcp', 'disable', 'fixture', '--json']);
     assertSucceeded(disabled);
     assert.equal(JSON.parse(disabled.stdout).action, 'disable');
 
-    const enabled = runCli(home, workspace, [
-      'mcp',
-      'enable',
-      'fixture',
-      '--json'
-    ]);
+    const enabled = runCli(home, workspace, ['mcp', 'enable', 'fixture', '--json']);
     assertSucceeded(enabled);
     assert.equal(JSON.parse(enabled.stdout).action, 'enable');
 
@@ -142,12 +119,7 @@ test('MCP management supports lifecycle operations without printing secrets', ()
     assertSucceeded(resetPolicy);
     assert.equal(JSON.parse(resetPolicy.stdout).policy, 'reset');
 
-    const removed = runCli(home, workspace, [
-      'mcp',
-      'remove',
-      'fixture',
-      '--json'
-    ]);
+    const removed = runCli(home, workspace, ['mcp', 'remove', 'fixture', '--json']);
     assertSucceeded(removed);
     assert.equal(JSON.parse(removed.stdout).action, 'removed');
   } finally {
@@ -174,20 +146,13 @@ test('extensions status is offline, structured, and does not expose secrets', ()
     'utf8'
   );
   try {
-    const result = runCli(home, workspace, [
-      'extensions',
-      'status',
-      '--json'
-    ]);
+    const result = runCli(home, workspace, ['extensions', 'status', '--json']);
     assertSucceeded(result);
     const status = JSON.parse(result.stdout);
     assert.equal(status.trustState, 'untrusted');
     assert.equal(status.mcp.configured, 1);
     assert.equal(status.mcp.servers[0].state, 'disconnected');
-    assert.doesNotMatch(
-      result.stdout,
-      /resolved-but-never-printed|MCP_SOURCE_SECRET/
-    );
+    assert.doesNotMatch(result.stdout, /resolved-but-never-printed|MCP_SOURCE_SECRET/);
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
@@ -204,7 +169,7 @@ test('Hook management is offline and never executes configured commands', () => 
   writeFileSync(
     hookScript,
     `import { writeFileSync } from 'node:fs';\n` +
-    `writeFileSync(${JSON.stringify(marker)}, 'bad');\n`,
+      `writeFileSync(${JSON.stringify(marker)}, 'bad');\n`,
     'utf8'
   );
   try {
@@ -223,38 +188,16 @@ test('Hook management is offline and never executes configured commands', () => 
     assertSucceeded(added);
     assert.doesNotMatch(added.stdout, /hook-secret-never-printed|HOOK_SOURCE_SECRET/);
 
-    const diagnosed = runCli(home, workspace, [
-      'hooks',
-      'doctor',
-      '--json'
-    ]);
+    const diagnosed = runCli(home, workspace, ['hooks', 'doctor', '--json']);
     assertSucceeded(diagnosed);
     assert.equal(existsSync(marker), false);
-    assert.doesNotMatch(
-      diagnosed.stdout,
-      /hook-secret-never-printed|HOOK_SOURCE_SECRET/
-    );
+    assert.doesNotMatch(diagnosed.stdout, /hook-secret-never-printed|HOOK_SOURCE_SECRET/);
 
-    const disabled = runCli(home, workspace, [
-      'hooks',
-      'disable',
-      'offline-check',
-      '--json'
-    ]);
+    const disabled = runCli(home, workspace, ['hooks', 'disable', 'offline-check', '--json']);
     assertSucceeded(disabled);
-    const enabled = runCli(home, workspace, [
-      'hooks',
-      'enable',
-      'offline-check',
-      '--json'
-    ]);
+    const enabled = runCli(home, workspace, ['hooks', 'enable', 'offline-check', '--json']);
     assertSucceeded(enabled);
-    const removed = runCli(home, workspace, [
-      'hooks',
-      'remove',
-      'offline-check',
-      '--json'
-    ]);
+    const removed = runCli(home, workspace, ['hooks', 'remove', 'offline-check', '--json']);
     assertSucceeded(removed);
     assert.equal(existsSync(marker), false);
   } finally {
@@ -282,10 +225,14 @@ test('management lists a corrupt project scope without hiding valid user entries
     const listed = runCli(home, workspace, ['mcp', 'list', '--json']);
     assertSucceeded(listed);
     const entries = JSON.parse(listed.stdout);
-    assert.equal(entries.some(entry => entry.name === 'user-server'), true);
-    assert.equal(entries.some(entry =>
-      entry.name === 'project-configuration' && entry.valid === false
-    ), true);
+    assert.equal(
+      entries.some((entry) => entry.name === 'user-server'),
+      true
+    );
+    assert.equal(
+      entries.some((entry) => entry.name === 'project-configuration' && entry.valid === false),
+      true
+    );
   } finally {
     rmSync(root, { recursive: true, force: true });
   }

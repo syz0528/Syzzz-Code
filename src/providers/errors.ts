@@ -58,8 +58,7 @@ export class ProviderError extends Error {
   readonly recovery?: 'reasoning-only';
 
   constructor(code: ProviderErrorCode, options: ProviderErrorOptions) {
-    const message = options.message ??
-      `${options.provider}: ${SAFE_ERROR_MESSAGES[code]}`;
+    const message = options.message ?? `${options.provider}: ${SAFE_ERROR_MESSAGES[code]}`;
     super(message, options.cause === undefined ? undefined : { cause: options.cause });
     this.name = 'ProviderError';
     this.code = code;
@@ -74,7 +73,7 @@ export class ProviderError extends Error {
 
 function asRecord(value: unknown): Record<string, unknown> | undefined {
   return typeof value === 'object' && value !== null
-    ? value as Record<string, unknown>
+    ? (value as Record<string, unknown>)
     : undefined;
 }
 
@@ -83,7 +82,10 @@ function getNumber(record: Record<string, unknown> | undefined, key: string): nu
   return typeof value === 'number' && Number.isFinite(value) ? value : undefined;
 }
 
-function getString(record: Record<string, unknown> | undefined, ...keys: string[]): string | undefined {
+function getString(
+  record: Record<string, unknown> | undefined,
+  ...keys: string[]
+): string | undefined {
   for (const key of keys) {
     const value = record?.[key];
     if (typeof value === 'string' && value) {
@@ -140,6 +142,13 @@ function classifyError(
 ): { code: ProviderErrorCode; feature?: string } {
   const searchable = `${sdkCode ?? ''} ${name} ${message}`.toLowerCase();
 
+  if (
+    name === 'SyntaxError' ||
+    searchable.includes('not valid json') ||
+    searchable.includes('unexpected end of json')
+  ) {
+    return { code: 'malformed_response' };
+  }
   if (status === 401 || searchable.includes('authenticationerror')) {
     return { code: 'authentication' };
   }
@@ -154,10 +163,7 @@ function classifyError(
   ) {
     return { code: 'context_exceeded' };
   }
-  if (
-    sdkCode?.toLowerCase() === 'model_not_found' ||
-    searchable.includes('model_not_found')
-  ) {
+  if (sdkCode?.toLowerCase() === 'model_not_found' || searchable.includes('model_not_found')) {
     return { code: 'model_not_found' };
   }
   if (
@@ -166,10 +172,7 @@ function classifyError(
   ) {
     return { code: 'unsupported_feature', feature: 'stream_options' };
   }
-  if (
-    searchable.includes('unsupported_parameter') ||
-    searchable.includes('unsupported feature')
-  ) {
+  if (searchable.includes('unsupported_parameter') || searchable.includes('unsupported feature')) {
     return { code: 'unsupported_feature' };
   }
   if (status === 404) {
@@ -183,15 +186,12 @@ function classifyError(
   if (status !== undefined && status >= 500) {
     return { code: 'provider_internal' };
   }
-  if (
-    status === 408 ||
-    searchable.includes('timeout') ||
-    searchable.includes('timed out')
-  ) {
+  if (status === 408 || searchable.includes('timeout') || searchable.includes('timed out')) {
     return { code: 'timeout' };
   }
   if (
     searchable.includes('apiconnectionerror') ||
+    searchable.includes('connection error') ||
     searchable.includes('fetcherror') ||
     searchable.includes('econnreset') ||
     searchable.includes('econnrefused') ||
@@ -246,14 +246,16 @@ export function isRetryableProviderError(error: ProviderError): boolean {
     return true;
   }
 
-  return error.code === 'provider_internal' &&
+  return (
+    error.code === 'provider_internal' &&
     error.status !== undefined &&
-    [500, 502, 503, 504].includes(error.status);
+    [500, 502, 503, 504].includes(error.status)
+  );
 }
 
 export function isProviderAbort(error: unknown): boolean {
-  return isAbortError(error) || (
-    error instanceof Error &&
-    (error.name === 'APIUserAbortError' || error.name === 'AbortError')
+  return (
+    isAbortError(error) ||
+    (error instanceof Error && (error.name === 'APIUserAbortError' || error.name === 'AbortError'))
   );
 }

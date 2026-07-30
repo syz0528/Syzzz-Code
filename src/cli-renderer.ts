@@ -28,9 +28,7 @@ export interface HumanEventRendererOptions {
 const PERSISTENT_SUCCESS_TOOLS = new Set(['Write', 'Edit', 'Patch', 'Shell']);
 const MAX_TOOL_ERROR_CHARACTERS = 300;
 
-export function stopSpinnerIfActive(
-  spinner: SpinnerController | undefined
-): void {
+export function stopSpinnerIfActive(spinner: SpinnerController | undefined): void {
   if (spinner?.isSpinning) {
     spinner.stop();
   }
@@ -61,8 +59,7 @@ export function sanitizeAgentEventForStream(event: AgentEvent): AgentEvent {
 export function serializeAgentEvent(event: AgentEvent): string {
   return JSON.stringify(sanitizeAgentEventForStream(event)).replace(
     /[\u007f-\uffff]/g,
-    character =>
-      `\\u${character.charCodeAt(0).toString(16).padStart(4, '0')}`
+    (character) => `\\u${character.charCodeAt(0).toString(16).padStart(4, '0')}`
   );
 }
 
@@ -72,9 +69,7 @@ export function formatTurnFooter(
 ): string {
   const fields: string[] = [];
   if (result.usage) {
-    fields.push(
-      `tokens ${result.usage.inputTokens} in / ${result.usage.outputTokens} out`
-    );
+    fields.push(`tokens ${result.usage.inputTokens} in / ${result.usage.outputTokens} out`);
   }
   if (stats?.toolCalls) {
     fields.push(
@@ -97,16 +92,11 @@ export function formatTurnFooter(
 }
 
 function formatDuration(durationMs: number): string {
-  return durationMs < 1_000
-    ? `${durationMs}ms`
-    : `${(durationMs / 1_000).toFixed(1)}s`;
+  return durationMs < 1_000 ? `${durationMs}ms` : `${(durationMs / 1_000).toFixed(1)}s`;
 }
 
 function summarizeToolError(result: string | undefined): string | undefined {
-  const summary = result
-    ?.replace(/\s+/g, ' ')
-    .trim()
-    .slice(0, MAX_TOOL_ERROR_CHARACTERS);
+  const summary = result?.replace(/\s+/g, ' ').trim().slice(0, MAX_TOOL_ERROR_CHARACTERS);
   return summary || undefined;
 }
 
@@ -165,14 +155,10 @@ export class HumanEventRenderer {
         break;
       case 'compaction_failed':
         this.stopForStatus();
-        this.writeLine(chalk.yellow(
-          `Context compaction failed (${event.error.code})`
-        ));
+        this.writeLine(chalk.yellow(`Context compaction failed (${event.error.code})`));
         break;
       case 'reasoning_status':
-        this.setSpinnerText(
-          event.status === 'started' ? 'Reasoning...' : 'Thinking...'
-        );
+        this.setSpinnerText(event.status === 'started' ? 'Reasoning...' : 'Thinking...');
         break;
       case 'text_delta':
         if (!this.streamOutput) {
@@ -202,9 +188,11 @@ export class HumanEventRenderer {
             break;
           }
         }
-        this.writeLine(chalk.yellow(
-          `Retrying attempt ${event.nextAttempt} in ${event.delayMs}ms (${event.reason})`
-        ));
+        this.writeLine(
+          chalk.yellow(
+            `Retrying attempt ${event.nextAttempt} in ${event.delayMs}ms (${event.reason})`
+          )
+        );
         this.startSpinner('Retrying...');
         break;
       case 'approval_requested':
@@ -219,9 +207,9 @@ export class HumanEventRenderer {
         if (event.state === 'connecting') {
           this.startSpinner(`Connecting MCP ${event.server}...`);
         } else if (event.state === 'error') {
-          this.writeLine(chalk.yellow(
-            `MCP ${event.server} unavailable (${event.errorCode ?? 'error'})`
-          ));
+          this.writeLine(
+            chalk.yellow(`MCP ${event.server} unavailable (${event.errorCode ?? 'error'})`)
+          );
         }
         break;
       case 'hook_started':
@@ -231,18 +219,18 @@ export class HumanEventRenderer {
       case 'hook_completed':
         this.stopForStatus();
         if (event.outcome !== 'success') {
-          this.writeLine(chalk.yellow(
-            `Hook ${event.hook} ${event.outcome}` +
-            `${event.errorCode ? ` (${event.errorCode})` : ''}`
-          ));
+          this.writeLine(
+            chalk.yellow(
+              `Hook ${event.hook} ${event.outcome}` +
+                `${event.errorCode ? ` (${event.errorCode})` : ''}`
+            )
+          );
         }
         break;
       case 'subagent_started':
         this.stopForStatus();
         this.startSpinner(
-          event.role === 'review'
-            ? 'Reviewing in subagent...'
-            : 'Exploring in subagent...'
+          event.role === 'review' ? 'Reviewing in subagent...' : 'Exploring in subagent...'
         );
         break;
       case 'subagent_progress':
@@ -255,14 +243,18 @@ export class HumanEventRenderer {
       case 'subagent_completed':
         this.stopForStatus();
         if (event.outcome !== 'success') {
-          this.writeLine(chalk.yellow(
-            `Subagent ${event.role} ${event.outcome}` +
-            `${event.stopReason
-              ? ` (${event.stopReason})`
-              : event.errorCode
-                ? ` (${event.errorCode})`
-                : ''}`
-          ));
+          this.writeLine(
+            chalk.yellow(
+              `Subagent ${event.role} ${event.outcome}` +
+                `${
+                  event.stopReason
+                    ? ` (${event.stopReason})`
+                    : event.errorCode
+                      ? ` (${event.errorCode})`
+                      : ''
+                }`
+            )
+          );
         }
         break;
       case 'tool_completed': {
@@ -272,20 +264,16 @@ export class HumanEventRenderer {
           this.stats.toolFailures += 1;
         }
 
-        const shouldPersist = event.outcome !== 'success' ||
-          PERSISTENT_SUCCESS_TOOLS.has(event.toolName);
+        const shouldPersist =
+          event.outcome !== 'success' || PERSISTENT_SUCCESS_TOOLS.has(event.toolName);
         if (shouldPersist) {
-          const summary = event.outcome === 'success'
-            ? undefined
-            : summarizeToolError(event.result);
-          const line = `${event.toolName} ${event.outcome} ` +
+          const summary =
+            event.outcome === 'success' ? undefined : summarizeToolError(event.result);
+          const line =
+            `${event.toolName} ${event.outcome} ` +
             `(${formatDuration(event.durationMs)})` +
             (summary ? `: ${summary}` : '');
-          this.writeLine(
-            event.outcome === 'success'
-              ? chalk.gray(line)
-              : chalk.yellow(line)
-          );
+          this.writeLine(event.outcome === 'success' ? chalk.gray(line) : chalk.yellow(line));
         }
         break;
       }
@@ -357,9 +345,5 @@ export class HumanEventRenderer {
 }
 
 export function turnResultExitCode(result: TurnResult): 0 | 1 | 130 {
-  return result.status === 'completed'
-    ? 0
-    : result.status === 'cancelled'
-      ? 130
-      : 1;
+  return result.status === 'completed' ? 0 : result.status === 'cancelled' ? 130 : 1;
 }

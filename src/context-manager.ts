@@ -33,8 +33,7 @@ export interface ContextManagerPersistentState {
   compactionCount: number;
 }
 
-export interface ContextManagerRuntimeState
-  extends ContextManagerPersistentState {
+export interface ContextManagerRuntimeState extends ContextManagerPersistentState {
   consecutiveFailures: number;
 }
 
@@ -92,15 +91,11 @@ export interface LimitedToolContent {
 export type LimitedCompactionTranscript = LimitedToolContent;
 
 function clampRatio(value: number | undefined, fallback: number): number {
-  return typeof value === 'number' && value > 0 && value < 1
-    ? value
-    : fallback;
+  return typeof value === 'number' && value > 0 && value < 1 ? value : fallback;
 }
 
 function positiveInteger(value: number | undefined, fallback: number): number {
-  return Number.isInteger(value) && Number(value) > 0
-    ? Number(value)
-    : fallback;
+  return Number.isInteger(value) && Number(value) > 0 ? Number(value) : fallback;
 }
 
 export function estimateUtf8Tokens(value: string): number {
@@ -133,18 +128,11 @@ export function estimateMessageTokens(message: ConversationMessage): number {
   return estimateUtf8Tokens(serializeMessageForEstimation(message)) + 12;
 }
 
-export function estimateMessagesTokens(
-  messages: readonly ConversationMessage[]
-): number {
-  return messages.reduce(
-    (total, message) => total + estimateMessageTokens(message),
-    0
-  );
+export function estimateMessagesTokens(messages: readonly ConversationMessage[]): number {
+  return messages.reduce((total, message) => total + estimateMessageTokens(message), 0);
 }
 
-function buildMessageUnits(
-  messages: readonly ConversationMessage[]
-): MessageUnit[] {
+function buildMessageUnits(messages: readonly ConversationMessage[]): MessageUnit[] {
   const units: MessageUnit[] = [];
   let index = 0;
   while (index < messages.length) {
@@ -210,24 +198,24 @@ export function applyCompactionPlan(
   ];
 }
 
-export function formatMessagesForCompaction(
-  messages: readonly ConversationMessage[]
-): string {
-  return messages.map(message => {
-    if (message.role === 'user') {
-      return `[USER${message.kind === 'compaction-summary' ? ' SUMMARY' : ''}]\n${message.content}`;
-    }
-    if (message.role === 'assistant') {
-      const toolCalls = message.toolCalls?.length
-        ? `\nTool calls:\n${JSON.stringify(message.toolCalls)}`
-        : '';
-      return `[ASSISTANT]\n${message.content}${toolCalls}`;
-    }
-    return [
-      `[TOOL RESULT: ${message.toolName} (${message.isError ? 'error' : 'success'})]`,
-      message.content
-    ].join('\n');
-  }).join('\n\n');
+export function formatMessagesForCompaction(messages: readonly ConversationMessage[]): string {
+  return messages
+    .map((message) => {
+      if (message.role === 'user') {
+        return `[USER${message.kind === 'compaction-summary' ? ' SUMMARY' : ''}]\n${message.content}`;
+      }
+      if (message.role === 'assistant') {
+        const toolCalls = message.toolCalls?.length
+          ? `\nTool calls:\n${JSON.stringify(message.toolCalls)}`
+          : '';
+        return `[ASSISTANT]\n${message.content}${toolCalls}`;
+      }
+      return [
+        `[TOOL RESULT: ${message.toolName} (${message.isError ? 'error' : 'success'})]`,
+        message.content
+      ].join('\n');
+    })
+    .join('\n\n');
 }
 
 export function formatMessagesForCompactionBounded(
@@ -256,10 +244,7 @@ export class ContextManager {
   constructor(options: ContextManagerOptions = {}) {
     this.options = {
       autoCompact: options.autoCompact ?? true,
-      defaultWindowTokens: positiveInteger(
-        options.defaultWindowTokens,
-        65_536
-      ),
+      defaultWindowTokens: positiveInteger(options.defaultWindowTokens, 65_536),
       triggerRatio: clampRatio(options.triggerRatio, DEFAULT_TRIGGER_RATIO),
       targetRatio: clampRatio(options.targetRatio, DEFAULT_TARGET_RATIO),
       reservedOutputTokens: positiveInteger(
@@ -274,10 +259,7 @@ export class ContextManager {
         options.maxToolResultBytes,
         DEFAULT_MAX_TOOL_RESULT_BYTES
       ),
-      maxSummaryAttempts: positiveInteger(
-        options.maxSummaryAttempts,
-        DEFAULT_MAX_SUMMARY_ATTEMPTS
-      ),
+      maxSummaryAttempts: positiveInteger(options.maxSummaryAttempts, DEFAULT_MAX_SUMMARY_ATTEMPTS),
       maxConsecutiveFailures: positiveInteger(
         options.maxConsecutiveFailures,
         DEFAULT_MAX_CONSECUTIVE_FAILURES
@@ -309,10 +291,7 @@ export class ContextManager {
   }
 
   restorePersistentState(state: ContextManagerPersistentState): void {
-    if (
-      !Number.isSafeInteger(state.compactionCount) ||
-      state.compactionCount < 0
-    ) {
+    if (!Number.isSafeInteger(state.compactionCount) || state.compactionCount < 0) {
       throw new Error('context compactionCount must be a non-negative integer');
     }
     this.compactionCount = state.compactionCount;
@@ -341,10 +320,7 @@ export class ContextManager {
   }
 
   contextWindowTokens(providerInfo: ProviderInfo): number {
-    return positiveInteger(
-      providerInfo.contextWindowTokens,
-      this.options.defaultWindowTokens
-    );
+    return positiveInteger(providerInfo.contextWindowTokens, this.options.defaultWindowTokens);
   }
 
   measure(
@@ -356,9 +332,7 @@ export class ContextManager {
     const contextWindowTokens = this.contextWindowTokens(providerInfo);
     const messageTokens = estimateMessagesTokens(messages);
     const fixedTokens =
-      estimateUtf8Tokens(systemPrompt) +
-      estimateUtf8Tokens(JSON.stringify(tools)) +
-      64;
+      estimateUtf8Tokens(systemPrompt) + estimateUtf8Tokens(JSON.stringify(tools)) + 64;
     const estimatedInputTokens = fixedTokens + messageTokens;
     const triggerTokens = Math.max(
       1,
@@ -367,10 +341,7 @@ export class ContextManager {
         contextWindowTokens - this.options.reservedOutputTokens
       )
     );
-    const targetTokens = Math.max(
-      1,
-      Math.floor(contextWindowTokens * this.options.targetRatio)
-    );
+    const targetTokens = Math.max(1, Math.floor(contextWindowTokens * this.options.targetRatio));
     return {
       estimatedInputTokens,
       contextWindowTokens,
@@ -379,9 +350,7 @@ export class ContextManager {
       fixedTokens,
       messageTokens,
       shouldCompact:
-        this.options.autoCompact &&
-        !this.circuitOpen &&
-        estimatedInputTokens >= triggerTokens
+        this.options.autoCompact && !this.circuitOpen && estimatedInputTokens >= triggerTokens
     };
   }
 
@@ -396,15 +365,12 @@ export class ContextManager {
       return undefined;
     }
 
-    const targetMessageTokens = Math.max(
-      1,
-      measurement.targetTokens - measurement.fixedTokens
-    );
+    const targetMessageTokens = Math.max(1, measurement.targetTokens - measurement.fixedTokens);
     const requiredRemoval = Math.max(
       this.options.minimumCompactableTokens,
       measurement.messageTokens - targetMessageTokens
     );
-    const historyUnits = units.filter(unit => unit.endIndex <= currentUserIndex);
+    const historyUnits = units.filter((unit) => unit.endIndex <= currentUserIndex);
     const historyTokens = sumUnitTokens(historyUnits);
     if (historyTokens >= this.options.minimumCompactableTokens) {
       let selectedTokens = 0;
@@ -427,16 +393,11 @@ export class ContextManager {
       };
     }
 
-    const intraUnits = units.filter(unit => unit.startIndex > currentUserIndex);
-    if (
-      intraUnits.length === 0 ||
-      (!options.allowLatestIntraTurn && intraUnits.length <= 1)
-    ) {
+    const intraUnits = units.filter((unit) => unit.startIndex > currentUserIndex);
+    if (intraUnits.length === 0 || (!options.allowLatestIntraTurn && intraUnits.length <= 1)) {
       return undefined;
     }
-    const compactableUnits = options.allowLatestIntraTurn
-      ? intraUnits
-      : intraUnits.slice(0, -1);
+    const compactableUnits = options.allowLatestIntraTurn ? intraUnits : intraUnits.slice(0, -1);
     const compactableTokens = sumUnitTokens(compactableUnits);
     if (compactableTokens < this.options.minimumCompactableTokens) {
       return undefined;
@@ -464,11 +425,8 @@ export class ContextManager {
   }
 
   isUsefulSummary(plan: CompactionPlan, summary: string): boolean {
-    const summaryTokens = estimateMessageTokens(
-      createCompactionSummaryMessage(summary)
-    );
-    return summary.trim().length > 0 &&
-      summaryTokens + 128 < plan.selectedTokens;
+    const summaryTokens = estimateMessageTokens(createCompactionSummaryMessage(summary));
+    return summary.trim().length > 0 && summaryTokens + 128 < plan.selectedTokens;
   }
 
   recordCompactionSuccess(): void {
@@ -493,14 +451,9 @@ export class ContextManager {
     );
     const availableTokens = Math.max(
       0,
-      measurement.triggerTokens -
-      measurement.estimatedInputTokens -
-      CONTEXT_SAFETY_TOKENS
+      measurement.triggerTokens - measurement.estimatedInputTokens - CONTEXT_SAFETY_TOKENS
     );
-    return Math.min(
-      DEFAULT_MAX_COMPACTION_INPUT_BYTES,
-      availableTokens * 2
-    );
+    return Math.min(DEFAULT_MAX_COMPACTION_INPUT_BYTES, availableTokens * 2);
   }
 
   toolResultBudgetBytes(
@@ -511,12 +464,7 @@ export class ContextManager {
     toolCallId: string,
     toolName: string
   ): number {
-    const measurement = this.measure(
-      messages,
-      systemPrompt,
-      tools,
-      providerInfo
-    );
+    const measurement = this.measure(messages, systemPrompt, tools, providerInfo);
     const emptyToolResultTokens = estimateMessageTokens({
       role: 'tool',
       toolCallId,
@@ -526,18 +474,12 @@ export class ContextManager {
     const availableTokens = Math.max(
       0,
       measurement.triggerTokens -
-      measurement.estimatedInputTokens -
-      emptyToolResultTokens -
-      CONTEXT_SAFETY_TOKENS
+        measurement.estimatedInputTokens -
+        emptyToolResultTokens -
+        CONTEXT_SAFETY_TOKENS
     );
-    const minimumBytes = Math.min(
-      MIN_TOOL_RESULT_BYTES,
-      this.options.maxToolResultBytes
-    );
-    return Math.min(
-      this.options.maxToolResultBytes,
-      Math.max(minimumBytes, availableTokens * 2)
-    );
+    const minimumBytes = Math.min(MIN_TOOL_RESULT_BYTES, this.options.maxToolResultBytes);
+    return Math.min(this.options.maxToolResultBytes, Math.max(minimumBytes, availableTokens * 2));
   }
 
   limitToolResult(
@@ -550,17 +492,18 @@ export class ContextManager {
       this.options.maxToolResultBytes,
       Math.max(0, Math.floor(maximumBytes))
     );
-    const limited = toolName === 'Shell' && isError
-      ? limitUtf8HeadTail(
-        content,
-        resolvedMaximumBytes,
-        '\n\n[Tool output truncated: middle omitted]\n\n'
-      )
-      : limitUtf8Head(
-        content,
-        resolvedMaximumBytes,
-        '\n\n[Tool output truncated; narrow the request or use continuation]'
-      );
+    const limited =
+      toolName === 'Shell' && isError
+        ? limitUtf8HeadTail(
+            content,
+            resolvedMaximumBytes,
+            '\n\n[Tool output truncated: middle omitted]\n\n'
+          )
+        : limitUtf8Head(
+            content,
+            resolvedMaximumBytes,
+            '\n\n[Tool output truncated; narrow the request or use continuation]'
+          );
     return {
       content: limited.text,
       truncated: limited.truncated,

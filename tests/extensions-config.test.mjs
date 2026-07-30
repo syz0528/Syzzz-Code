@@ -13,47 +13,49 @@ import {
 
 test('extension validators reject unsafe transports and malformed execution fields', () => {
   assert.throws(
-    () => validateMcpServerConfig({
-      type: 'http',
-      url: 'http://example.com/mcp'
-    }),
+    () =>
+      validateMcpServerConfig({
+        type: 'http',
+        url: 'http://example.com/mcp'
+      }),
     /HTTPS/
   );
   assert.throws(
-    () => validateMcpServerConfig({
-      type: 'http',
-      url: 'https://user:secret@example.com/mcp'
-    }),
+    () =>
+      validateMcpServerConfig({
+        type: 'http',
+        url: 'https://user:secret@example.com/mcp'
+      }),
     /embedded credentials/
   );
   assert.throws(
-    () => validateMcpServerConfig({
-      type: 'http',
-      url: 'https://example.com/mcp',
-      headers: { 'Bad\nHeader': 'value' }
-    }),
+    () =>
+      validateMcpServerConfig({
+        type: 'http',
+        url: 'https://example.com/mcp',
+        headers: { 'Bad\nHeader': 'value' }
+      }),
     /invalid HTTP header/
   );
   assert.throws(
-    () => validateMcpServerConfig({
-      type: 'http',
-      url: 'https://example.com/mcp',
-      headers: { Authorization: 'Bearer plaintext-secret' }
-    }),
+    () =>
+      validateMcpServerConfig({
+        type: 'http',
+        url: 'https://example.com/mcp',
+        headers: { Authorization: 'Bearer plaintext-secret' }
+      }),
     /must reference an environment variable/
   );
   assert.throws(
-    () => validateMcpServerConfig({
-      type: 'stdio',
-      command: 'server',
-      env: { 'BAD-NAME': 'value' }
-    }),
+    () =>
+      validateMcpServerConfig({
+        type: 'stdio',
+        command: 'server',
+        env: { 'BAD-NAME': 'value' }
+      }),
     /invalid environment variable/
   );
-  assert.throws(
-    () => validateMcpServerName('ambiguous__server'),
-    /must not contain "__"/
-  );
+  assert.throws(() => validateMcpServerName('ambiguous__server'), /must not contain "__"/);
   assert.equal(
     validateMcpServerConfig({
       type: 'http',
@@ -70,54 +72,61 @@ test('extension validators reject unsafe transports and malformed execution fiel
   );
 
   assert.throws(
-    () => validateHookConfig({
-      name: '../unsafe',
-      event: 'PreTurn',
-      command: 'node'
-    }, 'hook'),
+    () =>
+      validateHookConfig(
+        {
+          name: '../unsafe',
+          event: 'PreTurn',
+          command: 'node'
+        },
+        'hook'
+      ),
     /Hook names/
   );
   assert.throws(
-    () => validateHookConfig({
-      name: 'deny-after',
-      event: 'PostToolUse',
-      command: 'node',
-      onError: 'deny'
-    }, 'hook'),
+    () =>
+      validateHookConfig(
+        {
+          name: 'deny-after',
+          event: 'PostToolUse',
+          command: 'node',
+          onError: 'deny'
+        },
+        'hook'
+      ),
     /only for PreToolUse/
   );
   assert.throws(
-    () => validateHookConfig({
-      name: 'unused-matcher',
-      event: 'PreTurn',
-      command: 'node',
-      matcher: 'builtin:*'
-    }, 'hook'),
+    () =>
+      validateHookConfig(
+        {
+          name: 'unused-matcher',
+          event: 'PreTurn',
+          command: 'node',
+          matcher: 'builtin:*'
+        },
+        'hook'
+      ),
     /matcher is valid only/
   );
 });
 
 test('environment templates require explicit, valid environment variables', () => {
   assert.deepEqual(
-    expandEnvironmentTemplates(
-      { TOKEN: 'Bearer ${SAFE_TOKEN}' },
-      { SAFE_TOKEN: 'fixture' }
-    ),
+    expandEnvironmentTemplates({ TOKEN: 'Bearer ${SAFE_TOKEN}' }, { SAFE_TOKEN: 'fixture' }),
     { TOKEN: 'Bearer fixture' }
   );
   assert.throws(
-    () => expandEnvironmentTemplates(
-      { TOKEN: '${MISSING_TOKEN}' },
-      {}
-    ),
+    () => expandEnvironmentTemplates({ TOKEN: '${MISSING_TOKEN}' }, {}),
     /MISSING_TOKEN is not set/
   );
   assert.throws(
-    () => expandEnvironmentTemplates(
-      { TOKEN: '${PROVIDER_API_KEY}' },
-      { PROVIDER_API_KEY: 'must-not-leak' },
-      ['PROVIDER_API_KEY']
-    ),
+    () =>
+      expandEnvironmentTemplates(
+        { TOKEN: '${PROVIDER_API_KEY}' },
+        { PROVIDER_API_KEY: 'must-not-leak' },
+        ['PROVIDER_API_KEY']
+      ),
     /reserved for Provider credentials/
   );
 });
@@ -219,19 +228,15 @@ function runIsolatedExtensionScenario(home, workspace) {
       }
     }));
   `;
-  const result = spawnSync(
-    process.execPath,
-    ['--input-type=module', '-e', script, workspace],
-    {
-      cwd: process.cwd(),
-      env: {
-        ...process.env,
-        HOME: home,
-        USERPROFILE: home
-      },
-      encoding: 'utf8'
-    }
-  );
+  const result = spawnSync(process.execPath, ['--input-type=module', '-e', script, workspace], {
+    cwd: process.cwd(),
+    env: {
+      ...process.env,
+      HOME: home,
+      USERPROFILE: home
+    },
+    encoding: 'utf8'
+  });
   assert.equal(result.status, 0, result.stderr);
   return JSON.parse(result.stdout);
 }
@@ -316,26 +321,23 @@ test('a corrupt project scope is isolated from trusted user extensions', async (
     }));
   `;
   try {
-    const result = spawnSync(
-      process.execPath,
-      ['--input-type=module', '-e', script, workspace],
-      {
-        cwd: process.cwd(),
-        env: {
-          ...process.env,
-          HOME: home,
-          USERPROFILE: home
-        },
-        encoding: 'utf8'
-      }
-    );
+    const result = spawnSync(process.execPath, ['--input-type=module', '-e', script, workspace], {
+      cwd: process.cwd(),
+      env: {
+        ...process.env,
+        HOME: home,
+        USERPROFILE: home
+      },
+      encoding: 'utf8'
+    });
     assert.equal(result.status, 0, result.stderr);
     const output = JSON.parse(result.stdout);
     assert.equal(output.trustState, 'review-required');
     assert.deepEqual(output.servers, ['user']);
-    assert.equal(output.warnings.some(value =>
-      value.includes('project MCP configuration disabled')
-    ), true);
+    assert.equal(
+      output.warnings.some((value) => value.includes('project MCP configuration disabled')),
+      true
+    );
   } finally {
     await rm(root, { recursive: true, force: true });
   }
@@ -443,15 +445,11 @@ test('trust v1 requires review and normalized project digests detect changes', a
     }));
   `;
   try {
-    const result = spawnSync(
-      process.execPath,
-      ['--input-type=module', '-e', script, workspace],
-      {
-        cwd: process.cwd(),
-        env: { ...process.env, HOME: home, USERPROFILE: home },
-        encoding: 'utf8'
-      }
-    );
+    const result = spawnSync(process.execPath, ['--input-type=module', '-e', script, workspace], {
+      cwd: process.cwd(),
+      env: { ...process.env, HOME: home, USERPROFILE: home },
+      encoding: 'utf8'
+    });
     assert.equal(result.status, 0, result.stderr);
     const output = JSON.parse(result.stdout);
     assert.equal(output.firstDigest, output.secondDigest);
@@ -500,15 +498,11 @@ test('trust confirmation fails if project configuration changes after preview', 
     process.stdout.write(JSON.stringify({ error, trustState: status.trustState }));
   `;
   try {
-    const result = spawnSync(
-      process.execPath,
-      ['--input-type=module', '-e', script, workspace],
-      {
-        cwd: process.cwd(),
-        env: { ...process.env, HOME: home, USERPROFILE: home },
-        encoding: 'utf8'
-      }
-    );
+    const result = spawnSync(process.execPath, ['--input-type=module', '-e', script, workspace], {
+      cwd: process.cwd(),
+      env: { ...process.env, HOME: home, USERPROFILE: home },
+      encoding: 'utf8'
+    });
     assert.equal(result.status, 0, result.stderr);
     const output = JSON.parse(result.stdout);
     assert.match(output.error, /changed during confirmation/);
@@ -562,30 +556,22 @@ test('MCP policies merge by strictness and project policy needs matching trust',
     }));
   `;
   try {
-    const result = spawnSync(
-      process.execPath,
-      ['--input-type=module', '-e', script, workspace],
-      {
-        cwd: process.cwd(),
-        env: { ...process.env, HOME: home, USERPROFILE: home },
-        encoding: 'utf8'
-      }
-    );
+    const result = spawnSync(process.execPath, ['--input-type=module', '-e', script, workspace], {
+      cwd: process.cwd(),
+      env: { ...process.env, HOME: home, USERPROFILE: home },
+      encoding: 'utf8'
+    });
     assert.equal(result.status, 0, result.stderr);
     const output = JSON.parse(result.stdout);
     assert.deepEqual(
-      output.before.map(entry => [entry.qualifiedName, entry.policy]),
+      output.before.map((entry) => [entry.qualifiedName, entry.policy]),
       [
         ['fixture__hidden', 'disabled'],
         ['fixture__mutate', 'execute']
       ]
     );
     assert.deepEqual(
-      output.after.map(entry => [
-        entry.qualifiedName,
-        entry.policy,
-        entry.sources
-      ]),
+      output.after.map((entry) => [entry.qualifiedName, entry.policy, entry.sources]),
       [
         ['fixture__hidden', 'disabled', ['user']],
         ['fixture__mutate', 'disabled', ['user', 'project']],
@@ -648,15 +634,11 @@ test('reload disconnects active project MCP when the reviewed digest changes', a
     }));
   `;
   try {
-    const result = spawnSync(
-      process.execPath,
-      ['--input-type=module', '-e', script, workspace],
-      {
-        cwd: process.cwd(),
-        env: { ...process.env, HOME: home, USERPROFILE: home },
-        encoding: 'utf8'
-      }
-    );
+    const result = spawnSync(process.execPath, ['--input-type=module', '-e', script, workspace], {
+      cwd: process.cwd(),
+      env: { ...process.env, HOME: home, USERPROFILE: home },
+      encoding: 'utf8'
+    });
     assert.equal(result.status, 0, result.stderr);
     const output = JSON.parse(result.stdout);
     assert.equal(output.closes, 1);

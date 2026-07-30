@@ -10,11 +10,7 @@ import type {
   ProviderUsage,
   ToolCall
 } from './base.js';
-import {
-  isProviderAbort,
-  normalizeProviderError,
-  ProviderError
-} from './errors.js';
+import { isProviderAbort, normalizeProviderError, ProviderError } from './errors.js';
 
 export function convertMessagesToOpenAI(
   messages: ConversationMessage[],
@@ -34,12 +30,10 @@ export function convertMessagesToOpenAI(
       convertedMessages.push({
         role: 'assistant',
         content: message.content || null,
-        ...(message.reasoningContent
-          ? { reasoning_content: message.reasoningContent }
-          : {}),
+        ...(message.reasoningContent ? { reasoning_content: message.reasoningContent } : {}),
         ...(message.toolCalls?.length
           ? {
-              tool_calls: message.toolCalls.map(toolCall => ({
+              tool_calls: message.toolCalls.map((toolCall) => ({
                 id: toolCall.id,
                 type: 'function',
                 function: {
@@ -64,7 +58,7 @@ export function convertMessagesToOpenAI(
 }
 
 export function convertToolsToOpenAI(tools: ProviderTool[]): Array<Record<string, unknown>> {
-  return tools.map(tool => ({
+  return tools.map((tool) => ({
     type: 'function',
     function: {
       name: tool.name,
@@ -80,16 +74,10 @@ function getReasoningContent(message: unknown): string | undefined {
   }
 
   const reasoningContent = (message as Record<string, unknown>).reasoning_content;
-  return typeof reasoningContent === 'string' && reasoningContent
-    ? reasoningContent
-    : undefined;
+  return typeof reasoningContent === 'string' && reasoningContent ? reasoningContent : undefined;
 }
 
-function parseToolArguments(
-  providerName: string,
-  toolName: string,
-  rawArguments: string
-): unknown {
+function parseToolArguments(providerName: string, toolName: string, rawArguments: string): unknown {
   try {
     return JSON.parse(rawArguments);
   } catch (error) {
@@ -101,16 +89,23 @@ function parseToolArguments(
   }
 }
 
-function toUsage(usage: {
-  prompt_tokens: number;
-  completion_tokens: number;
-  total_tokens: number;
-} | null | undefined): ProviderUsage | undefined {
-  return usage ? {
-    inputTokens: usage.prompt_tokens,
-    outputTokens: usage.completion_tokens,
-    totalTokens: usage.total_tokens
-  } : undefined;
+function toUsage(
+  usage:
+    | {
+        prompt_tokens: number;
+        completion_tokens: number;
+        total_tokens: number;
+      }
+    | null
+    | undefined
+): ProviderUsage | undefined {
+  return usage
+    ? {
+        inputTokens: usage.prompt_tokens,
+        outputTokens: usage.completion_tokens,
+        totalTokens: usage.total_tokens
+      }
+    : undefined;
 }
 
 interface ToolCallAccumulator {
@@ -119,12 +114,10 @@ interface ToolCallAccumulator {
   arguments: string;
 }
 
-function supportsDeepSeekThinkingToggle(
-  providerName: string,
-  model: string
-): boolean {
-  return providerName.toLowerCase().includes('deepseek') ||
-    model.toLowerCase().includes('deepseek-v4-');
+function supportsDeepSeekThinkingToggle(providerName: string, model: string): boolean {
+  return (
+    providerName.toLowerCase().includes('deepseek') || model.toLowerCase().includes('deepseek-v4-')
+  );
 }
 
 export class OpenAICompatibleProvider implements AIProvider {
@@ -150,14 +143,15 @@ export class OpenAICompatibleProvider implements AIProvider {
     this.client = new OpenAI({
       apiKey,
       baseURL,
-      maxRetries: 0
+      maxRetries: 0,
+      logLevel: 'off'
     });
     this.model = model;
     this.providerName = providerName;
     this.reasoningToggleOverride = supportsReasoningToggle;
     this.modelContextWindows = modelContextWindows;
-    this.supportsReasoningToggle = supportsReasoningToggle ??
-      supportsDeepSeekThinkingToggle(providerName, model);
+    this.supportsReasoningToggle =
+      supportsReasoningToggle ?? supportsDeepSeekThinkingToggle(providerName, model);
   }
 
   async chat(request: ProviderChatRequest): Promise<ProviderChatResponse> {
@@ -193,10 +187,13 @@ export class OpenAICompatibleProvider implements AIProvider {
           );
         }
 
-        completion = await this.createCompletion({
-          ...completionRequest,
-          thinking: { type: 'disabled' }
-        }, request.signal);
+        completion = await this.createCompletion(
+          {
+            ...completionRequest,
+            thinking: { type: 'disabled' }
+          },
+          request.signal
+        );
         response = completion.response;
         requestId = completion.requestId;
         choice = response.choices[0];
@@ -247,18 +244,13 @@ export class OpenAICompatibleProvider implements AIProvider {
         messages: convertMessagesToOpenAI(request.messages, request.systemPrompt),
         tools: convertToolsToOpenAI(request.tools),
         stream: true,
-        ...(attemptOptions.includeUsage
-          ? { stream_options: { include_usage: true } }
-          : {}),
-        ...(attemptOptions.disableReasoning
-          ? { thinking: { type: 'disabled' } }
-          : {})
+        ...(attemptOptions.includeUsage ? { stream_options: { include_usage: true } } : {}),
+        ...(attemptOptions.disableReasoning ? { thinking: { type: 'disabled' } } : {})
       };
 
-      const requestPromise = this.client.chat.completions.create(
-        completionRequest as any,
-        { signal: attemptOptions.signal }
-      ) as any;
+      const requestPromise = this.client.chat.completions.create(completionRequest as any, {
+        signal: attemptOptions.signal
+      }) as any;
       let stream: AsyncIterable<any>;
       let requestId: string | undefined;
 
@@ -316,12 +308,12 @@ export class OpenAICompatibleProvider implements AIProvider {
             arguments: ''
           };
           const id = typeof fragment.id === 'string' ? fragment.id : undefined;
-          const name = typeof fragment.function?.name === 'string'
-            ? fragment.function.name
-            : undefined;
-          const argumentsFragment = typeof fragment.function?.arguments === 'string'
-            ? fragment.function.arguments
-            : undefined;
+          const name =
+            typeof fragment.function?.name === 'string' ? fragment.function.name : undefined;
+          const argumentsFragment =
+            typeof fragment.function?.arguments === 'string'
+              ? fragment.function.arguments
+              : undefined;
 
           if (id) {
             accumulator.id += id;
@@ -352,11 +344,7 @@ export class OpenAICompatibleProvider implements AIProvider {
           return {
             id: toolCall.id,
             name: toolCall.name,
-            input: parseToolArguments(
-              this.providerName,
-              toolCall.name,
-              toolCall.arguments
-            )
+            input: parseToolArguments(this.providerName, toolCall.name, toolCall.arguments)
           };
         });
 
@@ -364,6 +352,9 @@ export class OpenAICompatibleProvider implements AIProvider {
         throw this.malformed(
           `Provider returned an empty stream (finish reason: ${finishReason ?? 'unknown'})`
         );
+      }
+      if (finishReason === undefined) {
+        throw this.malformed('Provider stream ended before a finish reason was received');
       }
 
       return {
@@ -406,8 +397,8 @@ export class OpenAICompatibleProvider implements AIProvider {
       throw new Error('model must be a non-empty string');
     }
     this.model = model;
-    this.supportsReasoningToggle = this.reasoningToggleOverride ??
-      supportsDeepSeekThinkingToggle(this.providerName, model);
+    this.supportsReasoningToggle =
+      this.reasoningToggleOverride ?? supportsDeepSeekThinkingToggle(this.providerName, model);
   }
 
   fork(): AIProvider {
@@ -425,10 +416,7 @@ export class OpenAICompatibleProvider implements AIProvider {
     request: Record<string, unknown>,
     signal?: AbortSignal
   ): Promise<{ response: any; requestId?: string }> {
-    const requestPromise = this.client.chat.completions.create(
-      request as any,
-      { signal }
-    ) as any;
+    const requestPromise = this.client.chat.completions.create(request as any, { signal }) as any;
     if (typeof requestPromise?.withResponse === 'function') {
       const result = await requestPromise.withResponse();
       return {
@@ -438,9 +426,8 @@ export class OpenAICompatibleProvider implements AIProvider {
     }
 
     const response = await requestPromise;
-    const responseRequestId = typeof response?._request_id === 'string'
-      ? response._request_id
-      : undefined;
+    const responseRequestId =
+      typeof response?._request_id === 'string' ? response._request_id : undefined;
     return {
       response,
       ...(responseRequestId ? { requestId: responseRequestId } : {})

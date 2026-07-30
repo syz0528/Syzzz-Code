@@ -94,7 +94,7 @@ test('session controller autosaves portable state and restores mode with safe pe
     assert.equal(saved.usage.turns, 1);
     assert.equal(saved.provider.lastReportedModel, 'reported-model');
     assert.equal(
-      saved.engineState.messages.some(message => 'reasoningContent' in message),
+      saved.engineState.messages.some((message) => 'reasoningContent' in message),
       false
     );
 
@@ -114,20 +114,23 @@ test('session controller autosaves portable state and restores mode with safe pe
 });
 
 test('autosave off keeps state in memory until an explicit save', async () => {
-  await withController(async ({ controller, store }) => {
-    await controller.engine.chat('Do not save automatically');
-    await controller.recordTurn('Do not save automatically', {
-      status: 'completed',
-      response: 'done',
-      durationMs: 1
-    });
+  await withController(
+    async ({ controller, store }) => {
+      await controller.engine.chat('Do not save automatically');
+      await controller.recordTurn('Do not save automatically', {
+        status: 'completed',
+        response: 'done',
+        durationMs: 1
+      });
 
-    assert.equal((await store.list()).length, 0);
-    assert.equal(controller.getStatus().dirty, true);
-    await controller.save();
-    assert.equal((await store.list()).length, 1);
-    assert.equal(controller.getStatus().dirty, false);
-  }, { autoSave: false });
+      assert.equal((await store.list()).length, 0);
+      assert.equal(controller.getStatus().dirty, true);
+      await controller.save();
+      assert.equal((await store.list()).length, 1);
+      assert.equal(controller.getStatus().dirty, false);
+    },
+    { autoSave: false }
+  );
 });
 
 test('a successful file side effect is checkpointed before a later turn failure', async () => {
@@ -147,11 +150,13 @@ test('a successful file side effect is checkpointed before a later turn failure'
           message: {
             role: 'assistant',
             content: '',
-            toolCalls: [{
-              id: 'write-1',
-              name: 'Write',
-              input: { path: 'changed.ts' }
-            }]
+            toolCalls: [
+              {
+                id: 'write-1',
+                name: 'Write',
+                input: { path: 'changed.ts' }
+              }
+            ]
           }
         };
       }
@@ -195,15 +200,14 @@ test('a successful file side effect is checkpointed before a later turn failure'
     engineFactory: () => ({ engine, providerId: 'test' })
   });
   try {
-    await assert.rejects(
-      () => engine.chat('Change the file'),
-      /provider request failed/
-    );
+    await assert.rejects(() => engine.chat('Change the file'), /provider request failed/);
     const checkpoint = await store.load(SESSION_A);
-    assert.deepEqual(checkpoint.engineState.pendingFileChangeReceipts, [{
-      path: 'changed.ts',
-      versionHash: 'abc123'
-    }]);
+    assert.deepEqual(checkpoint.engineState.pendingFileChangeReceipts, [
+      {
+        path: 'changed.ts',
+        versionHash: 'abc123'
+      }
+    ]);
     assert.deepEqual(checkpoint.engineState.messages, []);
   } finally {
     await controller.close();
@@ -228,18 +232,18 @@ test('a file side effect remains recoverable when the turn is cancelled', async 
           message: {
             role: 'assistant',
             content: '',
-            toolCalls: [{
-              id: 'write-before-cancel',
-              name: 'Write',
-              input: { path: 'cancelled.ts' }
-            }]
+            toolCalls: [
+              {
+                id: 'write-before-cancel',
+                name: 'Write',
+                input: { path: 'cancelled.ts' }
+              }
+            ]
           }
         };
       }
       return new Promise((_resolve, reject) => {
-        const rejectForAbort = () => reject(
-          options.signal?.reason ?? new Error('aborted')
-        );
+        const rejectForAbort = () => reject(options.signal?.reason ?? new Error('aborted'));
         if (options.signal?.aborted) {
           rejectForAbort();
         } else {
@@ -310,10 +314,12 @@ test('a file side effect remains recoverable when the turn is cancelled', async 
     await controller.recordTurn('Change then wait', result);
 
     const checkpoint = await store.load(SESSION_A);
-    assert.deepEqual(checkpoint.engineState.pendingFileChangeReceipts, [{
-      path: 'cancelled.ts',
-      versionHash: 'cancel-hash'
-    }]);
+    assert.deepEqual(checkpoint.engineState.pendingFileChangeReceipts, [
+      {
+        path: 'cancelled.ts',
+        versionHash: 'cancel-hash'
+      }
+    ]);
     assert.deepEqual(checkpoint.engineState.messages, []);
   } finally {
     await controller.close();
@@ -352,39 +358,42 @@ test('resume falls back to configured Provider and clears stale reported model',
     baseDirectory: join(directory, 'sessions')
   });
   const savedLease = await store.acquire(SESSION_A);
-  await store.save({
-    schemaVersion: 1,
-    revision: 1,
-    sessionId: SESSION_A,
-    title: 'Unavailable Provider session',
-    createdAt: '2026-07-28T00:00:00.000Z',
-    updatedAt: '2026-07-28T00:01:00.000Z',
-    workspace: {
-      id: store.workspaceId,
-      root: store.workspaceRoot
-    },
-    provider: {
-      id: 'removed-provider',
-      model: 'removed-model',
-      lastReportedModel: 'removed-reported-model'
-    },
-    mode: 'plan',
-    engineState: {
+  await store.save(
+    {
       schemaVersion: 1,
-      messages: [{ role: 'user', content: 'Keep this context' }],
-      pendingFileChangeReceipts: [],
-      compactionCount: 2,
-      totalUsage: { inputTokens: 8, outputTokens: 2, totalTokens: 10 },
-      lastReportedModel: 'removed-reported-model'
+      revision: 1,
+      sessionId: SESSION_A,
+      title: 'Unavailable Provider session',
+      createdAt: '2026-07-28T00:00:00.000Z',
+      updatedAt: '2026-07-28T00:01:00.000Z',
+      workspace: {
+        id: store.workspaceId,
+        root: store.workspaceRoot
+      },
+      provider: {
+        id: 'removed-provider',
+        model: 'removed-model',
+        lastReportedModel: 'removed-reported-model'
+      },
+      mode: 'plan',
+      engineState: {
+        schemaVersion: 1,
+        messages: [{ role: 'user', content: 'Keep this context' }],
+        pendingFileChangeReceipts: [],
+        compactionCount: 2,
+        totalUsage: { inputTokens: 8, outputTokens: 2, totalTokens: 10 },
+        lastReportedModel: 'removed-reported-model'
+      },
+      usage: {
+        turns: 1,
+        inputTokens: 8,
+        outputTokens: 2,
+        totalTokens: 10
+      },
+      auditSessionId: SESSION_A
     },
-    usage: {
-      turns: 1,
-      inputTokens: 8,
-      outputTokens: 2,
-      totalTokens: 10
-    },
-    auditSessionId: SESSION_A
-  }, savedLease);
+    savedLease
+  );
   await savedLease.release();
 
   const fallbackProvider = {
@@ -445,20 +454,14 @@ test('session switching stays on the current engine when old lease release fails
       throw new Error('lock release failed');
     };
 
-    await assert.rejects(
-      () => controller.newSession('Next'),
-      /lock release failed/
-    );
+    await assert.rejects(() => controller.newSession('Next'), /lock release failed/);
     assert.equal(controller.engine, originalEngine);
     assert.equal(controller.engine.getSessionId(), SESSION_A);
     const nextLease = await store.acquire(SESSION_B);
     await nextLease.release();
 
     controller.lease.release = originalRelease;
-    await assert.rejects(
-      () => controller.newSession('   '),
-      /title cannot be empty/i
-    );
+    await assert.rejects(() => controller.newSession('   '), /title cannot be empty/i);
     assert.equal(controller.engine, originalEngine);
   });
 });

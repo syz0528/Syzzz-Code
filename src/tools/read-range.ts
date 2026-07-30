@@ -40,9 +40,8 @@ export interface ReadRangeSnapshot {
 
 function createReadError(error: unknown): ToolResult {
   const reason = error instanceof Error ? error.message : String(error);
-  const errorCode = error && typeof error === 'object' && 'code' in error
-    ? String(error.code)
-    : undefined;
+  const errorCode =
+    error && typeof error === 'object' && 'code' in error ? String(error.code) : undefined;
   return {
     content: `Read failed: ${reason}`,
     isError: true,
@@ -85,9 +84,7 @@ async function readUtf8Range(
         'NOT_REGULAR_FILE'
       );
     }
-    const maximumBytes = explicitRange
-      ? MAX_RANGED_FILE_BYTES
-      : MAX_UNRANGED_FILE_BYTES;
+    const maximumBytes = explicitRange ? MAX_RANGED_FILE_BYTES : MAX_UNRANGED_FILE_BYTES;
     if (initialStats.size > maximumBytes) {
       const guidance = explicitRange
         ? 'Use Grep to locate relevant content in larger files.'
@@ -129,16 +126,14 @@ async function readUtf8Range(
       }
 
       const characters = Array.from(rawLine);
-      const content = characters.length > MAX_READ_LINE_CHARACTERS
-        ? `${characters.slice(0, MAX_READ_LINE_CHARACTERS).join('')} [line truncated]`
-        : rawLine;
+      const content =
+        characters.length > MAX_READ_LINE_CHARACTERS
+          ? `${characters.slice(0, MAX_READ_LINE_CHARACTERS).join('')} [line truncated]`
+          : rawLine;
       if (content !== rawLine) {
         longLinesTruncated += 1;
       }
-      const estimatedLineBytes = Buffer.byteLength(
-        `${totalLines}| ${content}\n`,
-        'utf8'
-      );
+      const estimatedLineBytes = Buffer.byteLength(`${totalLines}| ${content}\n`, 'utf8');
       if (selectedBodyBytes + estimatedLineBytes > MAX_READ_BODY_BYTES) {
         firstUnshownLine = totalLines;
         return;
@@ -187,10 +182,7 @@ async function readUtf8Range(
         throw error;
       }
       if (error instanceof TypeError) {
-        throw new FileContentError(
-          `File is not valid UTF-8: ${displayPath}`,
-          'INVALID_UTF8'
-        );
+        throw new FileContentError(`File is not valid UTF-8: ${displayPath}`, 'INVALID_UTF8');
       }
       throw error;
     }
@@ -199,16 +191,14 @@ async function readUtf8Range(
       totalLines += 1;
       if (totalLines >= offset && totalLines < offset + limit) {
         const characters = Array.from(pendingText);
-        const content = characters.length > MAX_READ_LINE_CHARACTERS
-          ? `${characters.slice(0, MAX_READ_LINE_CHARACTERS).join('')} [line truncated]`
-          : pendingText;
+        const content =
+          characters.length > MAX_READ_LINE_CHARACTERS
+            ? `${characters.slice(0, MAX_READ_LINE_CHARACTERS).join('')} [line truncated]`
+            : pendingText;
         if (content !== pendingText) {
           longLinesTruncated += 1;
         }
-        const estimatedLineBytes = Buffer.byteLength(
-          `${totalLines}| ${content}\n`,
-          'utf8'
-        );
+        const estimatedLineBytes = Buffer.byteLength(`${totalLines}| ${content}\n`, 'utf8');
         if (
           firstUnshownLine === undefined &&
           selectedBodyBytes + estimatedLineBytes <= MAX_READ_BODY_BYTES
@@ -238,28 +228,27 @@ async function readUtf8Range(
       firstUnshownLine = rangeLimitOffset;
     }
     const width = Math.max(1, String(Math.max(totalLines, offset)).length);
-    const body = selectedLines.length > 0
-      ? selectedLines
-        .map(line => `${String(line.number).padStart(width)}| ${line.content}`)
-        .join('\n')
-      : '(no lines in this range)';
+    const body =
+      selectedLines.length > 0
+        ? selectedLines
+            .map((line) => `${String(line.number).padStart(width)}| ${line.content}`)
+            .join('\n')
+        : '(no lines in this range)';
     const startLine = selectedLines[0]?.number ?? offset;
     const endLine = selectedLines.at(-1)?.number ?? Math.min(offset - 1, totalLines);
     const versionHash = contentHash.digest('hex');
     const lineEnding = classifyLineEnding(lfCount, crlfCount);
-    const continuation = firstUnshownLine !== undefined
-      ? `\n\n[More content available: continue with offset ${firstUnshownLine}]`
-      : '';
+    const continuation =
+      firstUnshownLine !== undefined
+        ? `\n\n[More content available: continue with offset ${firstUnshownLine}]`
+        : '';
     const header = [
       `File: ${displayPath}`,
       `Version: sha256:${versionHash}`,
       `Lines: ${startLine}-${Math.max(startLine - 1, endLine)} of ${totalLines}`,
       `Line ending: ${lineEnding}`
     ].join('\n');
-    const limited = limitUtf8Head(
-      `${header}\n\n${body}${continuation}`,
-      MAX_READ_RESULT_BYTES
-    );
+    const limited = limitUtf8Head(`${header}\n\n${body}${continuation}`, MAX_READ_RESULT_BYTES);
 
     return {
       content: limited.text,
@@ -281,24 +270,24 @@ async function readUtf8Range(
   }
 }
 
-const readInputSchema = z.object({
-  path: z.string()
-    .trim()
-    .min(1, 'Path cannot be empty')
-    .max(MAX_PATH_CHARACTERS, 'Path is too long')
-    .describe('A UTF-8 file inside the workspace'),
-  offset: z.number()
-    .int()
-    .min(1)
-    .optional()
-    .describe('One-based first line; defaults to 1'),
-  limit: z.number()
-    .int()
-    .min(1)
-    .max(MAX_READ_LINES)
-    .optional()
-    .describe(`Maximum lines; defaults to ${DEFAULT_READ_LINES}`)
-}).strict();
+const readInputSchema = z
+  .object({
+    path: z
+      .string()
+      .trim()
+      .min(1, 'Path cannot be empty')
+      .max(MAX_PATH_CHARACTERS, 'Path is too long')
+      .describe('A UTF-8 file inside the workspace'),
+    offset: z.number().int().min(1).optional().describe('One-based first line; defaults to 1'),
+    limit: z
+      .number()
+      .int()
+      .min(1)
+      .max(MAX_READ_LINES)
+      .optional()
+      .describe(`Maximum lines; defaults to ${DEFAULT_READ_LINES}`)
+  })
+  .strict();
 
 export const readRangeTool = defineTool({
   name: 'Read',
@@ -309,13 +298,9 @@ export const readRangeTool = defineTool({
   approval: 'never',
   async execute(input, context) {
     try {
-      const targetPath = await resolveWorkspacePath(
-        input.path,
-        context.workspaceRoot,
-        'read'
-      );
-      const displayPath = relative(context.workspaceRoot, targetPath)
-        .replaceAll('\\', '/') || input.path;
+      const targetPath = await resolveWorkspacePath(input.path, context.workspaceRoot, 'read');
+      const displayPath =
+        relative(context.workspaceRoot, targetPath).replaceAll('\\', '/') || input.path;
       const snapshot = await readUtf8Range(
         targetPath,
         displayPath,

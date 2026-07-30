@@ -94,11 +94,13 @@ function delegatingProvider({
           message: {
             role: 'assistant',
             content: '',
-            toolCalls: [{
-              id: 'delegate-1',
-              name: 'Delegate',
-              input: { role, task }
-            }]
+            toolCalls: [
+              {
+                id: 'delegate-1',
+                name: 'Delegate',
+                input: { role, task }
+              }
+            ]
           },
           usage: { inputTokens: 10, outputTokens: 1, totalTokens: 11 }
         };
@@ -140,30 +142,18 @@ test('subagent Provider context is capped at 32K without exposing fork()', () =>
     }
   };
   const bounded = createBoundedSubagentProvider(provider);
-  assert.equal(
-    bounded.getInfo().contextWindowTokens,
-    SUBAGENT_CONTEXT_WINDOW_TOKENS
-  );
+  assert.equal(bounded.getInfo().contextWindowTokens, SUBAGENT_CONTEXT_WINDOW_TOKENS);
   assert.equal(bounded.fork, undefined);
 });
 
 test('explore and review subagents expose only their bounded read-only tools', () => {
   assert.deepEqual(
-    createSubagentToolSet('explore').map(tool => tool.name),
+    createSubagentToolSet('explore').map((tool) => tool.name),
     ['Glob', 'Grep', 'ListDirectory', 'Read', 'GitStatus', 'RepoMap']
   );
   assert.deepEqual(
-    createSubagentToolSet('review').map(tool => tool.name),
-    [
-      'Glob',
-      'Grep',
-      'ListDirectory',
-      'Read',
-      'GitStatus',
-      'RepoMap',
-      'GitDiff',
-      'Diagnostics'
-    ]
+    createSubagentToolSet('review').map((tool) => tool.name),
+    ['Glob', 'Grep', 'ListDirectory', 'Read', 'GitStatus', 'RepoMap', 'GitDiff', 'Diagnostics']
   );
   for (const tool of createSubagentToolSet('review')) {
     assert.equal(tool.risk, 'read');
@@ -174,7 +164,7 @@ test('explore and review subagents expose only their bounded read-only tools', (
 });
 
 test('Delegate runs an isolated ask+safe child and aggregates usage', async () => {
-  await withTempDirectory(async directory => {
+  await withTempDirectory(async (directory) => {
     let childRequest;
     const fixture = delegatingProvider({
       role: 'explore',
@@ -238,23 +228,20 @@ test('Delegate runs an isolated ask+safe child and aggregates usage', async () =
       outputTokens: 4,
       totalTokens: 29
     });
-    assert.deepEqual(childRequest.tools.map(tool => tool.name), [
-      'Glob',
-      'Grep',
-      'ListDirectory',
-      'Read',
-      'GitStatus',
-      'RepoMap'
-    ]);
+    assert.deepEqual(
+      childRequest.tools.map((tool) => tool.name),
+      ['Glob', 'Grep', 'ListDirectory', 'Read', 'GitStatus', 'RepoMap']
+    );
     assert.match(childRequest.systemPrompt, /Work mode: ask/);
     assert.match(childRequest.systemPrompt, /Permission mode: safe/);
     assert.match(childRequest.systemPrompt, /bounded read-only subagent/);
     assert.equal(fixture.getForks(), 1);
-    assert.ok(events.some(event =>
-      event.type === 'provider_request_started' &&
-      event.purpose === 'subagent'
-    ));
-    const completed = events.find(event => event.type === 'subagent_completed');
+    assert.ok(
+      events.some(
+        (event) => event.type === 'provider_request_started' && event.purpose === 'subagent'
+      )
+    );
+    const completed = events.find((event) => event.type === 'subagent_completed');
     assert.equal(completed.outcome, 'success');
     assert.equal(completed.stopReason, 'completed');
     assert.equal(completed.role, 'explore');
@@ -263,42 +250,37 @@ test('Delegate runs an isolated ask+safe child and aggregates usage', async () =
       outputTokens: 2,
       totalTokens: 7
     });
-    const ordered = events.map(event =>
-      event.type === 'hook_started'
-        ? `${event.type}:${event.event}`
-        : event.type
+    const ordered = events.map((event) =>
+      event.type === 'hook_started' ? `${event.type}:${event.event}` : event.type
     );
+    assert.ok(ordered.indexOf('subagent_started') < ordered.indexOf('hook_started:SubagentStart'));
     assert.ok(
-      ordered.indexOf('subagent_started') <
-      ordered.indexOf('hook_started:SubagentStart')
+      ordered.indexOf('hook_started:SubagentStart') < ordered.indexOf('subagent_completed')
     );
-    assert.ok(
-      ordered.indexOf('hook_started:SubagentStart') <
-      ordered.indexOf('subagent_completed')
-    );
-    assert.ok(
-      ordered.indexOf('subagent_completed') <
-      ordered.indexOf('hook_started:SubagentStop')
-    );
+    assert.ok(ordered.indexOf('subagent_completed') < ordered.indexOf('hook_started:SubagentStop'));
     const subagentStartInvocation = subagentHookInvocations.find(
-      invocation => invocation.event === 'SubagentStart'
+      (invocation) => invocation.event === 'SubagentStart'
     );
     const subagentStopInvocation = subagentHookInvocations.find(
-      invocation => invocation.event === 'SubagentStop'
+      (invocation) => invocation.event === 'SubagentStop'
     );
     assert.deepEqual(subagentStartInvocation.payload, {
       role: 'explore'
     });
-    assert.deepEqual(
-      Object.keys(subagentStopInvocation.payload).sort(),
-      ['durationMs', 'outcome', 'role', 'stopReason', 'toolCalls', 'usage']
-    );
+    assert.deepEqual(Object.keys(subagentStopInvocation.payload).sort(), [
+      'durationMs',
+      'outcome',
+      'role',
+      'stopReason',
+      'toolCalls',
+      'usage'
+    ]);
     assert.deepEqual(engine.getStatus().totalUsage, result.usage);
   });
 });
 
 test('only a bounded child report enters parent history', async () => {
-  await withTempDirectory(async directory => {
+  await withTempDirectory(async (directory) => {
     const fixture = delegatingProvider({
       childResponse: 'x'.repeat(SUBAGENT_MAX_REPORT_BYTES * 2)
     });
@@ -311,23 +293,18 @@ test('only a bounded child report enters parent history', async () => {
 
     const { result } = await collect(engine.runTurn('delegate'));
     assert.equal(result.status, 'completed');
-    const toolMessage = engine.getMessages().find(message =>
-      message.role === 'tool' && message.toolName === 'Delegate'
-    );
+    const toolMessage = engine
+      .getMessages()
+      .find((message) => message.role === 'tool' && message.toolName === 'Delegate');
     assert.ok(toolMessage);
-    assert.ok(
-      Buffer.byteLength(toolMessage.content, 'utf8') <= SUBAGENT_MAX_REPORT_BYTES
-    );
+    assert.ok(Buffer.byteLength(toolMessage.content, 'utf8') <= SUBAGENT_MAX_REPORT_BYTES);
     assert.match(toolMessage.content, /Subagent report truncated/);
-    assert.equal(
-      JSON.stringify(engine.exportState()).includes('x'.repeat(21_000)),
-      false
-    );
+    assert.equal(JSON.stringify(engine.exportState()).includes('x'.repeat(21_000)), false);
   });
 });
 
 test('a parent turn starts at most two subagents', async () => {
-  await withTempDirectory(async directory => {
+  await withTempDirectory(async (directory) => {
     let parentCalls = 0;
     let forks = 0;
     const provider = {
@@ -338,7 +315,7 @@ test('a parent turn starts at most two subagents', async () => {
             message: {
               role: 'assistant',
               content: '',
-              toolCalls: [1, 2, 3].map(index => ({
+              toolCalls: [1, 2, 3].map((index) => ({
                 id: `delegate-${index}`,
                 name: 'Delegate',
                 input: {
@@ -372,12 +349,9 @@ test('a parent turn starts at most two subagents', async () => {
     const { events, result } = await collect(engine.runTurn('three delegates'));
     assert.equal(result.status, 'completed');
     assert.equal(forks, 2);
-    assert.equal(
-      events.filter(event => event.type === 'subagent_started').length,
-      2
-    );
-    const delegateCompletions = events.filter(event =>
-      event.type === 'tool_completed' && event.toolName === 'Delegate'
+    assert.equal(events.filter((event) => event.type === 'subagent_started').length, 2);
+    const delegateCompletions = events.filter(
+      (event) => event.type === 'tool_completed' && event.toolName === 'Delegate'
     );
     assert.equal(delegateCompletions.length, 3);
     assert.equal(delegateCompletions.at(-1).outcome, 'error');
@@ -386,7 +360,7 @@ test('a parent turn starts at most two subagents', async () => {
 });
 
 test('disabled subagents are hidden and forged Delegate calls fail closed', async () => {
-  await withTempDirectory(async directory => {
+  await withTempDirectory(async (directory) => {
     let parentCalls = 0;
     let firstTools;
     let forks = 0;
@@ -394,16 +368,18 @@ test('disabled subagents are hidden and forged Delegate calls fail closed', asyn
       async chat(request) {
         parentCalls += 1;
         if (parentCalls === 1) {
-          firstTools = request.tools.map(tool => tool.name);
+          firstTools = request.tools.map((tool) => tool.name);
           return {
             message: {
               role: 'assistant',
               content: '',
-              toolCalls: [{
-                id: 'forged-delegate',
-                name: 'Delegate',
-                input: { role: 'explore', task: 'forged' }
-              }]
+              toolCalls: [
+                {
+                  id: 'forged-delegate',
+                  name: 'Delegate',
+                  input: { role: 'explore', task: 'forged' }
+                }
+              ]
             }
           };
         }
@@ -426,8 +402,8 @@ test('disabled subagents are hidden and forged Delegate calls fail closed', asyn
     assert.equal(result.status, 'completed');
     assert.equal(firstTools.includes('Delegate'), false);
     assert.equal(forks, 0);
-    const completed = events.find(event =>
-      event.type === 'tool_completed' && event.toolName === 'Delegate'
+    const completed = events.find(
+      (event) => event.type === 'tool_completed' && event.toolName === 'Delegate'
     );
     assert.equal(completed.outcome, 'error');
     assert.match(completed.result, /disabled/);
@@ -435,9 +411,9 @@ test('disabled subagents are hidden and forged Delegate calls fail closed', asyn
 });
 
 test('parent cancellation aborts the child and emits one cancelled subagent outcome', async () => {
-  await withTempDirectory(async directory => {
+  await withTempDirectory(async (directory) => {
     let notifyChildStarted;
-    const childStarted = new Promise(resolve => {
+    const childStarted = new Promise((resolve) => {
       notifyChildStarted = resolve;
     });
     let childAborted = false;
@@ -449,11 +425,13 @@ test('parent cancellation aborts the child and emits one cancelled subagent outc
           message: {
             role: 'assistant',
             content: '',
-            toolCalls: [{
-              id: 'cancel-delegate',
-              name: 'Delegate',
-              input: { role: 'review', task: 'wait' }
-            }]
+            toolCalls: [
+              {
+                id: 'cancel-delegate',
+                name: 'Delegate',
+                input: { role: 'review', task: 'wait' }
+              }
+            ]
           }
         };
       },
@@ -463,10 +441,14 @@ test('parent cancellation aborts the child and emits one cancelled subagent outc
           chat(request) {
             notifyChildStarted();
             return new Promise((resolve, reject) => {
-              request.signal.addEventListener('abort', () => {
-                childAborted = true;
-                reject(new Error('aborted'));
-              }, { once: true });
+              request.signal.addEventListener(
+                'abort',
+                () => {
+                  childAborted = true;
+                  reject(new Error('aborted'));
+                },
+                { once: true }
+              );
             });
           },
           getInfo: info
@@ -480,18 +462,18 @@ test('parent cancellation aborts the child and emits one cancelled subagent outc
       audit: false
     });
     const controller = new AbortController();
-    const collecting = collect(engine.runTurn('cancel child', {
-      signal: controller.signal
-    }));
+    const collecting = collect(
+      engine.runTurn('cancel child', {
+        signal: controller.signal
+      })
+    );
 
     await childStarted;
     controller.abort(new Error('cancel parent'));
     const { events, result } = await collecting;
     assert.equal(result.status, 'cancelled');
     assert.equal(childAborted, true);
-    const completed = events.filter(event =>
-      event.type === 'subagent_completed'
-    );
+    const completed = events.filter((event) => event.type === 'subagent_completed');
     assert.equal(completed.length, 1);
     assert.equal(completed[0].outcome, 'cancelled');
     assert.equal(events.at(-1).type, 'turn_cancelled');
@@ -499,7 +481,7 @@ test('parent cancellation aborts the child and emits one cancelled subagent outc
 });
 
 test('subagent closes tools and synthesizes after six tool rounds', async () => {
-  await withTempDirectory(async directory => {
+  await withTempDirectory(async (directory) => {
     let parentCalls = 0;
     let childCalls = 0;
     let finalChildRequest;
@@ -511,11 +493,13 @@ test('subagent closes tools and synthesizes after six tool rounds', async () => 
             message: {
               role: 'assistant',
               content: '',
-              toolCalls: [{
-                id: 'loop-delegate',
-                name: 'Delegate',
-                input: { role: 'explore', task: 'loop' }
-              }]
+              toolCalls: [
+                {
+                  id: 'loop-delegate',
+                  name: 'Delegate',
+                  input: { role: 'explore', task: 'loop' }
+                }
+              ]
             }
           };
         }
@@ -539,11 +523,13 @@ test('subagent closes tools and synthesizes after six tool rounds', async () => 
               message: {
                 role: 'assistant',
                 content: '',
-                toolCalls: [{
-                  id: `list-${childCalls}`,
-                  name: 'ListDirectory',
-                  input: { path: '.' }
-                }]
+                toolCalls: [
+                  {
+                    id: `list-${childCalls}`,
+                    name: 'ListDirectory',
+                    input: { path: '.' }
+                  }
+                ]
               }
             };
           },
@@ -561,7 +547,7 @@ test('subagent closes tools and synthesizes after six tool rounds', async () => 
     const { events, result } = await collect(engine.runTurn('loop child'));
     assert.equal(result.status, 'completed');
     assert.equal(childCalls, 7);
-    const completed = events.find(event => event.type === 'subagent_completed');
+    const completed = events.find((event) => event.type === 'subagent_completed');
     assert.equal(completed.outcome, 'partial');
     assert.equal(completed.stopReason, 'tool-round-limit');
     assert.equal(completed.toolCalls, 6);
@@ -572,7 +558,7 @@ test('subagent closes tools and synthesizes after six tool rounds', async () => 
 });
 
 test('subagent soft deadline reserves a final no-tool synthesis request', async () => {
-  await withTempDirectory(async directory => {
+  await withTempDirectory(async (directory) => {
     let clock = 0;
     let parentCalls = 0;
     let childCalls = 0;
@@ -584,11 +570,13 @@ test('subagent soft deadline reserves a final no-tool synthesis request', async 
             message: {
               role: 'assistant',
               content: '',
-              toolCalls: [{
-                id: 'soft-deadline-delegate',
-                name: 'Delegate',
-                input: { role: 'explore', task: 'bounded investigation' }
-              }]
+              toolCalls: [
+                {
+                  id: 'soft-deadline-delegate',
+                  name: 'Delegate',
+                  input: { role: 'explore', task: 'bounded investigation' }
+                }
+              ]
             }
           };
         }
@@ -612,11 +600,13 @@ test('subagent soft deadline reserves a final no-tool synthesis request', async 
               message: {
                 role: 'assistant',
                 content: '',
-                toolCalls: [{
-                  id: `soft-list-${childCalls}`,
-                  name: 'ListDirectory',
-                  input: { path: '.' }
-                }]
+                toolCalls: [
+                  {
+                    id: `soft-list-${childCalls}`,
+                    name: 'ListDirectory',
+                    input: { path: '.' }
+                  }
+                ]
               }
             };
           },
@@ -635,7 +625,7 @@ test('subagent soft deadline reserves a final no-tool synthesis request', async 
     const { events, result } = await collect(engine.runTurn('soft deadline'));
     assert.equal(result.status, 'completed');
     assert.equal(childCalls, 3);
-    const completed = events.find(event => event.type === 'subagent_completed');
+    const completed = events.find((event) => event.type === 'subagent_completed');
     assert.equal(completed.outcome, 'partial');
     assert.equal(completed.stopReason, 'soft-timeout');
     assert.equal(completed.toolCalls, 2);
@@ -643,7 +633,7 @@ test('subagent soft deadline reserves a final no-tool synthesis request', async 
 });
 
 test('subagent tool-call budget closes tools and reserves one synthesis', async () => {
-  await withTempDirectory(async directory => {
+  await withTempDirectory(async (directory) => {
     let parentCalls = 0;
     let childCalls = 0;
     const provider = {
@@ -654,11 +644,13 @@ test('subagent tool-call budget closes tools and reserves one synthesis', async 
               message: {
                 role: 'assistant',
                 content: '',
-                toolCalls: [{
-                  id: 'tool-budget-delegate',
-                  name: 'Delegate',
-                  input: { role: 'explore', task: 'bounded calls' }
-                }]
+                toolCalls: [
+                  {
+                    id: 'tool-budget-delegate',
+                    name: 'Delegate',
+                    input: { role: 'explore', task: 'bounded calls' }
+                  }
+                ]
               }
             }
           : { message: { role: 'assistant', content: 'parent done' } };
@@ -701,7 +693,7 @@ test('subagent tool-call budget closes tools and reserves one synthesis', async 
 
     const { events, result } = await collect(engine.runTurn('tool budget'));
     assert.equal(result.status, 'completed');
-    const completed = events.find(event => event.type === 'subagent_completed');
+    const completed = events.find((event) => event.type === 'subagent_completed');
     assert.equal(completed.outcome, 'partial');
     assert.equal(completed.stopReason, 'tool-call-limit');
     assert.equal(completed.toolCalls, 16);
@@ -711,7 +703,7 @@ test('subagent tool-call budget closes tools and reserves one synthesis', async 
 });
 
 test('subagent soft token budget reserves one final no-tool synthesis', async () => {
-  await withTempDirectory(async directory => {
+  await withTempDirectory(async (directory) => {
     let parentCalls = 0;
     let childCalls = 0;
     const childRequests = [];
@@ -723,11 +715,13 @@ test('subagent soft token budget reserves one final no-tool synthesis', async ()
               message: {
                 role: 'assistant',
                 content: '',
-                toolCalls: [{
-                  id: 'soft-token-delegate',
-                  name: 'Delegate',
-                  input: { role: 'explore', task: 'bounded token review' }
-                }]
+                toolCalls: [
+                  {
+                    id: 'soft-token-delegate',
+                    name: 'Delegate',
+                    input: { role: 'explore', task: 'bounded token review' }
+                  }
+                ]
               }
             }
           : { message: { role: 'assistant', content: 'parent done' } };
@@ -755,11 +749,13 @@ test('subagent soft token budget reserves one final no-tool synthesis', async ()
               message: {
                 role: 'assistant',
                 content: 'Evidence gathered before token synthesis.',
-                toolCalls: [{
-                  id: 'soft-token-status',
-                  name: 'GitStatus',
-                  input: {}
-                }]
+                toolCalls: [
+                  {
+                    id: 'soft-token-status',
+                    name: 'GitStatus',
+                    input: {}
+                  }
+                ]
               },
               usage: {
                 inputTokens: 95_000,
@@ -784,7 +780,7 @@ test('subagent soft token budget reserves one final no-tool synthesis', async ()
     assert.equal(childCalls, 2);
     assert.equal(childRequests[0].tools.length > 0, true);
     assert.deepEqual(childRequests[1].tools, []);
-    const completed = events.find(event => event.type === 'subagent_completed');
+    const completed = events.find((event) => event.type === 'subagent_completed');
     assert.equal(completed.outcome, 'partial');
     assert.equal(completed.stopReason, 'soft-token-limit');
     assert.equal(completed.toolCalls, 1);
@@ -793,7 +789,7 @@ test('subagent soft token budget reserves one final no-tool synthesis', async ()
 });
 
 test('subagent hard token budget returns bounded partial evidence without tools', async () => {
-  await withTempDirectory(async directory => {
+  await withTempDirectory(async (directory) => {
     let parentCalls = 0;
     let childCalls = 0;
     const provider = {
@@ -804,11 +800,13 @@ test('subagent hard token budget returns bounded partial evidence without tools'
               message: {
                 role: 'assistant',
                 content: '',
-                toolCalls: [{
-                  id: 'token-budget-delegate',
-                  name: 'Delegate',
-                  input: { role: 'review', task: 'review safely' }
-                }]
+                toolCalls: [
+                  {
+                    id: 'token-budget-delegate',
+                    name: 'Delegate',
+                    input: { role: 'review', task: 'review safely' }
+                  }
+                ]
               }
             }
           : { message: { role: 'assistant', content: 'parent used partial' } };
@@ -822,11 +820,13 @@ test('subagent hard token budget returns bounded partial evidence without tools'
               message: {
                 role: 'assistant',
                 content: 'Partial evidence gathered before the hard stop.',
-                toolCalls: [{
-                  id: 'blocked-after-hard-token',
-                  name: 'GitStatus',
-                  input: {}
-                }]
+                toolCalls: [
+                  {
+                    id: 'blocked-after-hard-token',
+                    name: 'GitStatus',
+                    input: {}
+                  }
+                ]
               },
               usage: {
                 inputTokens: 127_000,
@@ -848,21 +848,21 @@ test('subagent hard token budget returns bounded partial evidence without tools'
 
     const { events, result } = await collect(engine.runTurn('hard budget'));
     assert.equal(result.status, 'completed');
-    const completed = events.find(event => event.type === 'subagent_completed');
+    const completed = events.find((event) => event.type === 'subagent_completed');
     assert.equal(completed.outcome, 'partial');
     assert.equal(completed.stopReason, 'hard-token-limit');
     assert.equal(completed.toolCalls, 0);
     assert.equal(completed.providerCalls, 1);
     assert.equal(childCalls, 1);
-    const delegateResult = events.find(event =>
-      event.type === 'tool_completed' && event.toolName === 'Delegate'
+    const delegateResult = events.find(
+      (event) => event.type === 'tool_completed' && event.toolName === 'Delegate'
     );
     assert.match(delegateResult.result, /Partial evidence gathered/);
   });
 });
 
 test('a failed Delegate forces the parent to report without tool fallback', async () => {
-  await withTempDirectory(async directory => {
+  await withTempDirectory(async (directory) => {
     const parentRequests = [];
     let parentCalls = 0;
     const provider = {
@@ -874,11 +874,13 @@ test('a failed Delegate forces the parent to report without tool fallback', asyn
             message: {
               role: 'assistant',
               content: '',
-              toolCalls: [{
-                id: 'empty-delegate',
-                name: 'Delegate',
-                input: { role: 'review', task: 'return nothing' }
-              }]
+              toolCalls: [
+                {
+                  id: 'empty-delegate',
+                  name: 'Delegate',
+                  input: { role: 'review', task: 'return nothing' }
+                }
+              ]
             }
           };
         }
@@ -912,7 +914,7 @@ test('a failed Delegate forces the parent to report without tool fallback', asyn
     assert.equal(parentRequests.length, 2);
     assert.deepEqual(parentRequests[1].tools, []);
     assert.match(parentRequests[1].systemPrompt, /do not retry delegation/i);
-    const completed = events.find(event => event.type === 'subagent_completed');
+    const completed = events.find((event) => event.type === 'subagent_completed');
     assert.equal(completed.outcome, 'error');
     assert.equal(completed.errorCode, 'malformed_response');
   });

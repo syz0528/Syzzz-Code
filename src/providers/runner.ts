@@ -119,25 +119,17 @@ interface RetryDecision {
 }
 
 function positiveInteger(value: number | undefined, fallback: number): number {
-  return value !== undefined && Number.isInteger(value) && value > 0
-    ? value
-    : fallback;
+  return value !== undefined && Number.isInteger(value) && value > 0 ? value : fallback;
 }
 
 function resolveOptions(options: ProviderRunnerOptions): ResolvedRunnerOptions {
   return {
     maxAttempts: positiveInteger(options.maxAttempts, DEFAULT_MAX_ATTEMPTS),
-    attemptTimeoutMs: positiveInteger(
-      options.attemptTimeoutMs,
-      DEFAULT_ATTEMPT_TIMEOUT_MS
-    ),
+    attemptTimeoutMs: positiveInteger(options.attemptTimeoutMs, DEFAULT_ATTEMPT_TIMEOUT_MS),
     totalTimeoutMs: positiveInteger(options.totalTimeoutMs, DEFAULT_TOTAL_TIMEOUT_MS),
     baseDelayMs: positiveInteger(options.baseDelayMs, DEFAULT_BASE_DELAY_MS),
     maxDelayMs: positiveInteger(options.maxDelayMs, DEFAULT_MAX_DELAY_MS),
-    maxRetryAfterMs: positiveInteger(
-      options.maxRetryAfterMs,
-      DEFAULT_MAX_RETRY_AFTER_MS
-    ),
+    maxRetryAfterMs: positiveInteger(options.maxRetryAfterMs, DEFAULT_MAX_RETRY_AFTER_MS),
     random: options.random ?? Math.random,
     now: options.now ?? Date.now,
     idFactory: options.idFactory ?? randomUUID,
@@ -174,9 +166,9 @@ export function calculateBackoffDelay(
 ): number {
   const exponentialDelay = Math.min(
     options.maxDelayMs,
-    options.baseDelayMs * (2 ** Math.max(0, attempt - 1))
+    options.baseDelayMs * 2 ** Math.max(0, attempt - 1)
   );
-  const jitterMultiplier = 0.8 + (Math.min(1, Math.max(0, options.random())) * 0.4);
+  const jitterMultiplier = 0.8 + Math.min(1, Math.max(0, options.random())) * 0.4;
   return Math.round(exponentialDelay * jitterMultiplier);
 }
 
@@ -200,10 +192,7 @@ async function abortableSleep(delayMs: number, signal: AbortSignal): Promise<voi
   });
 }
 
-function waitForOperation<T>(
-  operation: PromiseLike<T>,
-  signal: AbortSignal
-): Promise<T> {
+function waitForOperation<T>(operation: PromiseLike<T>, signal: AbortSignal): Promise<T> {
   if (signal.aborted) {
     // The operation has already been created by the caller. Observe its
     // eventual rejection so an SDK abort cannot escape as an unhandled promise.
@@ -221,11 +210,11 @@ function waitForOperation<T>(
     signal.addEventListener('abort', handleAbort, { once: true });
 
     Promise.resolve(operation).then(
-      value => {
+      (value) => {
         signal.removeEventListener('abort', handleAbort);
         resolve(value);
       },
-      error => {
+      (error) => {
         signal.removeEventListener('abort', handleAbort);
         reject(error);
       }
@@ -234,10 +223,12 @@ function waitForOperation<T>(
 }
 
 function sameUsage(left: ProviderUsage | undefined, right: ProviderUsage): boolean {
-  return left !== undefined &&
+  return (
+    left !== undefined &&
     left.inputTokens === right.inputTokens &&
     left.outputTokens === right.outputTokens &&
-    left.totalTokens === right.totalTokens;
+    left.totalTokens === right.totalTokens
+  );
 }
 
 function createAttemptController(
@@ -286,11 +277,7 @@ function decideRetry(
   elapsedMs: number,
   options: ResolvedRunnerOptions
 ): RetryDecision {
-  if (
-    attempt >= options.maxAttempts ||
-    hasVisibleText ||
-    hasToolCallDelta
-  ) {
+  if (attempt >= options.maxAttempts || hasVisibleText || hasToolCallDelta) {
     return { shouldRetry: false, delayMs: 0 };
   }
 
@@ -298,11 +285,7 @@ function decideRetry(
   let disableStreamUsage = false;
   let shouldDisableReasoning = false;
 
-  if (
-    error.code === 'unsupported_feature' &&
-    error.feature === 'stream_options' &&
-    includeUsage
-  ) {
+  if (error.code === 'unsupported_feature' && error.feature === 'stream_options' && includeUsage) {
     delayMs = 0;
     disableStreamUsage = true;
   } else if (
@@ -397,10 +380,7 @@ export async function* runProviderRequest(
 
         try {
           while (true) {
-            const next = await waitForOperation(
-              stream.next(),
-              attemptController.controller.signal
-            );
+            const next = await waitForOperation(stream.next(), attemptController.controller.signal);
             if (next.done) {
               streamCompleted = true;
               response = next.value;
@@ -536,15 +516,13 @@ export async function* runProviderRequest(
         };
       }
 
-      const {
-        reasoningContent,
-        ...messageWithoutReasoning
-      } = response.message;
+      const { reasoningContent, ...messageWithoutReasoning } = response.message;
       const committedResponse: ProviderChatResponse = {
         ...response,
-        message: response.message.toolCalls?.length && reasoningContent
-          ? { ...messageWithoutReasoning, reasoningContent }
-          : messageWithoutReasoning
+        message:
+          response.message.toolCalls?.length && reasoningContent
+            ? { ...messageWithoutReasoning, reasoningContent }
+            : messageWithoutReasoning
       };
       yield {
         type: 'request_completed',
@@ -584,11 +562,7 @@ export async function* runProviderRequest(
           cause: rawError
         });
       } else {
-        error = normalizeProviderError(
-          rawError,
-          providerInfo.name,
-          resolvedOptions.now()
-        );
+        error = normalizeProviderError(rawError, providerInfo.name, resolvedOptions.now());
       }
 
       const elapsedMs = resolvedOptions.now() - startedAt;

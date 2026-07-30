@@ -39,9 +39,7 @@ function appendBounded(
   };
 }
 
-function terminateProcess(
-  child: ChildProcessWithoutNullStreams
-): Promise<unknown> {
+function terminateProcess(child: ChildProcessWithoutNullStreams): Promise<unknown> {
   if (child.exitCode !== null || child.signalCode !== null) {
     return Promise.resolve();
   }
@@ -120,12 +118,7 @@ export async function runBoundedProcess(
     child.stdin.end(options.stdin);
 
     child.stdout.on('data', (chunk: Buffer) => {
-      const appended = appendBounded(
-        stdoutChunks,
-        stdoutBytes,
-        chunk,
-        options.maxStdoutBytes
-      );
+      const appended = appendBounded(stdoutChunks, stdoutBytes, chunk, options.maxStdoutBytes);
       stdoutBytes = appended.bytes;
       stdoutTruncated ||= appended.truncated;
       if (appended.truncated) {
@@ -133,12 +126,7 @@ export async function runBoundedProcess(
       }
     });
     child.stderr.on('data', (chunk: Buffer) => {
-      const appended = appendBounded(
-        stderrChunks,
-        stderrBytes,
-        chunk,
-        options.maxStderrBytes
-      );
+      const appended = appendBounded(stderrChunks, stderrBytes, chunk, options.maxStderrBytes);
       stderrBytes = appended.bytes;
       stderrTruncated ||= appended.truncated;
       if (appended.truncated) {

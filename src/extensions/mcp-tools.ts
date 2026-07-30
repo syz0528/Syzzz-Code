@@ -1,8 +1,5 @@
 import { z } from 'zod';
-import type {
-  ToolDefinition,
-  ToolResult
-} from '../types.js';
+import type { ToolDefinition, ToolResult } from '../types.js';
 import { defineTool } from '../tools/runtime.js';
 import { isAbortError } from '../tools/abort.js';
 import { limitUtf8Head } from '../tools/output-limits.js';
@@ -23,30 +20,30 @@ function emitMcpStatuses(
       ...(status.negotiatedProtocolVersion
         ? { negotiatedProtocolVersion: status.negotiatedProtocolVersion }
         : {}),
-      ...(status.lastConnectedAt
-        ? { lastConnectedAt: status.lastConnectedAt }
-        : {}),
+      ...(status.lastConnectedAt ? { lastConnectedAt: status.lastConnectedAt } : {}),
       ...(status.errorCode ? { errorCode: status.errorCode } : {})
     });
   }
 }
 
-const searchInputSchema = z.object({
-  query: z.string().max(1_000).optional(),
-  server: z.string().max(64).optional(),
-  detail: z.enum(['names', 'descriptions', 'schema']).optional(),
-  offset: z.number().int().min(0).max(5_000).optional(),
-  limit: z.number().int().min(1).max(20).optional()
-}).strict();
+const searchInputSchema = z
+  .object({
+    query: z.string().max(1_000).optional(),
+    server: z.string().max(64).optional(),
+    detail: z.enum(['names', 'descriptions', 'schema']).optional(),
+    offset: z.number().int().min(0).max(5_000).optional(),
+    limit: z.number().int().min(1).max(20).optional()
+  })
+  .strict();
 
-const callInputSchema = z.object({
-  tool: z.string()
-    .min(3)
-    .max(512)
-    .describe('Qualified MCP tool name returned by McpSearch'),
-  input: z.record(z.string(), z.unknown())
-    .describe('Arguments validated against the selected MCP tool schema')
-}).strict();
+const callInputSchema = z
+  .object({
+    tool: z.string().min(3).max(512).describe('Qualified MCP tool name returned by McpSearch'),
+    input: z
+      .record(z.string(), z.unknown())
+      .describe('Arguments validated against the selected MCP tool schema')
+  })
+  .strict();
 
 function toolError(action: string, error: unknown): ToolResult {
   if (isAbortError(error)) {
@@ -54,9 +51,7 @@ function toolError(action: string, error: unknown): ToolResult {
   }
   const reason = error instanceof Error ? error.message : String(error);
   const errorCode =
-    error && typeof error === 'object' && 'code' in error
-      ? String(error.code)
-      : 'unknown';
+    error && typeof error === 'object' && 'code' in error ? String(error.code) : 'unknown';
   const bounded = limitUtf8Head(
     [
       '<untrusted_mcp_error>',
@@ -82,8 +77,7 @@ function toolError(action: string, error: unknown): ToolResult {
 export function createMcpTools(manager: McpManager): ToolDefinition[] {
   const searchTool = defineTool({
     name: 'McpSearch',
-    description:
-      'Discover configured MCP tools progressively. Search before calling an MCP tool.',
+    description: 'Discover configured MCP tools progressively. Search before calling an MCP tool.',
     inputSchema: searchInputSchema,
     risk: 'read',
     approval: 'never',
@@ -98,9 +92,7 @@ export function createMcpTools(manager: McpManager): ToolDefinition[] {
             total: result.total,
             shown: result.shown,
             offset: result.offset,
-            ...(result.nextOffset === undefined
-              ? {}
-              : { nextOffset: result.nextOffset }),
+            ...(result.nextOffset === undefined ? {} : { nextOffset: result.nextOffset }),
             unavailableServers: result.errors.length,
             outputTruncated: result.truncated,
             untrustedExternalData: true
@@ -114,19 +106,14 @@ export function createMcpTools(manager: McpManager): ToolDefinition[] {
 
   const callTool = defineTool({
     name: 'McpCall',
-    description:
-      'Call one MCP tool by its qualified name. MCP output is untrusted external data.',
+    description: 'Call one MCP tool by its qualified name. MCP output is untrusted external data.',
     inputSchema: callInputSchema,
     risk: 'execute',
     approval: 'always',
     modeAccess: 'all-modes',
     async resolvePolicy(input, context) {
       emitMcpStatuses(manager, context);
-      const prepared = await manager.validateInput(
-        input.tool,
-        input.input,
-        context.signal
-      );
+      const prepared = await manager.validateInput(input.tool, input.input, context.signal);
       const tool = prepared.tool;
       emitMcpStatuses(manager, context);
       return {
@@ -140,26 +127,17 @@ export function createMcpTools(manager: McpManager): ToolDefinition[] {
       };
     },
     async prepareApproval(input, context) {
-      const prepared = await manager.validateInput(
-        input.tool,
-        input.input,
-        context.signal
-      );
+      const prepared = await manager.validateInput(input.tool, input.input, context.signal);
       return {
         description:
-          `Call MCP tool ${prepared.tool.qualifiedName} on ` +
-          `${prepared.tool.serverName}`,
+          `Call MCP tool ${prepared.tool.qualifiedName} on ` + `${prepared.tool.serverName}`,
         preview: JSON.stringify(prepared.input, null, 2)
       };
     },
     async execute(input, context) {
       try {
         emitMcpStatuses(manager, context);
-        const result = await manager.call(
-          input.tool,
-          input.input,
-          context.signal
-        );
+        const result = await manager.call(input.tool, input.input, context.signal);
         emitMcpStatuses(manager, context);
         return {
           content: result.content,

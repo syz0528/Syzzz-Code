@@ -1,10 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { LocalAuditLogger, type AgentEventSink } from './audit.js';
 import type { ExtensionRuntime } from './extensions/runtime.js';
-import type {
-  ExtensionStatus,
-  HookEventName
-} from './extensions/types.js';
+import type { ExtensionStatus, HookEventName } from './extensions/types.js';
 import type { HookRunResult } from './extensions/hooks.js';
 import { loadConfig, resolveProviderCredential } from './config.js';
 import {
@@ -29,10 +26,7 @@ import {
   modeSystemInstructions,
   type AgentMode
 } from './modes.js';
-import {
-  DEFAULT_PERMISSION_MODE,
-  type PermissionMode
-} from './permissions/mode.js';
+import { DEFAULT_PERMISSION_MODE, type PermissionMode } from './permissions/mode.js';
 import { requiresUserApproval } from './permissions/policy.js';
 import { createProvider } from './providers/factory.js';
 import type {
@@ -61,10 +55,7 @@ import type {
 import { isAbortError, OperationAbortedError, throwIfAborted } from './tools/abort.js';
 import { createToolSet } from './tools/index.js';
 import { limitUtf8Head } from './tools/output-limits.js';
-import {
-  convertToolSchemaToJsonSchema,
-  validateToolInput
-} from './tools/runtime.js';
+import { convertToolSchemaToJsonSchema, validateToolInput } from './tools/runtime.js';
 import { resolveShellInvocation } from './tools/shell-runner.js';
 import {
   createBoundedSubagentProvider,
@@ -97,10 +88,7 @@ const COMPACTION_SYSTEM_PROMPT = [
 const COMPACTION_USER_PROMPT_PREFIX =
   'Summarize this earlier conversation context for continuation:\n\n';
 
-const BASIC_APPROVAL_CHOICES: readonly ToolApprovalChoice[] = Object.freeze([
-  'allow-once',
-  'deny'
-]);
+const BASIC_APPROVAL_CHOICES: readonly ToolApprovalChoice[] = Object.freeze(['allow-once', 'deny']);
 const WRITE_APPROVAL_CHOICES: readonly ToolApprovalChoice[] = Object.freeze([
   'allow-once',
   'allow-edits-session',
@@ -137,17 +125,14 @@ function sanitizeToolMetadataForHook(
   if (!metadata) {
     return undefined;
   }
-  const blockedKey = /(?:path|command|argument|input|output|content|diff|url|header|token|key|secret|stdout|stderr|response)/i;
+  const blockedKey =
+    /(?:path|command|argument|input|output|content|diff|url|header|token|key|secret|stdout|stderr|response)/i;
   const sanitized: Record<string, unknown> = {};
   for (const [key, value] of Object.entries(metadata)) {
     if (blockedKey.test(key)) {
       continue;
     }
-    if (
-      typeof value === 'boolean' ||
-      typeof value === 'number' ||
-      value === null
-    ) {
+    if (typeof value === 'boolean' || typeof value === 'number' || value === null) {
       sanitized[key] = value;
       continue;
     }
@@ -204,10 +189,7 @@ type BudgetStopReason =
 
 class AgentBudgetError extends Error {
   constructor(
-    public readonly code: Extract<
-      BudgetStopReason,
-      'provider-call-limit' | 'hard-token-limit'
-    >,
+    public readonly code: Extract<BudgetStopReason, 'provider-call-limit' | 'hard-token-limit'>,
     message: string
   ) {
     super(message);
@@ -244,24 +226,17 @@ export interface FileChangeReceipt {
   versionHash?: string;
 }
 
-function portableMessages(
-  messages: readonly ConversationMessage[]
-): ConversationMessage[] {
-  return messages.map(message => {
+function portableMessages(messages: readonly ConversationMessage[]): ConversationMessage[] {
+  return messages.map((message) => {
     if (message.role !== 'assistant' || message.reasoningContent === undefined) {
       return message;
     }
-    const {
-      reasoningContent: _reasoningContent,
-      ...portableMessage
-    } = message;
+    const { reasoningContent: _reasoningContent, ...portableMessage } = message;
     return portableMessage;
   });
 }
 
-function mergeFileChangeReceipts(
-  ...groups: readonly FileChangeReceipt[][]
-): FileChangeReceipt[] {
+function mergeFileChangeReceipts(...groups: readonly FileChangeReceipt[][]): FileChangeReceipt[] {
   const receipts = new Map<string, FileChangeReceipt>();
   for (const group of groups) {
     for (const receipt of group) {
@@ -289,10 +264,7 @@ function validateEngineState(state: QueryEngineStateV1): void {
     if (message.role === 'user') {
       if (
         typeof message.content !== 'string' ||
-        (
-          message.kind !== undefined &&
-          message.kind !== 'compaction-summary'
-        )
+        (message.kind !== undefined && message.kind !== 'compaction-summary')
       ) {
         throw new Error('engine state contains an invalid user message');
       }
@@ -301,20 +273,17 @@ function validateEngineState(state: QueryEngineStateV1): void {
     if (message.role === 'assistant') {
       if (
         typeof message.content !== 'string' ||
-        (
-          message.toolCalls !== undefined &&
-          (
-            !Array.isArray(message.toolCalls) ||
-            message.toolCalls.some(toolCall =>
-              typeof toolCall !== 'object' ||
-              toolCall === null ||
-              typeof toolCall.id !== 'string' ||
-              !toolCall.id ||
-              typeof toolCall.name !== 'string' ||
-              !toolCall.name
-            )
-          )
-        )
+        (message.toolCalls !== undefined &&
+          (!Array.isArray(message.toolCalls) ||
+            message.toolCalls.some(
+              (toolCall) =>
+                typeof toolCall !== 'object' ||
+                toolCall === null ||
+                typeof toolCall.id !== 'string' ||
+                !toolCall.id ||
+                typeof toolCall.name !== 'string' ||
+                !toolCall.name
+            )))
       ) {
         throw new Error('engine state contains an invalid assistant message');
       }
@@ -327,10 +296,7 @@ function validateEngineState(state: QueryEngineStateV1): void {
         typeof message.toolName !== 'string' ||
         !message.toolName ||
         typeof message.content !== 'string' ||
-        (
-          message.isError !== undefined &&
-          typeof message.isError !== 'boolean'
-        )
+        (message.isError !== undefined && typeof message.isError !== 'boolean')
       ) {
         throw new Error('engine state contains an invalid tool message');
       }
@@ -350,10 +316,7 @@ function validateEngineState(state: QueryEngineStateV1): void {
     ) {
       throw new Error('engine state contains an invalid file change receipt');
     }
-    if (
-      receipt.versionHash !== undefined &&
-      typeof receipt.versionHash !== 'string'
-    ) {
+    if (receipt.versionHash !== undefined && typeof receipt.versionHash !== 'string') {
       throw new Error('engine state contains an invalid file version hash');
     }
   }
@@ -372,8 +335,7 @@ function validateEngineState(state: QueryEngineStateV1): void {
   }
   if (
     state.lastReportedModel !== undefined &&
-    (typeof state.lastReportedModel !== 'string' ||
-      !state.lastReportedModel.trim())
+    (typeof state.lastReportedModel !== 'string' || !state.lastReportedModel.trim())
   ) {
     throw new Error('engine state contains an invalid reported model');
   }
@@ -446,8 +408,7 @@ export type EngineCheckpointHandler = (
   state: QueryEngineStateV1
 ) => void | Promise<void>;
 
-export type EnginePersistenceStatusProvider =
-  () => EnginePersistenceStatus;
+export type EnginePersistenceStatusProvider = () => EnginePersistenceStatus;
 
 export interface QueryEngineOptions {
   provider?: AIProvider;
@@ -521,10 +482,12 @@ export class QueryEngine {
 
   constructor(options: QueryEngineOptions = {}) {
     this.extensions = options.extensions;
-    this.tools = options.tools ?? createToolSet({
-      mcpManager: this.extensions?.mcp,
-      delegateTool: this.extensions ? createDelegateTool() : undefined
-    });
+    this.tools =
+      options.tools ??
+      createToolSet({
+        mcpManager: this.extensions?.mcp,
+        delegateTool: this.extensions ? createDelegateTool() : undefined
+      });
     this.workspaceRoot = options.workspaceRoot ?? process.cwd();
     this.permissionMode = options.permissionMode ?? DEFAULT_PERMISSION_MODE;
     this.mode = options.mode ?? DEFAULT_AGENT_MODE;
@@ -542,9 +505,7 @@ export class QueryEngine {
       this.maxToolRounds < 1 ||
       this.maxToolRounds > DEFAULT_MAX_TOOL_ROUNDS
     ) {
-      throw new Error(
-        `maxToolRounds must be an integer from 1 to ${DEFAULT_MAX_TOOL_ROUNDS}`
-      );
+      throw new Error(`maxToolRounds must be an integer from 1 to ${DEFAULT_MAX_TOOL_ROUNDS}`);
     }
     this.maxToolCalls = options.maxToolCalls;
     this.maxProviderCalls = options.maxProviderCalls;
@@ -552,10 +513,7 @@ export class QueryEngine {
       ['maxToolCalls', this.maxToolCalls],
       ['maxProviderCalls', this.maxProviderCalls]
     ] as const) {
-      if (
-        value !== undefined &&
-        (!Number.isSafeInteger(value) || value < 1 || value > 10_000)
-      ) {
+      if (value !== undefined && (!Number.isSafeInteger(value) || value < 1 || value > 10_000)) {
         throw new Error(`${name} must be an integer from 1 to 10000`);
       }
     }
@@ -565,36 +523,23 @@ export class QueryEngine {
     this.hardTokenBudget = options.hardTokenBudget;
     if (
       this.toolSoftDeadlineMs !== undefined &&
-      (
-        !Number.isSafeInteger(this.toolSoftDeadlineMs) ||
-        this.toolSoftDeadlineMs < 1
-      )
+      (!Number.isSafeInteger(this.toolSoftDeadlineMs) || this.toolSoftDeadlineMs < 1)
     ) {
       throw new Error('toolSoftDeadlineMs must be a positive integer');
     }
     if (
       this.softTokenBudget !== undefined &&
-      (
-        !Number.isSafeInteger(this.softTokenBudget) ||
-        this.softTokenBudget < 1
-      )
+      (!Number.isSafeInteger(this.softTokenBudget) || this.softTokenBudget < 1)
     ) {
       throw new Error('softTokenBudget must be a positive integer');
     }
     if (
       this.hardTokenBudget !== undefined &&
-      (
-        !Number.isSafeInteger(this.hardTokenBudget) ||
+      (!Number.isSafeInteger(this.hardTokenBudget) ||
         this.hardTokenBudget < 1 ||
-        (
-          this.softTokenBudget !== undefined &&
-          this.hardTokenBudget <= this.softTokenBudget
-        )
-      )
+        (this.softTokenBudget !== undefined && this.hardTokenBudget <= this.softTokenBudget))
     ) {
-      throw new Error(
-        'hardTokenBudget must be a positive integer above softTokenBudget'
-      );
+      throw new Error('hardTokenBudget must be a positive integer above softTokenBudget');
     }
     this.systemPromptSuffix = options.systemPromptSuffix?.trim() || undefined;
 
@@ -615,9 +560,11 @@ export class QueryEngine {
     }
     if (!resolveProviderCredential(providerConfig).value) {
       throw new Error(
-        'No API key found for provider: ' + providerConfig.name + '\n\n' +
-        'Set your API key:\n' +
-        '  syzzz config set apiKey\n'
+        'No API key found for provider: ' +
+          providerConfig.name +
+          '\n\n' +
+          'Set your API key:\n' +
+          '  syzzz config set apiKey\n'
       );
     }
 
@@ -681,20 +628,14 @@ export class QueryEngine {
     this.onCheckpointError = onError;
   }
 
-  setPersistenceStatusProvider(
-    provider: EnginePersistenceStatusProvider | undefined
-  ): void {
+  setPersistenceStatusProvider(provider: EnginePersistenceStatusProvider | undefined): void {
     if (this.isProcessing) {
-      throw new Error(
-        'Cannot replace the persistence status provider during an operation'
-      );
+      throw new Error('Cannot replace the persistence status provider during an operation');
     }
     this.persistenceStatus = provider;
   }
 
-  private async requestCheckpoint(
-    reason: EngineCheckpointReason
-  ): Promise<void> {
+  private async requestCheckpoint(reason: EngineCheckpointReason): Promise<void> {
     if (!this.checkpoint) {
       return;
     }
@@ -750,9 +691,7 @@ export class QueryEngine {
       mode: this.mode,
       permissionMode: this.permissionMode,
       provider: this.getProviderInfo(),
-      ...(this.lastReportedModel
-        ? { lastReportedModel: this.lastReportedModel }
-        : {}),
+      ...(this.lastReportedModel ? { lastReportedModel: this.lastReportedModel } : {}),
       messageCount: this.messages.length,
       totalUsage: { ...this.totalUsage },
       persistence: this.persistenceStatus?.() ?? {
@@ -808,16 +747,11 @@ export class QueryEngine {
       schemaVersion: 1,
       messages: structuredClone(portableMessages(this.messages)),
       pendingFileChangeReceipts: structuredClone(
-        mergeFileChangeReceipts(
-          this.pendingFileChangeReceipts,
-          this.activeFileChangeReceipts
-        )
+        mergeFileChangeReceipts(this.pendingFileChangeReceipts, this.activeFileChangeReceipts)
       ),
       compactionCount: this.contextManager.compactions,
       totalUsage: { ...this.totalUsage },
-      ...(this.lastReportedModel
-        ? { lastReportedModel: this.lastReportedModel }
-        : {})
+      ...(this.lastReportedModel ? { lastReportedModel: this.lastReportedModel } : {})
     };
   }
 
@@ -827,9 +761,7 @@ export class QueryEngine {
     }
     validateEngineState(state);
     this.messages = structuredClone(portableMessages(state.messages));
-    this.pendingFileChangeReceipts = structuredClone(
-      state.pendingFileChangeReceipts
-    );
+    this.pendingFileChangeReceipts = structuredClone(state.pendingFileChangeReceipts);
     this.activeFileChangeReceipts = [];
     this.totalUsage = { ...state.totalUsage };
     this.lastReportedModel = state.lastReportedModel;
@@ -852,12 +784,10 @@ export class QueryEngine {
   }
 
   private getAllowedTools(): ToolDefinition[] {
-    return this.tools.filter(tool =>
-      isToolAllowedInMode(this.mode, tool) &&
-      (
-        tool.name !== 'Delegate' ||
-        Boolean(this.extensions?.canRunSubagents?.())
-      )
+    return this.tools.filter(
+      (tool) =>
+        isToolAllowedInMode(this.mode, tool) &&
+        (tool.name !== 'Delegate' || Boolean(this.extensions?.canRunSubagents?.()))
     );
   }
 
@@ -872,42 +802,35 @@ export class QueryEngine {
     if (!runner) {
       return { decision: 'continue' };
     }
-    return yield *runner.run({
-      event: eventName,
-      context: {
-        sessionId: this.sessionId,
-        turnId,
-        mode: this.mode,
-        permissionMode: this.permissionMode
+    return yield* runner.run(
+      {
+        event: eventName,
+        context: {
+          sessionId: this.sessionId,
+          turnId,
+          mode: this.mode,
+          permissionMode: this.permissionMode
+        },
+        workspaceRoot: this.workspaceRoot,
+        timestamp: new Date(this.now()).toISOString(),
+        ...(subject ? { subject } : {}),
+        payload
       },
-      workspaceRoot: this.workspaceRoot,
-      timestamp: new Date(this.now()).toISOString(),
-      ...(subject ? { subject } : {}),
-      payload
-    }, signal);
+      signal
+    );
   }
 
   private async *runTerminalHooks(
-    eventName: Extract<
-      HookEventName,
-      'TurnCompleted' | 'TurnFailed' | 'TurnCancelled'
-    >,
+    eventName: Extract<HookEventName, 'TurnCompleted' | 'TurnFailed' | 'TurnCancelled'>,
     turnId: string,
     payload: Record<string, unknown>
   ): AsyncGenerator<AgentEventData, void> {
     const controller = new AbortController();
     const timeout = setTimeout(() => {
-      controller.abort(
-        new OperationAbortedError('Terminal Hook budget expired')
-      );
+      controller.abort(new OperationAbortedError('Terminal Hook budget expired'));
     }, 2_000);
     timeout.unref?.();
-    const hooks = this.runHooks(
-      eventName,
-      turnId,
-      payload,
-      controller.signal
-    );
+    const hooks = this.runHooks(eventName, turnId, payload, controller.signal);
     let completed = false;
     try {
       while (true) {
@@ -930,7 +853,7 @@ export class QueryEngine {
   }
 
   private getProviderTools(): ProviderTool[] {
-    return this.getAllowedTools().map(tool => ({
+    return this.getAllowedTools().map((tool) => ({
       name: tool.name,
       description: tool.description,
       inputSchema: convertToolSchemaToJsonSchema(tool)
@@ -955,13 +878,17 @@ export class QueryEngine {
       handleAbort();
     }
 
-    const providerRun = runProviderRequest(this.provider, {
-      ...request,
-      signal: requestController.signal
-    }, {
-      ...this.providerRunnerOptions,
-      ...runnerOverrides
-    });
+    const providerRun = runProviderRequest(
+      this.provider,
+      {
+        ...request,
+        signal: requestController.signal
+      },
+      {
+        ...this.providerRunnerOptions,
+        ...runnerOverrides
+      }
+    );
     let providerRunCompleted = false;
     let providerRunFailed = false;
     let usage = cumulativeUsage;
@@ -1108,23 +1035,15 @@ export class QueryEngine {
     if (!budget) {
       return;
     }
-    if (
-      budget.maximum !== undefined &&
-      budget.count >= budget.maximum
-    ) {
+    if (budget.maximum !== undefined && budget.count >= budget.maximum) {
       throw new AgentBudgetError(
         'provider-call-limit',
         `Provider call limit exceeded (${budget.maximum})`
       );
     }
     const projectedTokens =
-      (cumulativeUsage?.totalTokens ?? 0) +
-      budget.unreportedEstimatedTokens +
-      estimatedInputTokens;
-    if (
-      this.hardTokenBudget !== undefined &&
-      projectedTokens >= this.hardTokenBudget
-    ) {
+      (cumulativeUsage?.totalTokens ?? 0) + budget.unreportedEstimatedTokens + estimatedInputTokens;
+    if (this.hardTokenBudget !== undefined && projectedTokens >= this.hardTokenBudget) {
       throw new AgentBudgetError(
         'hard-token-limit',
         `Hard token budget would be exceeded (${this.hardTokenBudget})`
@@ -1137,10 +1056,7 @@ export class QueryEngine {
     budget: ProviderCallBudget,
     cumulativeUsage?: ProviderUsage
   ): number {
-    return (
-      (cumulativeUsage?.totalTokens ?? 0) +
-      budget.unreportedEstimatedTokens
-    );
+    return (cumulativeUsage?.totalTokens ?? 0) + budget.unreportedEstimatedTokens;
   }
 
   private async *prepareContextBudget(
@@ -1175,16 +1091,12 @@ export class QueryEngine {
     };
 
     const exceedsSafeThreshold = () =>
-      enforceSafeThreshold &&
-      measurement.estimatedInputTokens >= measurement.triggerTokens;
+      enforceSafeThreshold && measurement.estimatedInputTokens >= measurement.triggerTokens;
     const needsCompaction = () =>
       force ||
       measurement.shouldCompact ||
       exceedsSafeThreshold() ||
-      (
-        targetingCompactionGoal &&
-        measurement.estimatedInputTokens > measurement.targetTokens
-      );
+      (targetingCompactionGoal && measurement.estimatedInputTokens > measurement.targetTokens);
     if (!needsCompaction()) {
       return { messages: workingMessages, usage, measurement, compactions };
     }
@@ -1244,7 +1156,7 @@ export class QueryEngine {
         beforeTokens: measurement.estimatedInputTokens,
         contextWindowTokens: measurement.contextWindowTokens
       };
-      yield *this.runHooks(
+      yield* this.runHooks(
         'PreCompact',
         turnId,
         {
@@ -1258,12 +1170,11 @@ export class QueryEngine {
 
       try {
         const providerInfo = this.getProviderInfo();
-        const transcriptBudgetBytes =
-          this.contextManager.compactionInputBudgetBytes(
-            COMPACTION_SYSTEM_PROMPT,
-            providerInfo,
-            COMPACTION_USER_PROMPT_PREFIX
-          );
+        const transcriptBudgetBytes = this.contextManager.compactionInputBudgetBytes(
+          COMPACTION_SYSTEM_PROMPT,
+          providerInfo,
+          COMPACTION_USER_PROMPT_PREFIX
+        );
         if (transcriptBudgetBytes <= 0) {
           throw new ContextCompactionError(
             'The model context window is too small to request a safe compaction summary'
@@ -1273,20 +1184,19 @@ export class QueryEngine {
           plan.selectedMessages,
           transcriptBudgetBytes
         );
-        const summaryMessages: ConversationMessage[] = [{
-          role: 'user',
-          content: COMPACTION_USER_PROMPT_PREFIX + transcript.content
-        }];
+        const summaryMessages: ConversationMessage[] = [
+          {
+            role: 'user',
+            content: COMPACTION_USER_PROMPT_PREFIX + transcript.content
+          }
+        ];
         const summaryMeasurement = this.contextManager.measure(
           summaryMessages,
           COMPACTION_SYSTEM_PROMPT,
           [],
           providerInfo
         );
-        if (
-          summaryMeasurement.estimatedInputTokens >=
-          summaryMeasurement.triggerTokens
-        ) {
+        if (summaryMeasurement.estimatedInputTokens >= summaryMeasurement.triggerTokens) {
           throw new ContextCompactionError(
             'The bounded compaction request still exceeds the safe context threshold'
           );
@@ -1297,14 +1207,22 @@ export class QueryEngine {
           usage,
           summaryMeasurement.estimatedInputTokens
         );
-        const summaryRun = this.runProviderWithEvents({
-          messages: summaryMessages,
-          tools: [],
-          systemPrompt: COMPACTION_SYSTEM_PROMPT,
-          signal
-        }, signal, usage, 'compaction', progress, undefined, {
-          maxAttempts: this.contextManager.maxSummaryAttempts
-        });
+        const summaryRun = this.runProviderWithEvents(
+          {
+            messages: summaryMessages,
+            tools: [],
+            systemPrompt: COMPACTION_SYSTEM_PROMPT,
+            signal
+          },
+          signal,
+          usage,
+          'compaction',
+          progress,
+          undefined,
+          {
+            maxAttempts: this.contextManager.maxSummaryAttempts
+          }
+        );
         let summaryResult: ProviderRunResult | undefined;
         let summaryCompleted = false;
         let summaryFailed = false;
@@ -1343,17 +1261,10 @@ export class QueryEngine {
           );
         }
 
-        if (
-          providerCallBudget &&
-          summaryResult &&
-          !summaryResult.usageReported
-        ) {
+        if (providerCallBudget && summaryResult && !summaryResult.usageReported) {
           providerCallBudget.unreportedEstimatedTokens +=
             summaryMeasurement.estimatedInputTokens +
-            Math.ceil(Buffer.byteLength(
-              summaryResult.response.message.content,
-              'utf8'
-            ) / 2);
+            Math.ceil(Buffer.byteLength(summaryResult.response.message.content, 'utf8') / 2);
         }
         usage = summaryResult?.usage;
         workingMessages = applyCompactionPlan(workingMessages, plan, summary);
@@ -1377,7 +1288,7 @@ export class QueryEngine {
           messagesCompacted: plan.selectedMessages.length,
           durationMs
         };
-        yield *this.runHooks(
+        yield* this.runHooks(
           'PostCompact',
           turnId,
           {
@@ -1415,10 +1326,7 @@ export class QueryEngine {
         if (!recoverable) {
           throw error instanceof ContextCompactionError
             ? error
-            : new ContextCompactionError(
-              'Context compaction failed',
-              { cause: error }
-            );
+            : new ContextCompactionError('Context compaction failed', { cause: error });
         }
         return { messages: workingMessages, usage, measurement, compactions };
       }
@@ -1498,14 +1406,10 @@ export class QueryEngine {
             message: 'Another message is still being processed'
           }
         };
-        const terminalHooks = this.runTerminalHooks(
-          'TurnFailed',
-          turnId,
-          {
-            durationMs: result.durationMs,
-            errorCode: result.error.code
-          }
-        );
+        const terminalHooks = this.runTerminalHooks('TurnFailed', turnId, {
+          durationMs: result.durationMs,
+          errorCode: result.error.code
+        });
         for await (const hookEvent of terminalHooks) {
           yield event(hookEvent);
         }
@@ -1520,12 +1424,7 @@ export class QueryEngine {
       this.activeFileChangeReceipts = [];
       this.activeDelegateCalls = 0;
       this.activeSubagentUsage = undefined;
-      const preTurnHooks = this.runHooks(
-        'PreTurn',
-        turnId,
-        { userMessage },
-        signal
-      );
+      const preTurnHooks = this.runHooks('PreTurn', turnId, { userMessage }, signal);
       let preTurnHooksCompleted = false;
       try {
         while (true) {
@@ -1550,18 +1449,13 @@ export class QueryEngine {
       const responseParts: string[] = [];
       const providerTools = this.getProviderTools();
       const confirmedFileSideEffects = new Set<string>();
-      let forcedFinalizationReason:
-        | 'delegate-failure'
-        | 'hook-denial'
-        | undefined;
+      let forcedFinalizationReason: 'delegate-failure' | 'hook-denial' | undefined;
       let forcedBudgetStopReason: BudgetStopReason | undefined;
       let appliedBudgetStopReason: BudgetStopReason | undefined;
       const providerCallBudget: ProviderCallBudget = {
         count: 0,
         unreportedEstimatedTokens: 0,
-        ...(this.maxProviderCalls === undefined
-          ? {}
-          : { maximum: this.maxProviderCalls })
+        ...(this.maxProviderCalls === undefined ? {} : { maximum: this.maxProviderCalls })
       };
       let executedToolCalls = 0;
       let cumulativeUsage: ProviderUsage | undefined;
@@ -1580,75 +1474,58 @@ export class QueryEngine {
         const budgetFinalizationReason =
           this.finalizeOnToolBudget &&
           toolRound > 0 &&
-          (
-            forcedBudgetStopReason !== undefined ||
+          (forcedBudgetStopReason !== undefined ||
             toolRound === this.maxToolRounds ||
-            (
-              this.softTokenBudget !== undefined &&
-              this.observedBudgetTokens(
-                providerCallBudget,
-                cumulativeUsage
-              ) >= this.softTokenBudget
-            ) ||
-            (
-              this.toolSoftDeadlineMs !== undefined &&
-              this.now() - turnStartedAt >= this.toolSoftDeadlineMs
-            )
-          )
-            ? forcedBudgetStopReason ??
-              (
-                toolRound === this.maxToolRounds
-                  ? 'tool-round-limit'
-                  : (
-                      this.softTokenBudget !== undefined &&
-                      this.observedBudgetTokens(
-                        providerCallBudget,
-                        cumulativeUsage
-                      ) >= this.softTokenBudget
-                    )
-                    ? 'soft-token-limit'
-                    : 'soft-timeout'
-              )
+            (this.softTokenBudget !== undefined &&
+              this.observedBudgetTokens(providerCallBudget, cumulativeUsage) >=
+                this.softTokenBudget) ||
+            (this.toolSoftDeadlineMs !== undefined &&
+              this.now() - turnStartedAt >= this.toolSoftDeadlineMs))
+            ? (forcedBudgetStopReason ??
+              (toolRound === this.maxToolRounds
+                ? 'tool-round-limit'
+                : this.softTokenBudget !== undefined &&
+                    this.observedBudgetTokens(providerCallBudget, cumulativeUsage) >=
+                      this.softTokenBudget
+                  ? 'soft-token-limit'
+                  : 'soft-timeout'))
             : undefined;
         if (budgetFinalizationReason) {
           appliedBudgetStopReason = budgetFinalizationReason;
         }
-        const finalizationReason =
-          forcedFinalizationReason ?? budgetFinalizationReason;
+        const finalizationReason = forcedFinalizationReason ?? budgetFinalizationReason;
         const runtimeInstructions: string[] = [];
         if (confirmedFileSideEffects.size > 0) {
           runtimeInstructions.push(
             'Confirmed file side effects succeeded in this turn through: ' +
-            `${[...confirmedFileSideEffects].join(', ')}. ` +
-            'The final answer must disclose these changes and must not claim ' +
-            'that no file was modified.'
+              `${[...confirmedFileSideEffects].join(', ')}. ` +
+              'The final answer must disclose these changes and must not claim ' +
+              'that no file was modified.'
           );
         }
         if (finalizationReason === 'hook-denial') {
           runtimeInstructions.push(
             'A local Hook definitively denied an operation. Tool access is now ' +
-            'closed for this turn. Do not retry it or use another tool to ' +
-            'bypass the denied operation. Explain the limitation accurately.'
+              'closed for this turn. Do not retry it or use another tool to ' +
+              'bypass the denied operation. Explain the limitation accurately.'
           );
         } else if (finalizationReason === 'delegate-failure') {
           runtimeInstructions.push(
             'The requested Delegate operation failed. Tool access is now ' +
-            'closed for this turn. Do not retry delegation or repeat the ' +
-            'delegated investigation yourself. Report the failure and its ' +
-            'known limitation concisely.'
+              'closed for this turn. Do not retry delegation or repeat the ' +
+              'delegated investigation yourself. Report the failure and its ' +
+              'known limitation concisely.'
           );
         } else if (finalizationReason) {
           responseParts.length = 0;
           runtimeInstructions.push(
             'The bounded tool budget is now closed. Do not call tools. Return ' +
-            'the concise final report now using only evidence already gathered. ' +
-            'State any remaining uncertainty instead of requesting more evidence.'
+              'the concise final report now using only evidence already gathered. ' +
+              'State any remaining uncertainty instead of requesting more evidence.'
           );
         }
         const systemPrompt = this.getSystemPrompt(runtimeInstructions);
-        const providerToolsForRound = finalizationReason
-          ? []
-          : providerTools;
+        const providerToolsForRound = finalizationReason ? [] : providerTools;
         const preparation = this.prepareContextBudget(
           workingMessages,
           systemPrompt,
@@ -1692,12 +1569,19 @@ export class QueryEngine {
           );
           yield event({ type: 'phase_changed', phase: 'provider' });
           const progress: ProviderProgress = { visibleContentOrTool: false };
-          const providerRun = this.runProviderWithEvents({
-            messages: workingMessages,
-            tools: providerToolsForRound,
-            systemPrompt,
-            signal
-          }, signal, cumulativeUsage, 'turn', progress, latestMeasurement);
+          const providerRun = this.runProviderWithEvents(
+            {
+              messages: workingMessages,
+              tools: providerToolsForRound,
+              systemPrompt,
+              signal
+            },
+            signal,
+            cumulativeUsage,
+            'turn',
+            progress,
+            latestMeasurement
+          );
           let providerRunCompleted = false;
 
           try {
@@ -1767,27 +1651,17 @@ export class QueryEngine {
         }
 
         const toolCalls = response.message.toolCalls ?? [];
-        let responseBytes = Buffer.byteLength(
-          response.message.content,
-          'utf8'
-        );
+        let responseBytes = Buffer.byteLength(response.message.content, 'utf8');
         try {
-          responseBytes += Buffer.byteLength(
-            JSON.stringify(toolCalls),
-            'utf8'
-          );
+          responseBytes += Buffer.byteLength(JSON.stringify(toolCalls), 'utf8');
         } catch {
           responseBytes += 4_096;
         }
         if (!responseUsageReported) {
           providerCallBudget.unreportedEstimatedTokens +=
-            latestMeasurement.estimatedInputTokens +
-            Math.ceil(responseBytes / 2);
+            latestMeasurement.estimatedInputTokens + Math.ceil(responseBytes / 2);
         }
-        const observedBudgetTokens = this.observedBudgetTokens(
-          providerCallBudget,
-          cumulativeUsage
-        );
+        const observedBudgetTokens = this.observedBudgetTokens(providerCallBudget, cumulativeUsage);
         if (
           this.hardTokenBudget !== undefined &&
           observedBudgetTokens >= this.hardTokenBudget &&
@@ -1807,9 +1681,7 @@ export class QueryEngine {
             response: responseParts.join('\n\n'),
             durationMs: Math.max(0, this.now() - turnStartedAt),
             finishReason: finalFinishReason,
-            ...(appliedBudgetStopReason
-              ? { budgetStopReason: appliedBudgetStopReason }
-              : {}),
+            ...(appliedBudgetStopReason ? { budgetStopReason: appliedBudgetStopReason } : {}),
             usage: turnUsage,
             context: {
               compactions: this.contextManager.compactions - compactionsAtStart,
@@ -1822,15 +1694,11 @@ export class QueryEngine {
               contextWindowTokens: latestMeasurement.contextWindowTokens
             }
           };
-          const terminalHooks = this.runTerminalHooks(
-            'TurnCompleted',
-            turnId,
-            {
-              durationMs: result.durationMs,
-              finishReason: result.finishReason ?? null,
-              usage: result.usage
-            }
-          );
+          const terminalHooks = this.runTerminalHooks('TurnCompleted', turnId, {
+            durationMs: result.durationMs,
+            finishReason: result.finishReason ?? null,
+            usage: result.usage
+          });
           for await (const hookEvent of terminalHooks) {
             yield event(hookEvent);
           }
@@ -1849,15 +1717,11 @@ export class QueryEngine {
         }
 
         if (finalizationReason) {
-          throw new Error(
-            'Provider requested tools after tool access was closed'
-          );
+          throw new Error('Provider requested tools after tool access was closed');
         }
 
         if (toolRound === this.maxToolRounds) {
-          throw new Error(
-            'Tool call limit exceeded (' + this.maxToolRounds + ' rounds)'
-          );
+          throw new Error('Tool call limit exceeded (' + this.maxToolRounds + ' rounds)');
         }
 
         let closeRemainingTools = false;
@@ -1889,9 +1753,7 @@ export class QueryEngine {
               durationMs: 0,
               result: content,
               metadata: {
-                reason: forcedBudgetStopReason
-                  ? forcedBudgetStopReason
-                  : 'turn-tool-access-closed'
+                reason: forcedBudgetStopReason ? forcedBudgetStopReason : 'turn-tool-access-closed'
               }
             });
             workingMessages.push({
@@ -1904,15 +1766,14 @@ export class QueryEngine {
             continue;
           }
           executedToolCalls += 1;
-          const toolResultBudgetBytes =
-            this.contextManager.toolResultBudgetBytes(
-              workingMessages,
-              systemPrompt,
-              providerTools,
-              this.getProviderInfo(),
-              toolCall.id,
-              toolCall.name
-            );
+          const toolResultBudgetBytes = this.contextManager.toolResultBudgetBytes(
+            workingMessages,
+            systemPrompt,
+            providerTools,
+            this.getProviderInfo(),
+            toolCall.id,
+            toolCall.name
+          );
           const toolRun = this.executeToolCall(
             turnId,
             toolCall.id,
@@ -1925,9 +1786,7 @@ export class QueryEngine {
           let toolRunCompleted = false;
           let toolRunFailed = false;
           let toolResultMessage: ToolResultMessage | undefined;
-          let toolCompletedEvent:
-            | Extract<AgentEventData, { type: 'tool_completed' }>
-            | undefined;
+          let toolCompletedEvent: Extract<AgentEventData, { type: 'tool_completed' }> | undefined;
 
           try {
             while (true) {
@@ -1956,11 +1815,7 @@ export class QueryEngine {
           }
           if (
             toolCompletedEvent?.outcome === 'success' &&
-            (
-              toolCall.name === 'Write' ||
-              toolCall.name === 'Edit' ||
-              toolCall.name === 'Patch'
-            )
+            (toolCall.name === 'Write' || toolCall.name === 'Edit' || toolCall.name === 'Patch')
           ) {
             confirmedFileSideEffects.add(toolCall.name);
           }
@@ -1970,10 +1825,7 @@ export class QueryEngine {
           ) {
             forcedFinalizationReason = 'hook-denial';
             closeRemainingTools = true;
-          } else if (
-            toolCall.name === 'Delegate' &&
-            toolResultMessage?.isError
-          ) {
+          } else if (toolCall.name === 'Delegate' && toolResultMessage?.isError) {
             forcedFinalizationReason = 'delegate-failure';
             closeRemainingTools = true;
           }
@@ -1990,11 +1842,10 @@ export class QueryEngine {
           durationMs,
           reason
         };
-        const terminalHooks = this.runTerminalHooks(
-          'TurnCancelled',
-          turnId,
-          { durationMs, reason: 'user_cancelled' }
-        );
+        const terminalHooks = this.runTerminalHooks('TurnCancelled', turnId, {
+          durationMs,
+          reason: 'user_cancelled'
+        });
         for await (const hookEvent of terminalHooks) {
           yield event(hookEvent);
         }
@@ -2007,17 +1858,11 @@ export class QueryEngine {
         durationMs,
         error: toAgentError(error)
       };
-      const terminalHooks = this.runTerminalHooks(
-        'TurnFailed',
-        turnId,
-        {
-          durationMs,
-          errorCode: result.error.code,
-          ...(result.error.status === undefined
-            ? {}
-            : { status: result.error.status })
-        }
-      );
+      const terminalHooks = this.runTerminalHooks('TurnFailed', turnId, {
+        durationMs,
+        errorCode: result.error.code,
+        ...(result.error.status === undefined ? {} : { status: result.error.status })
+      });
       for await (const hookEvent of terminalHooks) {
         yield event(hookEvent);
       }
@@ -2108,11 +1953,9 @@ export class QueryEngine {
         providerTools,
         this.getProviderInfo()
       );
-      const availablePlan = this.contextManager.createPlan(
-        this.messages,
-        beforeMeasurement,
-        { allowLatestIntraTurn: true }
-      );
+      const availablePlan = this.contextManager.createPlan(this.messages, beforeMeasurement, {
+        allowLatestIntraTurn: true
+      });
       if (!availablePlan) {
         return {
           status: 'skipped',
@@ -2172,9 +2015,7 @@ export class QueryEngine {
     } finally {
       externalSignal?.removeEventListener('abort', handleExternalAbort);
       if (!signal.aborted) {
-        operationController.abort(
-          new OperationAbortedError('Compaction consumer closed')
-        );
+        operationController.abort(new OperationAbortedError('Compaction consumer closed'));
       }
       if (ownsProcessingLock) {
         this.isProcessing = false;
@@ -2208,10 +2049,7 @@ export class QueryEngine {
 
   private async *completeSubagent(
     turnId: string,
-    completion: Extract<
-      AgentEventData,
-      { type: 'subagent_completed' }
-    >,
+    completion: Extract<AgentEventData, { type: 'subagent_completed' }>,
     signal: AbortSignal
   ): AsyncGenerator<AgentEventData, void> {
     yield completion;
@@ -2224,25 +2062,21 @@ export class QueryEngine {
       signal.addEventListener('abort', handleAbort, { once: true });
     }
     const timeout = setTimeout(() => {
-      controller.abort(
-        new OperationAbortedError('SubagentStop Hook budget expired')
-      );
+      controller.abort(new OperationAbortedError('SubagentStop Hook budget expired'));
     }, 2_000);
     timeout.unref?.();
     try {
       if (!signal.aborted) {
-        yield *this.runHooks(
+        yield* this.runHooks(
           'SubagentStop',
-        turnId,
-        {
-          role: completion.role,
-          outcome: completion.outcome,
-          durationMs: completion.durationMs,
-          toolCalls: completion.toolCalls,
-          ...(completion.usage ? { usage: completion.usage } : {}),
-          ...(completion.stopReason
-            ? { stopReason: completion.stopReason }
-              : {})
+          turnId,
+          {
+            role: completion.role,
+            outcome: completion.outcome,
+            durationMs: completion.durationMs,
+            toolCalls: completion.toolCalls,
+            ...(completion.usage ? { usage: completion.usage } : {}),
+            ...(completion.stopReason ? { stopReason: completion.stopReason } : {})
           },
           controller.signal,
           completion.role
@@ -2263,10 +2097,7 @@ export class QueryEngine {
     turnId: string,
     signal: AbortSignal
   ): AsyncGenerator<AgentEventData, ToolResult> {
-    if (
-      !this.extensions?.canRunSubagents?.() ||
-      typeof this.provider.fork !== 'function'
-    ) {
+    if (!this.extensions?.canRunSubagents?.() || typeof this.provider.fork !== 'function') {
       return {
         content:
           'Delegate failed: subagents are disabled or the current Provider ' +
@@ -2312,7 +2143,7 @@ export class QueryEngine {
       subagentId,
       role: input.role
     };
-    yield *this.runHooks(
+    yield* this.runHooks(
       'SubagentStart',
       turnId,
       {
@@ -2391,18 +2222,10 @@ export class QueryEngine {
               };
               break;
             case 'text_delta':
-              if (
-                Buffer.byteLength(visibleText, 'utf8') <
-                SUBAGENT_MAX_REPORT_BYTES
-              ) {
+              if (Buffer.byteLength(visibleText, 'utf8') < SUBAGENT_MAX_REPORT_BYTES) {
                 const remaining =
-                  SUBAGENT_MAX_REPORT_BYTES -
-                  Buffer.byteLength(visibleText, 'utf8');
-                visibleText += limitUtf8Head(
-                  childEvent.delta,
-                  remaining,
-                  ''
-                ).text;
+                  SUBAGENT_MAX_REPORT_BYTES - Buffer.byteLength(visibleText, 'utf8');
+                visibleText += limitUtf8Head(childEvent.delta, remaining, '').text;
               }
               break;
             case 'provider_request_failed':
@@ -2444,10 +2267,7 @@ export class QueryEngine {
               break;
             case 'usage_updated':
               usage = addUsage(usage, childEvent.usage);
-              this.activeSubagentUsage = addUsage(
-                this.activeSubagentUsage,
-                childEvent.usage
-              );
+              this.activeSubagentUsage = addUsage(this.activeSubagentUsage, childEvent.usage);
               this.totalUsage = addUsage(this.totalUsage, childEvent.usage);
               yield {
                 type: 'usage_updated',
@@ -2481,18 +2301,22 @@ export class QueryEngine {
       const durationMs = Math.max(0, this.now() - startedAt);
       if (childResult.status === 'completed') {
         if (!childResult.response.trim()) {
-          yield *this.completeSubagent(turnId, {
-            type: 'subagent_completed',
-            subagentId,
-            role: input.role,
-            outcome: 'error',
-            durationMs,
-            toolCalls,
-            providerCalls,
-            stopReason: 'empty-report',
-            ...(usage ? { usage } : {}),
-            errorCode: 'empty_report'
-          }, controller.signal);
+          yield* this.completeSubagent(
+            turnId,
+            {
+              type: 'subagent_completed',
+              subagentId,
+              role: input.role,
+              outcome: 'error',
+              durationMs,
+              toolCalls,
+              providerCalls,
+              stopReason: 'empty-report',
+              ...(usage ? { usage } : {}),
+              errorCode: 'empty_report'
+            },
+            controller.signal
+          );
           return {
             content: 'Delegate failed: subagent returned an empty report',
             isError: true,
@@ -2518,21 +2342,23 @@ export class QueryEngine {
           '\n\n[Subagent report truncated]'
         );
         const stopReason = childResult.budgetStopReason ?? 'completed';
-        const outcome = childResult.budgetStopReason
-          ? 'partial'
-          : 'success';
-        yield *this.completeSubagent(turnId, {
-          type: 'subagent_completed',
-          subagentId,
-          role: input.role,
-          outcome,
-          durationMs,
-          toolCalls,
-          providerCalls,
-          stopReason,
-          reportTruncated: report.truncated,
-          ...(usage ? { usage } : {})
-        }, controller.signal);
+        const outcome = childResult.budgetStopReason ? 'partial' : 'success';
+        yield* this.completeSubagent(
+          turnId,
+          {
+            type: 'subagent_completed',
+            subagentId,
+            role: input.role,
+            outcome,
+            durationMs,
+            toolCalls,
+            providerCalls,
+            stopReason,
+            reportTruncated: report.truncated,
+            ...(usage ? { usage } : {})
+          },
+          controller.signal
+        );
         return {
           content: report.text,
           metadata: {
@@ -2565,19 +2391,23 @@ export class QueryEngine {
             SUBAGENT_MAX_REPORT_BYTES,
             '\n\n[Subagent partial report truncated]'
           );
-          yield *this.completeSubagent(turnId, {
-            type: 'subagent_completed',
-            subagentId,
-            role: input.role,
-            outcome: 'partial',
-            durationMs,
-            toolCalls,
-            providerCalls,
-            stopReason: 'hard-timeout',
-            reportTruncated: report.truncated,
-            ...(usage ? { usage } : {}),
-            errorCode
-          }, new AbortController().signal);
+          yield* this.completeSubagent(
+            turnId,
+            {
+              type: 'subagent_completed',
+              subagentId,
+              role: input.role,
+              outcome: 'partial',
+              durationMs,
+              toolCalls,
+              providerCalls,
+              stopReason: 'hard-timeout',
+              reportTruncated: report.truncated,
+              ...(usage ? { usage } : {}),
+              errorCode
+            },
+            new AbortController().signal
+          );
           return {
             content: report.text,
             metadata: {
@@ -2592,18 +2422,22 @@ export class QueryEngine {
             }
           };
         }
-        yield *this.completeSubagent(turnId, {
-          type: 'subagent_completed',
-          subagentId,
-          role: input.role,
-          outcome: timedOut ? 'error' : 'cancelled',
-          durationMs,
-          toolCalls,
-          providerCalls,
-          stopReason: timedOut ? 'hard-timeout' : 'cancelled',
-          ...(usage ? { usage } : {}),
-          errorCode
-        }, timedOut ? new AbortController().signal : controller.signal);
+        yield* this.completeSubagent(
+          turnId,
+          {
+            type: 'subagent_completed',
+            subagentId,
+            role: input.role,
+            outcome: timedOut ? 'error' : 'cancelled',
+            durationMs,
+            toolCalls,
+            providerCalls,
+            stopReason: timedOut ? 'hard-timeout' : 'cancelled',
+            ...(usage ? { usage } : {}),
+            errorCode
+          },
+          timedOut ? new AbortController().signal : controller.signal
+        );
         return {
           content: timedOut
             ? `Delegate failed: subagent exceeded ${SUBAGENT_TIMEOUT_MS} ms`
@@ -2636,19 +2470,23 @@ export class QueryEngine {
           SUBAGENT_MAX_REPORT_BYTES,
           '\n\n[Subagent partial report truncated]'
         );
-        yield *this.completeSubagent(turnId, {
-          type: 'subagent_completed',
-          subagentId,
-          role: input.role,
-          outcome: 'partial',
-          durationMs,
-          toolCalls,
-          providerCalls,
-          stopReason: childResult.error.code,
-          reportTruncated: report.truncated,
-          ...(usage ? { usage } : {}),
-          errorCode: childResult.error.code
-        }, controller.signal);
+        yield* this.completeSubagent(
+          turnId,
+          {
+            type: 'subagent_completed',
+            subagentId,
+            role: input.role,
+            outcome: 'partial',
+            durationMs,
+            toolCalls,
+            providerCalls,
+            stopReason: childResult.error.code,
+            reportTruncated: report.truncated,
+            ...(usage ? { usage } : {}),
+            errorCode: childResult.error.code
+          },
+          controller.signal
+        );
         return {
           content: report.text,
           metadata: {
@@ -2663,22 +2501,25 @@ export class QueryEngine {
           }
         };
       }
-      yield *this.completeSubagent(turnId, {
-        type: 'subagent_completed',
-        subagentId,
-        role: input.role,
-        outcome: 'error',
-        durationMs,
-        toolCalls,
-        providerCalls,
-        stopReason: childResult.error.code,
-        ...(usage ? { usage } : {}),
-        errorCode: childResult.error.code
-      }, controller.signal);
+      yield* this.completeSubagent(
+        turnId,
+        {
+          type: 'subagent_completed',
+          subagentId,
+          role: input.role,
+          outcome: 'error',
+          durationMs,
+          toolCalls,
+          providerCalls,
+          stopReason: childResult.error.code,
+          ...(usage ? { usage } : {}),
+          errorCode: childResult.error.code
+        },
+        controller.signal
+      );
       return {
         content: limitUtf8Head(
-          `Delegate failed (${childResult.error.code}): ` +
-          childResult.error.message,
+          `Delegate failed (${childResult.error.code}): ` + childResult.error.message,
           SUBAGENT_MAX_REPORT_BYTES
         ).text,
         isError: true,
@@ -2694,33 +2535,41 @@ export class QueryEngine {
     } catch (error) {
       const durationMs = Math.max(0, this.now() - startedAt);
       if (signal.aborted || (!timedOut && isAbortError(error))) {
-        yield *this.completeSubagent(turnId, {
-          type: 'subagent_completed',
-          subagentId,
-          role: input.role,
-          outcome: 'cancelled',
-          durationMs,
-          toolCalls,
-          providerCalls,
-          stopReason: 'cancelled',
-          ...(usage ? { usage } : {}),
-          errorCode: 'cancelled'
-        }, new AbortController().signal);
+        yield* this.completeSubagent(
+          turnId,
+          {
+            type: 'subagent_completed',
+            subagentId,
+            role: input.role,
+            outcome: 'cancelled',
+            durationMs,
+            toolCalls,
+            providerCalls,
+            stopReason: 'cancelled',
+            ...(usage ? { usage } : {}),
+            errorCode: 'cancelled'
+          },
+          new AbortController().signal
+        );
         throw new OperationAbortedError('Subagent cancelled with parent turn');
       }
       const errorCode = timedOut ? 'timeout' : 'subagent_failed';
-      yield *this.completeSubagent(turnId, {
-        type: 'subagent_completed',
-        subagentId,
-        role: input.role,
-        outcome: 'error',
-        durationMs,
-        toolCalls,
-        providerCalls,
-        stopReason: timedOut ? 'hard-timeout' : errorCode,
-        ...(usage ? { usage } : {}),
-        errorCode
-      }, timedOut ? new AbortController().signal : controller.signal);
+      yield* this.completeSubagent(
+        turnId,
+        {
+          type: 'subagent_completed',
+          subagentId,
+          role: input.role,
+          outcome: 'error',
+          durationMs,
+          toolCalls,
+          providerCalls,
+          stopReason: timedOut ? 'hard-timeout' : errorCode,
+          ...(usage ? { usage } : {}),
+          errorCode
+        },
+        timedOut ? new AbortController().signal : controller.signal
+      );
       return {
         content: timedOut
           ? `Delegate failed: subagent exceeded ${SUBAGENT_TIMEOUT_MS} ms`
@@ -2767,10 +2616,7 @@ export class QueryEngine {
       result,
       ...(metadata ? { metadata } : {})
     });
-    const toolMessage = (
-      content: string,
-      isError: boolean = false
-    ): ToolResultMessage => ({
+    const toolMessage = (content: string, isError: boolean = false): ToolResultMessage => ({
       role: 'tool',
       toolCallId,
       toolName,
@@ -2778,7 +2624,7 @@ export class QueryEngine {
       ...(isError ? { isError: true } : {})
     });
 
-    const tool = this.tools.find(candidate => candidate.name === toolName);
+    const tool = this.tools.find((candidate) => candidate.name === toolName);
     if (!tool) {
       const content = 'Unknown tool: ' + toolName;
       yield complete('error', content);
@@ -2799,22 +2645,27 @@ export class QueryEngine {
       mode: this.mode,
       permissionMode: this.permissionMode,
       signal,
-      emitEvent: event => {
+      emitEvent: (event) => {
         pendingToolEvents.push(event);
       }
     };
     const pendingToolEvents: AgentEventData[] = [];
-    const drainToolEvents = function *(): Generator<AgentEventData> {
+    const drainToolEvents = function* (): Generator<AgentEventData> {
       while (pendingToolEvents.length > 0) {
-        yield pendingToolEvents.shift()!;
+        const event = pendingToolEvents.shift();
+        if (event) {
+          yield event;
+        }
       }
     };
-    let postHookContext: {
-      subject: string;
-      toolName: string;
-      providerToolName: string;
-      risk: ToolDefinition['risk'];
-    } | undefined;
+    let postHookContext:
+      | {
+          subject: string;
+          toolName: string;
+          providerToolName: string;
+          risk: ToolDefinition['risk'];
+        }
+      | undefined;
 
     try {
       throwIfAborted(signal);
@@ -2824,7 +2675,7 @@ export class QueryEngine {
             risk: tool.risk,
             approval: tool.approval
           };
-      yield *drainToolEvents();
+      yield* drainToolEvents();
       if (!isToolRiskAllowedInMode(this.mode, resolvedPolicy.risk)) {
         const content =
           `Tool execution denied: ${resolvedPolicy.displayName ?? toolName} ` +
@@ -2844,9 +2695,8 @@ export class QueryEngine {
         approval: resolvedPolicy.approval
       };
       const approvalToolName = resolvedPolicy.displayName ?? tool.name;
-      const hookSubject = tool.name === 'McpCall'
-        ? `mcp:${approvalToolName}`
-        : `builtin:${tool.name}`;
+      const hookSubject =
+        tool.name === 'McpCall' ? `mcp:${approvalToolName}` : `builtin:${tool.name}`;
       postHookContext = {
         subject: hookSubject,
         toolName: approvalToolName,
@@ -2859,13 +2709,7 @@ export class QueryEngine {
         risk: resolvedPolicy.risk,
         input: validationResult.data
       };
-      const preToolHooks = this.runHooks(
-        'PreToolUse',
-        turnId,
-        hookPayload,
-        signal,
-        hookSubject
-      );
+      const preToolHooks = this.runHooks('PreToolUse', turnId, hookPayload, signal, hookSubject);
       let preToolResult: HookRunResult | undefined;
       let preToolHooksCompleted = false;
       try {
@@ -2884,13 +2728,12 @@ export class QueryEngine {
         }
       }
       if (preToolResult?.decision === 'deny') {
-        const displayContent =
-          `Tool execution denied by Hook: ${preToolResult.reason ?? 'policy denied'}`;
+        const displayContent = `Tool execution denied by Hook: ${preToolResult.reason ?? 'policy denied'}`;
         const providerContent =
           'Tool execution denied by a local Hook policy. This denial is ' +
           'definitive for the current turn; do not retry it or attempt an ' +
           'equivalent side effect with another tool.';
-        yield *this.runHooks(
+        yield* this.runHooks(
           'PostToolUse',
           turnId,
           {
@@ -2910,10 +2753,7 @@ export class QueryEngine {
         return toolMessage(providerContent, true);
       }
       let executionContext = baseContext;
-      const needsUserApproval = requiresUserApproval(
-        this.permissionMode,
-        effectiveTool
-      );
+      const needsUserApproval = requiresUserApproval(this.permissionMode, effectiveTool);
       const needsPreparation =
         resolvedPolicy.approval === 'always' || Boolean(tool.prepareApproval);
 
@@ -2922,11 +2762,8 @@ export class QueryEngine {
           description: 'Execute ' + tool.name
         };
         if (tool.prepareApproval) {
-          approvalDetails = await tool.prepareApproval(
-            validationResult.data,
-            baseContext
-          );
-          yield *drainToolEvents();
+          approvalDetails = await tool.prepareApproval(validationResult.data, baseContext);
+          yield* drainToolEvents();
         }
 
         if (needsUserApproval) {
@@ -2942,7 +2779,8 @@ export class QueryEngine {
 
           if (!requestApproval) {
             const content =
-              'Tool execution denied: ' + approvalToolName +
+              'Tool execution denied: ' +
+              approvalToolName +
               ' requires user approval, but no approval handler is available';
             yield {
               type: 'approval_resolved',
@@ -2951,7 +2789,7 @@ export class QueryEngine {
               choice: 'deny',
               resolution: 'handler-unavailable'
             };
-            yield *this.runHooks(
+            yield* this.runHooks(
               'PostToolUse',
               turnId,
               {
@@ -2969,21 +2807,23 @@ export class QueryEngine {
           }
 
           throwIfAborted(signal);
-          const approvalChoice = await requestApproval({
-            toolCallId,
-            toolName: approvalToolName,
-            risk: resolvedPolicy.risk,
-            input: validationResult.data,
-            description: approvalDetails.description,
-            preview: approvalDetails.preview,
-            choices
-          }, signal);
+          const approvalChoice = await requestApproval(
+            {
+              toolCallId,
+              toolName: approvalToolName,
+              risk: resolvedPolicy.risk,
+              input: validationResult.data,
+              description: approvalDetails.description,
+              preview: approvalDetails.preview,
+              choices
+            },
+            signal
+          );
           throwIfAborted(signal);
 
           if (!isOfferedApprovalChoice(approvalChoice, choices)) {
             const content =
-              'Tool execution denied: invalid approval choice for ' +
-              approvalToolName;
+              'Tool execution denied: invalid approval choice for ' + approvalToolName;
             yield {
               type: 'approval_resolved',
               toolCallId,
@@ -2991,7 +2831,7 @@ export class QueryEngine {
               choice: 'deny',
               resolution: 'invalid-choice'
             };
-            yield *this.runHooks(
+            yield* this.runHooks(
               'PostToolUse',
               turnId,
               {
@@ -3016,9 +2856,8 @@ export class QueryEngine {
             resolution: 'user'
           };
           if (approvalChoice === 'deny') {
-            const content =
-              'Tool execution denied by the user: ' + approvalDetails.description;
-            yield *this.runHooks(
+            const content = 'Tool execution denied by the user: ' + approvalDetails.description;
+            yield* this.runHooks(
               'PostToolUse',
               turnId,
               {
@@ -3049,11 +2888,7 @@ export class QueryEngine {
       yield { type: 'tool_started', toolCallId, toolName };
       let toolResult: ToolResult;
       if (tool.name === 'Delegate') {
-        const subagent = this.runSubagent(
-          validationResult.data as DelegateInput,
-          turnId,
-          signal
-        );
+        const subagent = this.runSubagent(validationResult.data as DelegateInput, turnId, signal);
         let subagentCompleted = false;
         try {
           while (true) {
@@ -3071,20 +2906,13 @@ export class QueryEngine {
           }
         }
       } else {
-        toolResult = await tool.execute(
-          validationResult.data,
-          executionContext
-        );
+        toolResult = await tool.execute(validationResult.data, executionContext);
       }
-      yield *drainToolEvents();
+      yield* drainToolEvents();
       throwIfAborted(signal);
 
       if (!toolResult.isError) {
-        this.recordFileChangeReceipt(
-          toolName,
-          validationResult.data,
-          toolResult.metadata
-        );
+        this.recordFileChangeReceipt(toolName, validationResult.data, toolResult.metadata);
         if (['Write', 'Edit', 'Patch'].includes(toolName)) {
           await this.requestCheckpoint('file-side-effect');
         }
@@ -3110,7 +2938,7 @@ export class QueryEngine {
           }
         : toolResult.metadata;
       const hookMetadata = sanitizeToolMetadataForHook(metadata);
-      yield *this.runHooks(
+      yield* this.runHooks(
         'PostToolUse',
         turnId,
         {
@@ -3123,14 +2951,10 @@ export class QueryEngine {
         signal,
         hookSubject
       );
-      yield complete(
-        toolResult.isError ? 'error' : 'success',
-        limited.content,
-        metadata
-      );
+      yield complete(toolResult.isError ? 'error' : 'success', limited.content, metadata);
       return toolMessage(limited.content, Boolean(toolResult.isError));
     } catch (error) {
-      yield *drainToolEvents();
+      yield* drainToolEvents();
       if (signal.aborted || isAbortError(error)) {
         const reason = 'Operation cancelled by the user';
         yield complete('cancelled', reason);
@@ -3138,7 +2962,7 @@ export class QueryEngine {
       }
       const reason = error instanceof Error ? error.message : String(error);
       if (postHookContext) {
-        yield *this.runHooks(
+        yield* this.runHooks(
           'PostToolUse',
           turnId,
           {
@@ -3191,11 +3015,10 @@ export class QueryEngine {
     if (typeof path !== 'string' || !path) {
       return;
     }
-    const versionHash = typeof metadata?.versionHash === 'string'
-      ? metadata.versionHash
-      : undefined;
+    const versionHash =
+      typeof metadata?.versionHash === 'string' ? metadata.versionHash : undefined;
     this.activeFileChangeReceipts = [
-      ...this.activeFileChangeReceipts.filter(receipt => receipt.path !== path),
+      ...this.activeFileChangeReceipts.filter((receipt) => receipt.path !== path),
       { path, ...(versionHash ? { versionHash } : {}) }
     ];
   }
@@ -3203,9 +3026,7 @@ export class QueryEngine {
   private preserveActiveFileChangeReceipts(): void {
     for (const receipt of this.activeFileChangeReceipts) {
       this.pendingFileChangeReceipts = [
-        ...this.pendingFileChangeReceipts.filter(
-          existing => existing.path !== receipt.path
-        ),
+        ...this.pendingFileChangeReceipts.filter((existing) => existing.path !== receipt.path),
         receipt
       ];
     }
@@ -3216,10 +3037,8 @@ export class QueryEngine {
     if (this.pendingFileChangeReceipts.length === 0) {
       return undefined;
     }
-    const receipts = this.pendingFileChangeReceipts.map(receipt => {
-      const version = receipt.versionHash
-        ? ` (last known sha256:${receipt.versionHash})`
-        : '';
+    const receipts = this.pendingFileChangeReceipts.map((receipt) => {
+      const version = receipt.versionHash ? ` (last known sha256:${receipt.versionHash})` : '';
       return `- ${receipt.path}${version}`;
     });
     return {
@@ -3235,21 +3054,20 @@ export class QueryEngine {
     };
   }
 
-  private getSystemPrompt(
-    currentTurnInstructions: readonly string[] = []
-  ): string {
+  private getSystemPrompt(currentTurnInstructions: readonly string[] = []): string {
     const shell = resolveShellInvocation(':', process.platform);
     const shellExecutor = shell.executable;
-    const shellHints = shell.kind === 'cmd'
-      ? [
-          '- This session uses Windows cmd.exe syntax for Shell.',
-          '- Prefer dir, type, and findstr over Unix-only commands.',
-          '- Invoke PowerShell explicitly when needed.'
-        ]
-      : [
-          '- This session uses ' + shellExecutor + ' for Shell.',
-          '- Prefer portable POSIX shell syntax for Shell commands.'
-        ];
+    const shellHints =
+      shell.kind === 'cmd'
+        ? [
+            '- This session uses Windows cmd.exe syntax for Shell.',
+            '- Prefer dir, type, and findstr over Unix-only commands.',
+            '- Invoke PowerShell explicitly when needed.'
+          ]
+        : [
+            '- This session uses ' + shellExecutor + ' for Shell.',
+            '- Prefer portable POSIX shell syntax for Shell commands.'
+          ];
 
     return [
       'You are Syzzz Code, an AI programming assistant.',
@@ -3270,7 +3088,7 @@ export class QueryEngine {
       '11. Describe inspection scope accurately: verify exact counts, and do not call a sampled review complete or exhaustive.',
       '12. Treat mode, approval, and Hook denials as definitive; do not retry or use another tool to bypass the denied operation.',
       '13. If Write, Edit, or Patch succeeds, disclose that file side effect accurately even when another operation fails.',
-      ...(this.getAllowedTools().some(tool => tool.name === 'Delegate')
+      ...(this.getAllowedTools().some((tool) => tool.name === 'Delegate')
         ? [
             '14. Use Delegate only for independent read-only exploration or review with clear benefit; do not delegate trivial work.',
             '15. After Delegate succeeds, use its report directly and do not repeat the same read-only investigation unless the report explicitly says evidence is insufficient.'

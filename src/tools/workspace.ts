@@ -1,12 +1,5 @@
 import { lstat, realpath } from 'node:fs/promises';
-import {
-  basename,
-  dirname,
-  isAbsolute,
-  relative,
-  resolve,
-  sep
-} from 'node:path';
+import { basename, dirname, isAbsolute, relative, resolve, sep } from 'node:path';
 
 export type WorkspaceAccess = 'read' | 'write';
 
@@ -49,9 +42,7 @@ export function validateWorkspacePathSyntax(
     );
   }
 
-  const withoutDrive = /^[a-z]:/i.test(windowsPath)
-    ? windowsPath.slice(2)
-    : windowsPath;
+  const withoutDrive = /^[a-z]:/i.test(windowsPath) ? windowsPath.slice(2) : windowsPath;
   if (withoutDrive.includes(':')) {
     throw new WorkspacePathError(
       `Windows alternate data streams are not allowed: ${inputPath}`,
@@ -82,10 +73,9 @@ export function validateWorkspacePathSyntax(
 
 function isWithinDirectory(rootPath: string, candidatePath: string): boolean {
   const relativePath = relative(rootPath, candidatePath);
-  return relativePath === '' || (
-    relativePath !== '..' &&
-    !relativePath.startsWith(`..${sep}`) &&
-    !isAbsolute(relativePath)
+  return (
+    relativePath === '' ||
+    (relativePath !== '..' && !relativePath.startsWith(`..${sep}`) && !isAbsolute(relativePath))
   );
 }
 
@@ -97,9 +87,8 @@ async function findNearestExistingAncestor(candidatePath: string): Promise<strin
       await lstat(currentPath);
       return currentPath;
     } catch (error) {
-      const errorCode = error && typeof error === 'object' && 'code' in error
-        ? String(error.code)
-        : undefined;
+      const errorCode =
+        error && typeof error === 'object' && 'code' in error ? String(error.code) : undefined;
       if (errorCode !== 'ENOENT') {
         throw error;
       }
@@ -120,9 +109,9 @@ export function isSensitiveRelativePath(relativePath: string): boolean {
   const pathSegments = relativePath
     .split(/[\\/]+/)
     .filter(Boolean)
-    .map(segment => segment.toLowerCase());
+    .map((segment) => segment.toLowerCase());
 
-  if (pathSegments.some(segment => segment === '.git' || segment === '.ssh')) {
+  if (pathSegments.some((segment) => segment === '.git' || segment === '.ssh')) {
     return true;
   }
 
@@ -131,7 +120,8 @@ export function isSensitiveRelativePath(relativePath: string): boolean {
     return false;
   }
 
-  return fileName === '.env' ||
+  return (
+    fileName === '.env' ||
     fileName.startsWith('.env.') ||
     fileName === '.npmrc' ||
     fileName === '.pypirc' ||
@@ -140,7 +130,8 @@ export function isSensitiveRelativePath(relativePath: string): boolean {
     fileName === 'id_rsa' ||
     fileName === 'id_ed25519' ||
     fileName.endsWith('.pem') ||
-    fileName.endsWith('.key');
+    fileName.endsWith('.key')
+  );
 }
 
 export async function resolveWorkspacePath(
@@ -176,9 +167,8 @@ export async function resolveWorkspacePath(
   try {
     resolvedSecurityTarget = await realpath(candidatePath);
   } catch (error) {
-    const errorCode = error && typeof error === 'object' && 'code' in error
-      ? String(error.code)
-      : undefined;
+    const errorCode =
+      error && typeof error === 'object' && 'code' in error ? String(error.code) : undefined;
     if (errorCode !== 'ENOENT' || access === 'read') {
       throw error;
     }

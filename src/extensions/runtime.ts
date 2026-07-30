@@ -19,11 +19,7 @@ import {
   SUBAGENT_SOFT_TOKEN_BUDGET,
   SUBAGENT_TIMEOUT_MS
 } from '../subagents.js';
-import type {
-  ExtensionConfiguration,
-  ExtensionReloadResult,
-  ExtensionStatus
-} from './types.js';
+import type { ExtensionConfiguration, ExtensionReloadResult, ExtensionStatus } from './types.js';
 
 export interface ExtensionRuntimeOptions {
   workspaceRoot: string;
@@ -68,10 +64,7 @@ export class ExtensionRuntime {
       forbiddenEnvironmentNames: options.forbiddenEnvironmentNames,
       connectionFactory: options.mcpConnectionFactory
     });
-    this.hooks = new HookRunner(
-      this.configuration.hooks,
-      options.forbiddenEnvironmentNames
-    );
+    this.hooks = new HookRunner(this.configuration.hooks, options.forbiddenEnvironmentNames);
   }
 
   getConfiguration(): ExtensionConfiguration {
@@ -121,11 +114,9 @@ export class ExtensionRuntime {
         : {}),
       mcp: {
         configured: statuses.length,
-        ready: statuses.filter(status => status.state === 'ready').length,
-        error: statuses.filter(status => status.state === 'error').length,
-        disconnected: statuses.filter(status =>
-          status.state === 'disconnected'
-        ).length,
+        ready: statuses.filter((status) => status.state === 'ready').length,
+        error: statuses.filter((status) => status.state === 'error').length,
+        disconnected: statuses.filter((status) => status.state === 'disconnected').length,
         servers: statuses
       },
       hooks: this.hooks.getStatus(),
@@ -143,15 +134,12 @@ export class ExtensionRuntime {
           maxReportBytes: SUBAGENT_MAX_REPORT_BYTES,
           softTokenBudget: SUBAGENT_SOFT_TOKEN_BUDGET,
           hardTokenBudget: SUBAGENT_HARD_TOKEN_BUDGET,
-          ...(this.lastSubagentStopReason
-            ? { lastStopReason: this.lastSubagentStopReason }
-            : {})
+          ...(this.lastSubagentStopReason ? { lastStopReason: this.lastSubagentStopReason } : {})
         }
       },
-      warnings: [...new Set([
-        ...this.configuration.warnings,
-        ...(inactiveInspection?.warnings ?? [])
-      ])]
+      warnings: [
+        ...new Set([...this.configuration.warnings, ...(inactiveInspection?.warnings ?? [])])
+      ]
     };
   }
 
@@ -162,9 +150,7 @@ export class ExtensionRuntime {
       if (server.config.type === 'stdio') {
         lines.push(
           `MCP ${server.name}: ` +
-          [server.config.command, ...server.config.args]
-            .map(quoted)
-            .join(' ')
+            [server.config.command, ...server.config.args].map(quoted).join(' ')
         );
       } else {
         lines.push(`MCP ${server.name}: ${server.config.url}`);
@@ -173,15 +159,11 @@ export class ExtensionRuntime {
     for (const hook of inspection.hooks) {
       lines.push(
         `Hook ${hook.config.name} (${hook.config.event}): ` +
-        [hook.config.command, ...hook.config.args]
-          .map(quoted)
-          .join(' ')
+          [hook.config.command, ...hook.config.args].map(quoted).join(' ')
       );
     }
     for (const policy of inspection.mcpToolPolicies) {
-      lines.push(
-        `MCP policy ${policy.qualifiedName}: ${policy.policy}`
-      );
+      lines.push(`MCP policy ${policy.qualifiedName}: ${policy.policy}`);
     }
     return {
       workspaceRoot: this.workspaceRoot,
@@ -197,9 +179,7 @@ export class ExtensionRuntime {
   async trustWorkspace(expectedDigest: string): Promise<ExtensionReloadResult> {
     const current = inspectProjectExtensions(this.workspaceRoot);
     if (!current.valid || !current.digest) {
-      throw new Error(
-        'Project extension configuration is invalid and cannot be trusted'
-      );
+      throw new Error('Project extension configuration is invalid and cannot be trusted');
     }
     if (current.digest !== expectedDigest) {
       throw new Error(
@@ -219,10 +199,7 @@ export class ExtensionRuntime {
     const next = loadExtensionConfiguration(this.workspaceRoot);
     this.configuration = next;
     this.hooks.replaceHooks(next.hooks);
-    await this.mcp.replaceServers(
-      next.mcpServers,
-      next.mcpToolPolicies
-    );
+    await this.mcp.replaceServers(next.mcpServers, next.mcpToolPolicies);
     const status = this.getStatus();
     return {
       trustState: status.trustState,
@@ -235,8 +212,8 @@ export class ExtensionRuntime {
       hooks: {
         configured: status.hooks.configured,
         enabled: status.hooks.enabled,
-        error: status.hooks.entries.filter(entry =>
-          entry.lastOutcome === 'error' || entry.lastOutcome === 'timeout'
+        error: status.hooks.entries.filter(
+          (entry) => entry.lastOutcome === 'error' || entry.lastOutcome === 'timeout'
         ).length
       },
       warnings: [...status.warnings]

@@ -74,12 +74,9 @@ test('stream-json extension events expose status metadata but no private payload
     })
   ];
   const serialized = events.map(serializeAgentEvent).join('\n');
-  assert.doesNotMatch(
-    serialized,
-    /"(?:task|transcript|report|headers|result)"\s*:/
-  );
+  assert.doesNotMatch(serialized, /"(?:task|transcript|report|headers|result)"\s*:/);
   assert.equal(
-    serialized.split('\n').every(line => JSON.parse(line).schemaVersion === 1),
+    serialized.split('\n').every((line) => JSON.parse(line).schemaVersion === 1),
     true
   );
 });
@@ -103,7 +100,7 @@ test('stream-json emits valid NDJSON events', () => {
   const parsed = ndjson
     .trim()
     .split('\n')
-    .map(line => JSON.parse(line));
+    .map((line) => JSON.parse(line));
 
   assert.equal(parsed.length, 3);
   assert.equal(parsed[0].reason, 'malformed_response');
@@ -163,10 +160,7 @@ test('turn consumer returns the generator result', async () => {
     };
   }
   const seen = [];
-  const result = await consumeAgentTurn(
-    turn(),
-    current => seen.push(current.type)
-  );
+  const result = await consumeAgentTurn(turn(), (current) => seen.push(current.type));
 
   assert.deepEqual(seen, ['text_delta', 'text_delta']);
   assert.equal(result.response, 'onetwo');
@@ -174,33 +168,45 @@ test('turn consumer returns the generator result', async () => {
 });
 
 test('footer and exit codes follow the CLI contract', () => {
-  assert.equal(formatTurnFooter({
-    status: 'completed',
-    response: 'ok',
-    durationMs: 1234,
-    finishReason: 'stop',
-    usage: {
-      inputTokens: 10,
-      outputTokens: 3,
-      totalTokens: 13
-    }
-  }), 'tokens 10 in / 3 out | 1.2s | finish: stop');
+  assert.equal(
+    formatTurnFooter({
+      status: 'completed',
+      response: 'ok',
+      durationMs: 1234,
+      finishReason: 'stop',
+      usage: {
+        inputTokens: 10,
+        outputTokens: 3,
+        totalTokens: 13
+      }
+    }),
+    'tokens 10 in / 3 out | 1.2s | finish: stop'
+  );
 
-  assert.equal(turnResultExitCode({
-    status: 'completed',
-    response: 'ok',
-    durationMs: 1
-  }), 0);
-  assert.equal(turnResultExitCode({
-    status: 'failed',
-    durationMs: 1,
-    error: { code: 'x', message: 'x' }
-  }), 1);
-  assert.equal(turnResultExitCode({
-    status: 'cancelled',
-    durationMs: 1,
-    reason: 'cancelled'
-  }), 130);
+  assert.equal(
+    turnResultExitCode({
+      status: 'completed',
+      response: 'ok',
+      durationMs: 1
+    }),
+    0
+  );
+  assert.equal(
+    turnResultExitCode({
+      status: 'failed',
+      durationMs: 1,
+      error: { code: 'x', message: 'x' }
+    }),
+    1
+  );
+  assert.equal(
+    turnResultExitCode({
+      status: 'cancelled',
+      durationMs: 1,
+      reason: 'cancelled'
+    }),
+    130
+  );
 });
 
 test('human renderer buffers text and keeps only useful status lines', () => {
@@ -221,45 +227,57 @@ test('human renderer buffers text and keeps only useful status lines', () => {
   const renderer = new HumanEventRenderer({
     streamOutput: false,
     spinner,
-    output: { write: chunk => chunks.push(chunk) }
+    output: { write: (chunk) => chunks.push(chunk) }
   });
 
-  renderer.handle(event('text_delta', {
-    attempt: 1,
-    attemptId: 'a',
-    delta: 'buffered response'
-  }));
+  renderer.handle(
+    event('text_delta', {
+      attempt: 1,
+      attemptId: 'a',
+      delta: 'buffered response'
+    })
+  );
   assert.doesNotMatch(chunks.join(''), /buffered response/);
 
-  renderer.handle(event('tool_started', {
-    toolCallId: 'read-1',
-    toolName: 'Read'
-  }));
-  renderer.handle(event('tool_completed', {
-    toolCallId: 'read-1',
-    toolName: 'Read',
-    outcome: 'success',
-    durationMs: 2
-  }));
-  renderer.handle(event('tool_completed', {
-    toolCallId: 'shell-1',
-    toolName: 'Shell',
-    outcome: 'success',
-    durationMs: 1200
-  }));
-  renderer.handle(event('tool_completed', {
-    toolCallId: 'read-2',
-    toolName: 'Read',
-    outcome: 'error',
-    durationMs: 3,
-    result: 'failed to read file'
-  }));
-  renderer.handle(event('retry_scheduled', {
-    attempt: 1,
-    nextAttempt: 2,
-    delayMs: 500,
-    reason: 'network'
-  }));
+  renderer.handle(
+    event('tool_started', {
+      toolCallId: 'read-1',
+      toolName: 'Read'
+    })
+  );
+  renderer.handle(
+    event('tool_completed', {
+      toolCallId: 'read-1',
+      toolName: 'Read',
+      outcome: 'success',
+      durationMs: 2
+    })
+  );
+  renderer.handle(
+    event('tool_completed', {
+      toolCallId: 'shell-1',
+      toolName: 'Shell',
+      outcome: 'success',
+      durationMs: 1200
+    })
+  );
+  renderer.handle(
+    event('tool_completed', {
+      toolCallId: 'read-2',
+      toolName: 'Read',
+      outcome: 'error',
+      durationMs: 3,
+      result: 'failed to read file'
+    })
+  );
+  renderer.handle(
+    event('retry_scheduled', {
+      attempt: 1,
+      nextAttempt: 2,
+      delayMs: 500,
+      reason: 'network'
+    })
+  );
   renderer.finish({
     status: 'completed',
     response: 'buffered response',
@@ -294,24 +312,28 @@ test('human renderer buffers text and keeps only useful status lines', () => {
   const recoveryRenderer = new HumanEventRenderer({
     streamOutput: true,
     spinner: recoverySpinner,
-    output: { write: chunk => recoveryChunks.push(chunk) }
+    output: { write: (chunk) => recoveryChunks.push(chunk) }
   });
-  recoveryRenderer.handle(event('retry_scheduled', {
-    attempt: 2,
-    nextAttempt: 3,
-    delayMs: 0,
-    reason: 'malformed_response'
-  }));
+  recoveryRenderer.handle(
+    event('retry_scheduled', {
+      attempt: 2,
+      nextAttempt: 3,
+      delayMs: 0,
+      reason: 'malformed_response'
+    })
+  );
   assert.equal(recoverySpinner.text, 'Adjusting provider response mode...');
   assert.equal(recoveryChunks.join(''), '');
   assert.equal(recoveryRenderer.getStats().retries, 1);
 
-  recoveryRenderer.handle(event('retry_scheduled', {
-    attempt: 1,
-    nextAttempt: 2,
-    delayMs: 0,
-    reason: 'unsupported_feature'
-  }));
+  recoveryRenderer.handle(
+    event('retry_scheduled', {
+      attempt: 1,
+      nextAttempt: 2,
+      delayMs: 0,
+      reason: 'unsupported_feature'
+    })
+  );
   assert.equal(recoverySpinner.text, 'Adjusting provider compatibility...');
   assert.equal(recoveryChunks.join(''), '');
   assert.equal(recoveryRenderer.getStats().retries, 2);
