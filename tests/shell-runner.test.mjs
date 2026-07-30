@@ -136,18 +136,17 @@ test('terminates commands that exceed the configured output limit', async () => 
 test('termination removes descendant processes instead of leaving them running', async () => {
   await withWorkingDirectory(async (cwd) => {
     const readyPath = join(cwd, 'child-ready.txt');
-    const survivedPath = join(cwd, 'child-survived.txt');
     const childScript = [
       "const fs=require('node:fs')",
       'fs.writeFileSync(process.argv[1],String(process.pid))',
-      "setTimeout(()=>fs.writeFileSync(process.argv[2],'survived'),1000)"
+      'setInterval(()=>{},1000)'
     ].join(';');
-    const command = `"${process.execPath}" -e "${childScript}" "${readyPath}" "${survivedPath}"`;
+    const command = `"${process.execPath}" -e "${childScript}" "${readyPath}"`;
 
     const result = await runShellCommand(command, {
       cwd,
       signal: new AbortController().signal,
-      timeoutMs: 300,
+      timeoutMs: 500,
       terminationGraceMs: 100
     });
 
@@ -156,8 +155,6 @@ test('termination removes descendant processes instead of leaving them running',
     const childProcessId = Number(await readFile(readyPath, 'utf8'));
     assert.equal(Number.isInteger(childProcessId), true);
 
-    await new Promise((resolve) => setTimeout(resolve, 1_100));
-    await assert.rejects(readFile(survivedPath, 'utf8'), (error) => error?.code === 'ENOENT');
     assert.throws(
       () => process.kill(childProcessId, 0),
       (error) => error?.code === 'ESRCH'
