@@ -3088,10 +3088,23 @@ export class QueryEngine {
       '11. Describe inspection scope accurately: verify exact counts, and do not call a sampled review complete or exhaustive.',
       '12. Treat mode, approval, and Hook denials as definitive; do not retry or use another tool to bypass the denied operation.',
       '13. If Write, Edit, or Patch succeeds, disclose that file side effect accurately even when another operation fails.',
+      ...(this.extensions
+        ? [
+            '',
+            'MCP administration:',
+            '- McpSearch and McpCall only use configured servers; they do not install or register servers.',
+            '- Treat a third-party MCP server as executable code. Check its exact package, version, source, executable entry, install scripts, and runtime requirement in one bounded metadata query before requesting installation approval.',
+            '- Do not add an MCP package to workspace dependencies or change project package manifests unless the user explicitly requests a project-local installation.',
+            '- Prefer a pinned user-level installation or an absolute executable, register it with `syzzz mcp add ... --scope user`, then verify the real handshake with `syzzz mcp doctor <name>`. Do not use an unpinned latest package by default.',
+            '- Report installation, Syzzz registration, and handshake readiness as separate states. Do not repeatedly inspect a successful installation.'
+          ]
+        : []),
       ...(this.getAllowedTools().some((tool) => tool.name === 'Delegate')
         ? [
-            '14. Use Delegate only for independent read-only exploration or review with clear benefit; do not delegate trivial work.',
-            '15. After Delegate succeeds, use its report directly and do not repeat the same read-only investigation unless the report explicitly says evidence is insufficient.'
+            '',
+            'Delegation:',
+            '- Use Delegate only for independent read-only exploration or review with clear benefit; do not delegate trivial work.',
+            '- After Delegate succeeds, use its report directly and do not repeat the same read-only investigation unless the report explicitly says evidence is insufficient.'
           ]
         : []),
       '',

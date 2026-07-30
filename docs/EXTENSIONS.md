@@ -105,7 +105,37 @@ syzzz extensions status [--json]
 /extensions reload
 ```
 
-### 2.4 风险矩阵
+### 2.4 安装第三方 MCP
+
+MCP “安装”必须区分三个状态：
+
+1. 可执行包已经安装或可由固定入口启动。
+2. Server 已通过 `syzzz mcp add` 注册到用户或项目配置。
+3. `syzzz mcp doctor <name>` 已完成真实握手并返回工具数量。
+
+默认使用用户级配置，不应把 MCP 包加入当前代码仓库的 `dependencies`。只有用户明确要求项目本地安装时，才允许修改项目的 `package.json` 和 lockfile。
+
+推荐流程：
+
+```text
+# 先检查精确版本、来源、可执行入口、安装脚本和 Node 要求
+npm view <package>@<version> version repository bin scripts engines license --json
+
+# 经 Shell 审批后安装固定版本；不要默认跟随 latest
+npm install --global <package>@<version>
+
+# 使用 npm prefix -g 找到全局可执行入口，并注册绝对路径
+syzzz mcp add <name> <absolute-executable> --scope user --protocol-mode legacy
+
+# 这一步会真实启动或连接 Server
+syzzz mcp doctor <name>
+```
+
+也可以使用包含精确版本的 `npx` 启动项，但每次连接都可能执行 npm 解析或下载。对需要稳定复现的配置，优先使用固定版本的全局安装和绝对可执行路径。
+
+第三方 MCP 与 Hook 一样是以当前用户权限运行的代码。确认 Shell 审批前应核对 package、发布者、源码仓库和命令；安装成功不等于已经注册，注册成功也不等于握手可用。
+
+### 2.5 风险矩阵
 
 | 本地策略或 MCP 声明                          | 动态风险         | ask/plan       | code + safe/acceptEdits | code + fullAccess |
 | -------------------------------------------- | ---------------- | -------------- | ----------------------- | ----------------- |

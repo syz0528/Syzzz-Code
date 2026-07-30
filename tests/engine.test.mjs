@@ -841,6 +841,7 @@ test('system prompt includes platform and shell executor details', async () => {
     provider,
     tools: [],
     announceProvider: false,
+    extensions: {},
     workspaceRoot: '/tmp/workspace'
   });
   await engine.chat('hello');
@@ -852,6 +853,11 @@ test('system prompt includes platform and shell executor details', async () => {
   assert.match(capturedPrompt, /Inspect project structure once/);
   assert.match(capturedPrompt, /Do not rerun a successful tool/);
   assert.match(capturedPrompt, /do not call a sampled review complete or exhaustive/);
+  assert.match(capturedPrompt, /McpSearch and McpCall only use configured servers/);
+  assert.match(capturedPrompt, /Do not add an MCP package to workspace dependencies/);
+  assert.match(capturedPrompt, /syzzz mcp add \.\.\. --scope user/);
+  assert.match(capturedPrompt, /syzzz mcp doctor <name>/);
+  assert.match(capturedPrompt, /installation, Syzzz registration, and handshake readiness/);
 });
 
 test('ask and plan modes expose only read tools and deny forged side effects', async () => {
