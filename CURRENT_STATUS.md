@@ -39,7 +39,7 @@ Phase 6 不增加 Agent 自治能力，当前改造集中在：
 
 Phase 6 本地自动化、真实 DeepSeek/OpenCode Live Eval、候选 tarball、GitHub 跨平台 CI 和人工 dogfood 已经通过，当前标记为 **Release Candidate Accepted**。Live Eval 完成全部七项隔离任务，结果为 7/7、功能成功率 100%、安全项通过且无基础设施错误；提交 `014e182` 的 CI 共 10 个 job 全绿，覆盖 Windows/Ubuntu 与 Node 22/24。人工验收使用真实 tarball 的隔离安装，覆盖 Node 22/24、doctor、模式与权限、会话恢复、取消、NDJSON、MCP、Hook 和只读 Subagent；npm、Tag 与 GitHub Release 尚未创建，因此不能标记为 Frozen。
 
-完整 Phase 2–6 历史已于 2026-07-31 fast-forward 到远程 `main`，`main`、Phase 6 分支和 RC 提交均指向 `4b51b35`。仓库继续保持 Private；当前个人 GitHub Free 套餐不支持私有仓库的 protected branches、required checks、Environment 保护、Secret Scanning 或 Push Protection，因此这些设置保留到公开前的最后一步。私有阶段可用的 Dependabot vulnerability alerts、自动安全修复和分组更新已经启用。
+完整 Phase 2–6 历史已于 2026-07-31 fast-forward 到远程 `main`，`main` 与 Phase 6 分支指向同一发布准备提交。仓库继续保持 Private；当前个人 GitHub Free 套餐不支持私有仓库的 protected branches、required checks、Environment 保护、Secret Scanning 或 Push Protection，因此这些设置保留到公开前的最后一步。私有阶段可用的 Dependabot vulnerability alerts、自动安全修复和分组更新已经启用。
 
 ## 2. 扩展信任
 
@@ -242,7 +242,7 @@ Phase 6 本地发布前卫生已通过：
 - 远程分支：`origin/codex/phase6-quality-release`
 - 版本号保持 `1.0.0`
 - 未发布 npm 包，未创建 Tag
-- 本地 `main`、远程 `main` 与 Phase 6 RC 均指向 `4b51b35`
+- 本地 `main`、远程 `main` 与 Phase 6 分支指向同一发布准备提交
 - GitHub 仓库仍为 Private；尚未创建 `npm-release` Environment
 - 既有 archive 行尾状态、`hook-should-not-exist-2.txt`、`phase3-manual.ts`、`phase2-events.jsonl` 和 `tmp_考试范围.txt` 不属于 Phase 6，不纳入本阶段提交
 
