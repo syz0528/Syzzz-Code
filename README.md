@@ -2,7 +2,7 @@
 
 Syzzz Code 是一个使用 TypeScript 构建的实验性命令行 AI 编程 Agent。它提供统一的 Provider 接口、事件化 Agent Runtime、受约束的代码库工具、可靠编辑、上下文压缩、可恢复的本地会话，以及受信任边界约束的 MCP、Hooks 和只读 Subagent。
 
-Phase 1 至 Phase 5.1 已完成并保持 **Frozen**。Phase 6 的本地实现、候选包验证和跨平台 CI 已完成，当前状态为 **Validated**；人工候选包验收与公开注册表发布尚未完成，因此不标记 Frozen。
+Phase 1 至 Phase 5.1 已完成并保持 **Frozen**。Phase 6 的本地实现、候选包验证、跨平台 CI 和人工 dogfood 已完成，当前状态为 **Release Candidate Accepted**；公开注册表发布和 registry 安装复验尚未完成，因此不标记 Frozen。
 
 > [!WARNING]
 > Syzzz Code 仍处于实验阶段。文件工具受工作区边界、敏感路径和并发 hash 校验保护，但 Shell 不是 OS sandbox。获批或在 `fullAccess` 下自动执行的命令仍可产生工作区外副作用。
@@ -371,4 +371,4 @@ npm 包使用 allowlist，只包含 `dist`、README、SECURITY、LICENSE、CHANG
 
 ## 当前阶段
 
-Phase 1 至 Phase 5.1 均保持 **Frozen**。Phase 6 位于 `codex/phase6-quality-release`，跨平台 CI 和候选包 job 已通过，当前状态为 **Validated**。人工 dogfood、npm、annotated Tag、GitHub Release 与 registry 安装复验完成前，版本 `1.0.0` 仍不是 Frozen。
+Phase 1 至 Phase 5.1 均保持 **Frozen**。Phase 6 位于 `codex/phase6-quality-release`，跨平台 CI、候选包 job 和 Windows Node 22/24 人工 dogfood 已通过，当前状态为 **Release Candidate Accepted**。npm、annotated Tag、GitHub Release 与 registry 安装复验完成前，版本 `1.0.0` 仍不是 Frozen。

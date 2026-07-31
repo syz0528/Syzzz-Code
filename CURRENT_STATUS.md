@@ -1,6 +1,6 @@
 # Syzzz Code 当前项目状态
 
-**更新时间：** 2026-07-30
+**更新时间：** 2026-07-31
 
 **当前分支：** `codex/phase6-quality-release`
 
@@ -12,7 +12,7 @@
 
 **Phase 5 冻结基线：** `64789ec`
 
-**当前阶段：** Phase 6 **Validated**；Phase 1 至 Phase 5.1 保持 **Frozen**
+**当前阶段：** Phase 6 **Release Candidate Accepted**；Phase 1 至 Phase 5.1 保持 **Frozen**
 
 ## 1. 当前结论
 
@@ -37,7 +37,7 @@ Phase 6 不增加 Agent 自治能力，当前改造集中在：
 - npm tarball allowlist、全新 prefix 安装、配置迁移、文本与 NDJSON smoke；
 - Apache-2.0、架构/测试/变更日志以及人工门控发布工作流。
 
-Phase 6 本地自动化、真实 DeepSeek/OpenCode Live Eval、候选 tarball 和 GitHub 跨平台 CI 已经通过，当前标记为 **Validated**。Live Eval 完成全部七项隔离任务，结果为 7/7、功能成功率 100%、安全项通过且无基础设施错误；提交 `239bc7b` 的 CI 共 10 个 job 全绿，覆盖 Windows/Ubuntu 与 Node 22/24。用户尚未完成候选包 dogfood，npm、Tag 与 GitHub Release 也尚未创建，因此不能标记为 Release Candidate Accepted 或 Frozen。
+Phase 6 本地自动化、真实 DeepSeek/OpenCode Live Eval、候选 tarball、GitHub 跨平台 CI 和人工 dogfood 已经通过，当前标记为 **Release Candidate Accepted**。Live Eval 完成全部七项隔离任务，结果为 7/7、功能成功率 100%、安全项通过且无基础设施错误；提交 `014e182` 的 CI 共 10 个 job 全绿，覆盖 Windows/Ubuntu 与 Node 22/24。人工验收使用真实 tarball 的隔离安装，覆盖 Node 22/24、doctor、模式与权限、会话恢复、取消、NDJSON、MCP、Hook 和只读 Subagent；npm、Tag 与 GitHub Release 尚未创建，因此不能标记为 Frozen。
 
 ## 2. 扩展信任
 
@@ -213,7 +213,8 @@ Phase 6 本地发布前卫生已通过：
 - `syzzz doctor`：Node 22 要求、配置、Provider、模型、扩展配置、ripgrep 与 TypeScript Worker 均通过；仅保留 Windows ACL 无法自动验证的提醒
 - `git diff --check`：退出码 0；仅有 Windows 工作树 LF→CRLF 提示，无空白错误
 - 当前 DeepSeek/OpenCode Live Eval：**7/7**，功能成功率 100%，安全项通过，0 个基础设施错误；完整套件一次运行通过
-- GitHub Actions：提交 `239bc7b` 的完整流水线 **10/10 jobs** 通过，包括 Windows/Ubuntu × Node 22/24、quality、Provider contracts、offline Eval、双平台 package smoke 与 security
+- GitHub Actions：提交 `014e182` 的完整流水线 **10/10 jobs** 通过，包括 Windows/Ubuntu × Node 22/24、quality、Provider contracts、offline Eval、双平台 package smoke 与 security
+- Phase 6 候选包人工验收：真实 tarball 隔离安装、Node 22/24、doctor、会话恢复、取消、NDJSON、MCP、Hook 与只读 Subagent 均通过；上游 Provider 的瞬时 503 按有限重试和结构化失败规则处理，后续请求恢复成功
 
 ## 8. 已知边界
 
@@ -235,6 +236,7 @@ Phase 6 本地发布前卫生已通过：
 - Phase 5 冻结提交：`64789ec`
 - Phase 6 候选实现提交：`82cc673`
 - Phase 6 跨平台修复提交：`239bc7b`
+- Phase 6 Windows 稳定性修复提交：`014e182`
 - 远程分支：`origin/codex/phase6-quality-release`
 - 版本号保持 `1.0.0`
 - 未发布 npm 包，未创建 Tag
@@ -252,4 +254,4 @@ Phase 6 使用四级状态：
 3. 用户完成人工 dogfood：**Release Candidate Accepted**。
 4. npm、annotated `v1.0.0` Tag、GitHub Release 和 registry 安装验证完成：**Frozen**。
 
-当前停留在 **Validated**，不越过人工验收与公开发布门槛。Anthropic 真流式、Responses API、MCP OAuth、`@`、`$`、完整 TUI、LSP、持久索引、并行或写入型 Subagent 继续留在 `v1.x` 后续独立阶段评估。
+当前停留在 **Release Candidate Accepted**，不越过公开发布门槛。Anthropic 真流式、Responses API、MCP OAuth、`@`、`$`、完整 TUI、LSP、持久索引、并行或写入型 Subagent 继续留在 `v1.x` 后续独立阶段评估。

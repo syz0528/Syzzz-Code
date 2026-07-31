@@ -1,9 +1,9 @@
 # Syzzz Code 路线图
 
 **制定日期：** 2026-06-16
-**最近更新：** 2026-07-30
+**最近更新：** 2026-07-31
 **适用基线：** `1.0.0` / Phase 5 冻结提交 `64789ec`
-**当前入口：** Phase 6 已在 `codex/phase6-quality-release` 通过跨平台 CI，状态为 **Validated**；尚未进入人工 RC 验收、公开发布或 Frozen
+**当前入口：** Phase 6 已在 `codex/phase6-quality-release` 通过跨平台 CI 和人工候选包验收，状态为 **Release Candidate Accepted**；尚未进入公开发布或 Frozen
 
 > 路线图描述实施顺序和验收边界。当前代码事实以 [`README.md`](README.md) 和 [`CURRENT_STATUS.md`](CURRENT_STATUS.md) 为准。
 
@@ -728,7 +728,7 @@ RepoMap 按需调用，不自动注入每个 prompt。
 - [x] tarball 检查文件 allowlist、数量、压缩/解压大小和 identity；
 - [x] 在全新 prefix 安装真实 tarball，验证全局 shim、版本、帮助、legacy 配置迁移、文本、NDJSON 和 doctor；
 - [x] 扫描当前跟踪树和完整可达 Git 历史中的高置信凭证模式；
-- [x] GitHub Actions 在远程仓库实际运行并全部通过：提交 `239bc7b` 的 10 个 job 覆盖 Windows/Ubuntu × Node 22/24、quality、Provider contracts、offline Eval、package smoke 与 security；
+- [x] GitHub Actions 在远程仓库实际运行并全部通过：提交 `014e182` 的 10 个 job 覆盖 Windows/Ubuntu × Node 22/24、quality、Provider contracts、offline Eval、package smoke 与 security；
 - [ ] 在仓库设置中启用 Secret Scanning、Push Protection、Dependabot、CodeQL 与 required checks。
 
 ### 11.4 Phase 6.3：文档与人工发布
@@ -737,7 +737,7 @@ RepoMap 按需调用，不自动注入每个 prompt。
 - [x] 发布工作流只允许 `workflow_dispatch`，使用受保护的 `npm-release` Environment 和精确确认短语；
 - [x] npm 已存在版本只有在 registry integrity 与候选 tarball 一致时才能恢复 Tag/Release；
 - [x] 发布后创建 annotated Tag、GitHub Release、SHA-256 与脱敏 Eval 摘要；
-- [ ] 完成 Windows Node 22/24 候选包与完整能力 dogfood；
+- [x] 完成 Windows Node 22/24 候选包与完整能力 dogfood；
 - [ ] 将完整 Phase 2–6 历史 fast-forward 到 `main`；
 - [ ] 确认 npm 名称/版本、使用一次性最小权限 token 发布并立即撤销；
 - [ ] 从 npm registry 安装 `syzzz-code@1.0.0` 并复验。
@@ -806,14 +806,14 @@ RepoMap 按需调用，不自动注入每个 prompt。
 
 - [x] 完整本地自动化通过并标记 Implemented；
 - [x] Windows/Linux CI 和候选包通过并标记 Validated；
-- [ ] 用户完成 RC dogfood；
+- [x] 用户完成 RC dogfood 并标记 Release Candidate Accepted；
 - [ ] fast-forward `main`；
 - [ ] 发布 npm、annotated Tag 和 GitHub Release；
 - [ ] registry 安装复验后标记 Frozen。
 
 ### 当前入口
 
-使用真实候选 tarball 在 Windows Node 22/24 完成完整能力 dogfood。用户确认后标记 **Release Candidate Accepted**，再进入公开仓库设置、`main` fast-forward、npm、Tag、GitHub Release 和 registry 安装复验；在此之前不追加已明确排除的 Agent 能力。
+Phase 6 已完成真实候选 tarball 在 Windows Node 22/24 的完整能力 dogfood，并由用户确认进入 **Release Candidate Accepted**。当前入口是公开仓库设置、`main` fast-forward、npm、Tag、GitHub Release 和 registry 安装复验；在完成这些发布步骤前不标记 Frozen，也不追加已明确排除的 Agent 能力。
 
 ## 15. 路线图完成标准
 

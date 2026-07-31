@@ -4,6 +4,8 @@
 
 ## [1.0.0] - Unreleased
 
+发布候选包已于 2026-07-31 完成人工验收，当前状态为 **Release Candidate Accepted**；npm、Tag、GitHub Release 和 registry 安装复验尚未完成。
+
 ### Added
 
 - 工作区受限的读取、搜索、原子写入、Patch、Git Diff、RepoMap 与 TS/JS Diagnostics。
