@@ -729,7 +729,8 @@ RepoMap 按需调用，不自动注入每个 prompt。
 - [x] 在全新 prefix 安装真实 tarball，验证全局 shim、版本、帮助、legacy 配置迁移、文本、NDJSON 和 doctor；
 - [x] 扫描当前跟踪树和完整可达 Git 历史中的高置信凭证模式；
 - [x] GitHub Actions 在远程仓库实际运行并全部通过：提交 `014e182` 的 10 个 job 覆盖 Windows/Ubuntu × Node 22/24、quality、Provider contracts、offline Eval、package smoke 与 security；
-- [ ] 在仓库设置中启用 Secret Scanning、Push Protection、Dependabot、CodeQL 与 required checks。
+- [x] 在私有仓库阶段启用 Dependabot vulnerability alerts、自动安全修复和 npm/Actions 分组更新；
+- [ ] 仓库公开后启用 Secret Scanning、Push Protection、CodeQL 安全事件与 required checks；个人 GitHub Free 不向私有仓库提供这些保护。
 
 ### 11.4 Phase 6.3：文档与人工发布
 
@@ -738,7 +739,7 @@ RepoMap 按需调用，不自动注入每个 prompt。
 - [x] npm 已存在版本只有在 registry integrity 与候选 tarball 一致时才能恢复 Tag/Release；
 - [x] 发布后创建 annotated Tag、GitHub Release、SHA-256 与脱敏 Eval 摘要；
 - [x] 完成 Windows Node 22/24 候选包与完整能力 dogfood；
-- [ ] 将完整 Phase 2–6 历史 fast-forward 到 `main`；
+- [x] 将完整 Phase 2–6 历史 fast-forward 到 `main`；
 - [ ] 确认 npm 名称/版本、使用一次性最小权限 token 发布并立即撤销；
 - [ ] 从 npm registry 安装 `syzzz-code@1.0.0` 并复验。
 
@@ -807,13 +808,13 @@ RepoMap 按需调用，不自动注入每个 prompt。
 - [x] 完整本地自动化通过并标记 Implemented；
 - [x] Windows/Linux CI 和候选包通过并标记 Validated；
 - [x] 用户完成 RC dogfood 并标记 Release Candidate Accepted；
-- [ ] fast-forward `main`；
+- [x] fast-forward `main`；
 - [ ] 发布 npm、annotated Tag 和 GitHub Release；
 - [ ] registry 安装复验后标记 Frozen。
 
 ### 当前入口
 
-Phase 6 已完成真实候选 tarball 在 Windows Node 22/24 的完整能力 dogfood，并由用户确认进入 **Release Candidate Accepted**。当前入口是公开仓库设置、`main` fast-forward、npm、Tag、GitHub Release 和 registry 安装复验；在完成这些发布步骤前不标记 Frozen，也不追加已明确排除的 Agent 能力。
+Phase 6 已完成真实候选 tarball 在 Windows Node 22/24 的完整能力 dogfood，由用户确认进入 **Release Candidate Accepted**，并已将完整 Phase 2–6 历史 fast-forward 到 `main`。仓库当前继续保持 Private；个人 GitHub Free 无法为私有仓库配置 protected branches、required checks、Environment 保护、Secret Scanning 或 Push Protection。下一发布入口是公开仓库后立即补齐这些设置，再执行 npm、Tag、GitHub Release 和 registry 安装复验；在完成这些发布步骤前不标记 Frozen。
 
 ## 15. 路线图完成标准
 
