@@ -200,6 +200,31 @@ test('configuration v1 adds session and subagent defaults and rejects future sch
   assert.throws(() => validateConfig(future), /unsupported configuration schemaVersion/);
 });
 
+test('Skills configuration defaults compatibly and validates disabled names', () => {
+  const legacyConfig = validateConfig(createValidConfig());
+  assert.deepEqual(legacyConfig.skills, {
+    enabled: true,
+    allowImplicit: true,
+    disabled: []
+  });
+
+  const configured = createValidConfig();
+  configured.skills = {
+    enabled: false,
+    allowImplicit: false,
+    disabled: ['review-code']
+  };
+  assert.deepEqual(validateConfig(configured).skills, configured.skills);
+
+  const duplicate = createValidConfig();
+  duplicate.skills = {
+    enabled: true,
+    allowImplicit: true,
+    disabled: ['review-code', 'review-code']
+  };
+  assert.throws(() => validateConfig(duplicate), /must not contain duplicates/);
+});
+
 test('environment credentials take precedence without mutating process.env', () => {
   const provider = createValidConfig().providers.local;
   provider.env.API_KEY = 'stored-secret';

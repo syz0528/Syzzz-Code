@@ -479,11 +479,13 @@ const coreTools: ToolDefinition[] = [
 export interface ToolRuntimeServices {
   mcpManager?: McpManager;
   delegateTool?: ToolDefinition;
+  compositionTools?: readonly ToolDefinition[];
 }
 
 export function createToolSet(services: ToolRuntimeServices = {}): ToolDefinition[] {
   return [
     ...coreTools,
+    ...(services.compositionTools ?? []),
     ...(services.mcpManager ? createMcpTools(services.mcpManager) : []),
     ...(services.delegateTool ? [services.delegateTool] : [])
   ];

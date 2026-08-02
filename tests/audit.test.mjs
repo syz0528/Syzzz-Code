@@ -98,6 +98,31 @@ test('audit records only allowlisted metadata', () => {
   });
   assert.equal(JSON.stringify(compaction).includes('PRIVATE COMPACTION SUMMARY'), false);
 
+  const context = toAuditRecord(
+    envelope('context_resolved', {
+      referenceType: 'file',
+      byteCount: 128,
+      lineStart: 10,
+      lineEnd: 20,
+      truncated: true,
+      path: 'src/private.ts',
+      content: 'PRIVATE CONTEXT'
+    }),
+    'workspace-hash'
+  );
+  const skill = toAuditRecord(
+    envelope('skill_activated', {
+      skill: 'review-code',
+      activation: 'explicit',
+      byteCount: 256,
+      body: 'PRIVATE SKILL BODY'
+    }),
+    'workspace-hash'
+  );
+  assert.doesNotMatch(JSON.stringify({ context, skill }), /private\.ts|PRIVATE/);
+  assert.equal(context.byteCount, 128);
+  assert.equal(skill.skill, 'review-code');
+
   const mcp = toAuditRecord(
     envelope('mcp_server_status', {
       server: 'fixture',

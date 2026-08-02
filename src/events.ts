@@ -13,7 +13,14 @@ export interface AgentEventEnvelope {
 }
 
 export type AgentPhase =
-  'provider' | 'compaction' | 'extension' | 'subagent' | 'approval' | 'tool' | 'completed';
+  | 'composition'
+  | 'provider'
+  | 'compaction'
+  | 'extension'
+  | 'subagent'
+  | 'approval'
+  | 'tool'
+  | 'completed';
 
 export interface TurnStartedEvent extends AgentEventEnvelope {
   type: 'turn_started';
@@ -102,6 +109,42 @@ export interface ContextUsageUpdatedEvent extends AgentEventEnvelope {
   contextWindowTokens: number;
   triggerTokens: number;
   source: 'estimated' | 'reported';
+}
+
+export interface ContextResolvedEvent extends AgentEventEnvelope {
+  type: 'context_resolved';
+  referenceType: 'file' | 'directory';
+  byteCount: number;
+  lineStart?: number;
+  lineEnd?: number;
+  truncated: boolean;
+}
+
+export interface ContextFailedEvent extends AgentEventEnvelope {
+  type: 'context_failed';
+  referenceType: 'file' | 'directory' | 'unknown';
+  code: string;
+}
+
+export interface InstructionsLoadedEvent extends AgentEventEnvelope {
+  type: 'instructions_loaded';
+  source: 'user' | 'workspace' | 'nested';
+  byteCount: number;
+  truncated: boolean;
+}
+
+export interface SkillActivatedEvent extends AgentEventEnvelope {
+  type: 'skill_activated';
+  skill: string;
+  activation: 'explicit' | 'implicit';
+  byteCount: number;
+}
+
+export interface SkillFailedEvent extends AgentEventEnvelope {
+  type: 'skill_failed';
+  skill: string;
+  activation: 'explicit' | 'implicit';
+  code: string;
 }
 
 export type CompactionReason = 'threshold' | 'context_exceeded' | 'model_switch' | 'manual';
@@ -280,6 +323,11 @@ export type AgentEvent =
   | RetryScheduledEvent
   | UsageUpdatedEvent
   | ContextUsageUpdatedEvent
+  | ContextResolvedEvent
+  | ContextFailedEvent
+  | InstructionsLoadedEvent
+  | SkillActivatedEvent
+  | SkillFailedEvent
   | CompactionStartedEvent
   | CompactionCompletedEvent
   | CompactionFailedEvent

@@ -23,6 +23,11 @@ import {
   type PermissionMode
 } from './permissions/mode.js';
 import { TerminalInputController } from './terminal-input.js';
+import {
+  createContextSuggestionProvider,
+  createSkillSuggestionProvider
+} from './composition/suggestions.js';
+import { SkillInstaller, type SkillInstallPreview } from './composition/skill-installer.js';
 import type { SessionController } from './session-controller.js';
 import type { ToolApprovalRequest } from './types.js';
 import { isAbortError, OperationAbortedError } from './tools/abort.js';
@@ -38,6 +43,8 @@ const COMMAND_PRIORITIES = {
   model: 60,
   provider: 70,
   stream: 80,
+  context: 81,
+  skills: 82,
   extensions: 84,
   mcp: 85,
   hooks: 86,
@@ -134,6 +141,59 @@ function getProviderInfo(engine: QueryEngine) {
 
 function buildPrompt(agentMode: AgentMode, permissionMode: PermissionMode): string {
   return chalk.blue(`You [${agentMode}|${permissionMode}]: `);
+}
+
+interface ParsedInteractiveSkillManagement {
+  target: string;
+  scope: 'user' | 'project';
+  ref?: string;
+  skill?: string;
+}
+
+function parseInteractiveSkillManagement(
+  tokens: readonly string[]
+): ParsedInteractiveSkillManagement {
+  const target = tokens[0];
+  if (!target) {
+    throw new Error('A Skill name or public HTTPS Git URL is required');
+  }
+  let scope: 'user' | 'project' = 'user';
+  let ref: string | undefined;
+  let skill: string | undefined;
+  for (let index = 1; index < tokens.length; index += 1) {
+    const option = tokens[index];
+    const value = tokens[index + 1];
+    if (!value || !['--scope', '--ref', '--skill'].includes(option)) {
+      throw new Error(`Unknown or incomplete Skill option: ${option}`);
+    }
+    if (option === '--scope') {
+      if (value !== 'user' && value !== 'project') {
+        throw new Error('Skill scope must be user or project');
+      }
+      scope = value;
+    } else if (option === '--ref') {
+      ref = value;
+    } else {
+      skill = value;
+    }
+    index += 1;
+  }
+  return { target, scope, ...(ref ? { ref } : {}), ...(skill ? { skill } : {}) };
+}
+
+function formatInteractiveSkillPreview(preview: SkillInstallPreview): string {
+  return [
+    `${preview.action.toUpperCase()} Skill ${preview.name}`,
+    ...(preview.sourceUrl ? [`Source: ${preview.sourceUrl}`] : []),
+    ...(preview.previousCommit ? [`Previous commit: ${preview.previousCommit}`] : []),
+    ...(preview.resolvedCommit ? [`Commit: ${preview.resolvedCommit}`] : []),
+    `Target: ${preview.targetPath}`,
+    `Files: ${preview.fileCount}; bytes: ${preview.totalBytes}; scripts: ${preview.scriptCount}`,
+    ...(preview.files.length > 0
+      ? ['File list:', ...preview.files.map((path) => `  ${path}`)]
+      : []),
+    'Skill installation does not execute scripts or change permissions/workspace trust.'
+  ].join('\n');
 }
 
 function getEngineMode(engine: QueryEngine): AgentMode {
@@ -259,6 +319,7 @@ function formatStatus(context: InteractiveCommandContext): string {
   const status = context.engine.getStatus();
   const sessionStatus = context.session?.getStatus();
   const extensions = (status as { extensions?: typeof status.extensions }).extensions;
+  const composition = (status as { composition?: typeof status.composition }).composition;
   const contextPercent =
     status.context.contextWindowTokens > 0
       ? Math.min(
@@ -283,6 +344,14 @@ function formatStatus(context: InteractiveCommandContext): string {
     `  Usage:        ${status.totalUsage.inputTokens} in / ` +
       `${status.totalUsage.outputTokens} out`,
     `  Messages:     ${status.messageCount}`,
+    ...(composition
+      ? [
+          `  AGENTS:       ${composition.instructions.loaded} loaded`,
+          `  References:   ${composition.context.lastReferenceCount} last turn`,
+          `  Skills:       ${composition.skills.available} available / ` +
+            `${composition.skills.disabled} disabled`
+        ]
+      : []),
     ...(extensions
       ? [
           `  MCP:          ${extensions.mcp.ready} ready / ` +
@@ -776,6 +845,190 @@ function createCommandRegistry(): CommandRegistry<InteractiveCommandContext> {
       commandContext.streamOutput = enabled;
       console.log(chalk.green(`\nStream display set to ${normalized}.`));
       console.log(chalk.gray('Provider streaming and AgentEvent delivery remain enabled.\n'));
+      return 'continue';
+    }
+  });
+
+  register({
+    name: 'context',
+    category: 'runtime',
+    priority: COMMAND_PRIORITIES.context,
+    description: 'Show or reload AGENTS.md and explicit context diagnostics.',
+    argumentHint: '[reload]',
+    isEnabled: (commandContext) => Boolean(commandContext.engine.getCompositionRuntime?.()),
+    choices: () => [{ value: 'reload', description: 'Reload AGENTS.md and Skill metadata' }],
+    async execute(argument, commandContext): Promise<CommandExecutionResult> {
+      const runtime = commandContext.engine.getCompositionRuntime?.();
+      if (!runtime) {
+        console.log(chalk.yellow('\nTask composition is unavailable.\n'));
+        return 'continue';
+      }
+      const normalized = argument?.trim().toLowerCase();
+      if (normalized === 'reload') {
+        await runtime.reload();
+        console.log(chalk.green('\nContext and Skill metadata reloaded.\n'));
+      } else if (normalized) {
+        console.log(chalk.red('\nUse: /context [reload]\n'));
+        return 'continue';
+      }
+      const status = runtime.getStatus();
+      console.log(chalk.cyan('\nTask context\n'));
+      console.log(`  AGENTS.md: ${status.instructions.loaded} loaded`);
+      for (const source of status.instructions.sources) {
+        console.log(
+          `    ${source.source}: ${source.path} (${source.byteCount} bytes)` +
+            `${source.truncated ? ' [truncated]' : ''}`
+        );
+      }
+      console.log(
+        `  References: max ${status.context.maximumReferencesPerTurn} / ` +
+          `${status.context.maximumFileBytes} bytes each / ` +
+          `${status.context.maximumTotalBytes} bytes total`
+      );
+      for (const warning of status.warnings) {
+        console.log(chalk.yellow(`  Warning: ${warning}`));
+      }
+      console.log('');
+      return 'continue';
+    }
+  });
+
+  register({
+    name: 'skills',
+    category: 'extensions',
+    priority: COMMAND_PRIORITIES.skills,
+    description: 'Discover or safely manage Agent Skills.',
+    argumentHint: '[list|inspect|reload|enable|disable|install|update|rollback|remove] [target]',
+    isEnabled: (commandContext) => Boolean(commandContext.engine.getCompositionRuntime?.()),
+    choices: (commandContext) => {
+      const runtime = commandContext.engine.getCompositionRuntime?.();
+      const skills = runtime?.listSkills().filter((skill) => !skill.shadowed) ?? [];
+      return [
+        { value: 'list', description: 'List discovered Skills' },
+        { value: 'reload', description: 'Reload Skill metadata' },
+        ...skills.map((skill) => ({
+          value: `inspect ${skill.name}`,
+          description: skill.description
+        }))
+      ];
+    },
+    async execute(argument, commandContext, signal): Promise<CommandExecutionResult> {
+      const runtime = commandContext.engine.getCompositionRuntime?.();
+      if (!runtime) {
+        console.log(chalk.yellow('\nSkills are unavailable.\n'));
+        return 'continue';
+      }
+      const [rawAction = 'list', ...rest] = (argument?.trim() || 'list').split(/\s+/);
+      const action = rawAction.toLowerCase();
+      const name = rest[0]?.toLowerCase() ?? '';
+      if (action === 'reload') {
+        await runtime.reload();
+        console.log(chalk.green('\nSkills reloaded.\n'));
+        return 'continue';
+      }
+      if (action === 'inspect') {
+        const skill = runtime.inspectSkill(name);
+        if (!skill) {
+          console.log(chalk.red(`\nUnknown Skill: ${name || '(missing)'}\n`));
+          return 'continue';
+        }
+        console.log(chalk.cyan(`\nSkill ${skill.name}\n`));
+        console.log(`  Description: ${skill.description}`);
+        console.log(`  Source:      ${skill.source}`);
+        console.log(`  Location:    ${skill.rootPath}`);
+        console.log(`  Enabled:     ${skill.enabled ? 'yes' : 'no'}`);
+        if (skill.unsupportedFields.length > 0) {
+          console.log(
+            chalk.yellow(
+              `  Unsupported: ${skill.unsupportedFields.join(', ')} (no authorization granted)`
+            )
+          );
+        }
+        console.log('');
+        return 'continue';
+      }
+      if (action === 'enable' || action === 'disable') {
+        if (!name) {
+          console.log(chalk.red(`\nUse: /skills ${action} <name>\n`));
+          return 'continue';
+        }
+        runtime.setSkillEnabled(name, action === 'enable');
+        await runtime.reload();
+        console.log(chalk.green(`\nSkill ${name} ${action}d.\n`));
+        return 'continue';
+      }
+      if (['install', 'update', 'rollback', 'remove'].includes(action)) {
+        const parsed = parseInteractiveSkillManagement(rest);
+        const installer = new SkillInstaller({ workspaceRoot: runtime.workspaceRoot });
+        const confirm = async (preview: SkillInstallPreview) => {
+          console.log(`\n${formatInteractiveSkillPreview(preview)}\n`);
+          const answer = await commandContext.terminal.readLine({
+            prompt: chalk.yellow(`Proceed with Skill ${preview.action}? [y/N]: `),
+            signal
+          });
+          if (answer.type === 'interrupt') {
+            throw new OperationAbortedError('Skill management cancelled');
+          }
+          return answer.type === 'line' && (answer.value === 'y' || answer.value === 'Y');
+        };
+        if (action === 'install') {
+          const record = await installer.install(parsed.target, {
+            scope: parsed.scope,
+            ref: parsed.ref,
+            skill: parsed.skill,
+            signal,
+            confirm
+          });
+          await runtime.reload();
+          console.log(chalk.green(`\nInstalled Skill ${record.name}.\n`));
+          return 'continue';
+        }
+        if (action === 'update') {
+          const record = await installer.update(parsed.target, {
+            scope: parsed.scope,
+            signal,
+            confirm
+          });
+          await runtime.reload();
+          console.log(chalk.green(`\nUpdated Skill ${record.name}.\n`));
+          return 'continue';
+        }
+        if (action === 'rollback') {
+          const record = await installer.rollback(parsed.target, {
+            scope: parsed.scope,
+            signal,
+            confirm
+          });
+          await runtime.reload();
+          console.log(chalk.green(`\nRolled back Skill ${record.name}.\n`));
+          return 'continue';
+        }
+        await installer.remove(parsed.target, {
+          scope: parsed.scope,
+          signal,
+          confirm
+        });
+        await runtime.reload();
+        console.log(chalk.green(`\nRemoved Skill ${parsed.target}.\n`));
+        return 'continue';
+      }
+      if (action !== 'list') {
+        console.log(chalk.red(`\nUnknown Skills action: ${action}\n`));
+        return 'continue';
+      }
+      const skills = runtime.listSkills();
+      console.log(chalk.cyan('\nAgent Skills\n'));
+      if (skills.length === 0) {
+        console.log(chalk.gray('  No Skills discovered.\n'));
+        return 'continue';
+      }
+      for (const skill of skills) {
+        console.log(
+          `  ${skill.name.padEnd(24)} ${skill.enabled ? 'enabled ' : 'disabled'} ` +
+            `[${skill.source}]${skill.shadowed ? ' [shadowed]' : ''}`
+        );
+      }
+      console.log('');
       return 'continue';
     }
   });
@@ -1318,6 +1571,10 @@ export async function runInteractiveSession(
   };
   const commandRegistry = createCommandRegistry();
   const slashSuggestions = createSlashSuggestionProvider(commandRegistry, () => commandContext);
+  const composition = engine.getCompositionRuntime?.();
+  const compositionSuggestions = composition
+    ? [createContextSuggestionProvider(composition), createSkillSuggestionProvider(composition)]
+    : [];
 
   let lastInterruptAt = 0;
   let isClosed = false;
@@ -1350,7 +1607,7 @@ export async function runInteractiveSession(
           getEngineMode(commandContext.engine),
           getEnginePermissionMode(commandContext.engine)
         ),
-        suggestionProviders: [slashSuggestions],
+        suggestionProviders: [slashSuggestions, ...compositionSuggestions],
         history: true
       });
       if (input.type === 'eof') {

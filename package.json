@@ -74,6 +74,7 @@
     "picomatch": "^4.0.5",
     "string-width": "^8.2.2",
     "typescript": "^5.9.3",
+    "yaml": "^2.9.0",
     "zod": "^4.4.3"
   },
   "devDependencies": {
@@ -85,7 +86,6 @@
     "globals": "^17.8.0",
     "prettier": "^3.9.6",
     "tsx": "^4.7.0",
-    "typescript-eslint": "^8.65.0",
-    "yaml": "^2.9.0"
+    "typescript-eslint": "^8.65.0"
   }
 }

@@ -84,6 +84,26 @@ Hook 是用户明确授权的本地代码，以当前操作系统用户权限运
 
 Subagent 使用当前 Provider 和 model 的隔离 fork，因此委派任务和读取到的代码仍会发送给当前 Provider。父历史和本地会话会保留有界的 `Delegate` 调用参数与最终报告，但不会保存子 Agent 的完整 transcript。
 
+## Task Composition 与 Skills 边界
+
+- `@` 只能解析当前工作区内的普通 UTF-8 文件或有界目录清单，并复用敏感路径、realpath、symlink/junction 与 Windows 特殊路径校验。
+- 显式引用、AGENTS 和 Skill 内容都标记为不可信 user-level 数据，不能覆盖 system 边界，也不能改变模式、权限、审批、Hook 或 MCP policy。
+- AGENTS 与项目 Skill 发现采用有界读取，并拒绝 symlink 或解析到允许用户/仓库根之外的路径。
+- 显式引用快照会进入模型历史和本地会话；AGENTS 在每次请求和压缩后按当前磁盘版本重新注入。它们都会发送给当前 Provider。
+- 项目 Skill 自动发现且不要求 `/trust`，因为它只提供指令与只读资源。`allowed-tools`、内联命令和脚本不会被执行或转换为授权。
+- `ReadSkillResource` 只读取 Skill 根目录内的普通 UTF-8 文件，拒绝敏感文件、二进制、symlink 逃逸和超限内容。
+- 审计只记录引用和 Skill 的数量、字节及 outcome，不保存路径、正文、参数、资源内容或安装 URL。
+
+公开 Git Skill 安装属于供应链操作：
+
+- 只接受无凭证的公开 HTTPS URL，拒绝 SSH、PAT、`file://`、localhost 和私有 IP 字面量；
+- Git 使用固定 argv、`shell:false`、禁用交互凭证、Hooks、submodule 和系统/用户配置，不继承 Provider Key；
+- 安装前限制普通文件数量和大小，拒绝 symlink、hardlink、设备文件及路径穿越；
+- 安装固定到完整 commit，展示来源、文件清单、脚本数量与目标目录，并要求单独 `y/Y` 或显式 `--yes`；
+- 安装不会运行 Skill 中的脚本，也不会改变 workspace trust 或 permission mode。
+
+上述检查降低误安装风险，但不能证明仓库内容没有恶意提示。启用前应使用 `syzzz skills inspect <name>` 审查来源和不支持字段。
+
 ## 本地数据
 
 会话快照未加密，可能包含用户提示、代码、工具结果、MCP 返回和 Subagent 报告。审计仅保存 allowlist 元数据，不保存 prompt、URL、认证头、工具输入输出、Hook payload 或 Subagent transcript。
@@ -102,7 +122,7 @@ Subagent 使用当前 Provider 和 model 的隔离 fork，因此委派任务和�
 - Trust V2 不会对被配置引用的脚本或 executable 做内容锁定。
 - Windows ACL 当前只能提示未自动验证，不能证明本地文件仅当前用户可读。
 - 文件最终 hash 复核到原子 rename 之间仍有极小 TOCTOU 窗口。
-- 当前不支持 OAuth、Keychain、磁盘加密、云端审计、旧 SSE、后台 Hook 或写入型 Subagent。
+- 当前不支持 OAuth、Keychain、磁盘加密、云端审计、旧 SSE、后台 Hook、写入型 Subagent、私有 Git Skill 凭证、Skill 市场或自动更新。
 
 ## 供应链与发布
 

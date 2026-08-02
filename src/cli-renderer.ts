@@ -137,13 +137,28 @@ export class HumanEventRenderer {
   handle(event: AgentEvent): void {
     switch (event.type) {
       case 'phase_changed':
-        if (event.phase === 'provider') {
+        if (event.phase === 'composition') {
+          this.startSpinner('Resolving context...');
+        } else if (event.phase === 'provider') {
           this.startSpinner('Thinking...');
         } else if (event.phase === 'compaction') {
           this.startSpinner('Compacting context...');
         } else if (event.phase === 'subagent') {
           this.startSpinner('Delegating read-only work...');
         }
+        break;
+      case 'context_resolved':
+      case 'instructions_loaded':
+      case 'skill_activated':
+        this.stopForStatus();
+        break;
+      case 'context_failed':
+        this.stopForStatus();
+        this.writeLine(chalk.yellow(`Context resolution failed (${event.code})`));
+        break;
+      case 'skill_failed':
+        this.stopForStatus();
+        this.writeLine(chalk.yellow(`Skill ${event.skill} failed (${event.code})`));
         break;
       case 'compaction_started':
         this.stopForStatus();

@@ -4,6 +4,8 @@ import type { ExtensionRuntime } from './extensions/runtime.js';
 import type { ExtensionStatus, HookEventName } from './extensions/types.js';
 import type { HookRunResult } from './extensions/hooks.js';
 import { loadConfig, resolveProviderCredential } from './config.js';
+import { TaskCompositionError } from './composition/runtime.js';
+import type { CompositionStatus, TaskCompositionRuntimeLike } from './composition/types.js';
 import {
   applyCompactionPlan,
   ContextManager,
@@ -141,6 +143,35 @@ function sanitizeToolMetadataForHook(
     }
   }
   return Object.keys(sanitized).length > 0 ? sanitized : undefined;
+}
+
+function compositionPathsForTool(toolName: string, input: unknown): string[] {
+  const pathTools = new Set([
+    'Glob',
+    'Grep',
+    'RepoMap',
+    'ListDirectory',
+    'Read',
+    'Diagnostics',
+    'Patch',
+    'Edit',
+    'Write',
+    'GitDiff'
+  ]);
+  if (!pathTools.has(toolName) || !input || typeof input !== 'object' || Array.isArray(input)) {
+    return [];
+  }
+  const record = input as Record<string, unknown>;
+  const paths: string[] = [];
+  if (typeof record.path === 'string' && record.path.trim()) {
+    paths.push(record.path);
+  }
+  if (Array.isArray(record.paths)) {
+    paths.push(
+      ...record.paths.filter((path): path is string => typeof path === 'string' && Boolean(path))
+    );
+  }
+  return paths;
 }
 
 function toAgentError(error: unknown): AgentErrorDetails {
@@ -361,6 +392,7 @@ export interface EngineStatus {
   totalUsage: ProviderUsage;
   persistence: EnginePersistenceStatus;
   extensions: ExtensionStatus;
+  composition: CompositionStatus;
   context: {
     estimatedInputTokens: number;
     contextWindowTokens: number;
@@ -427,6 +459,7 @@ export interface QueryEngineOptions {
   onCheckpointError?: (error: unknown) => void;
   persistenceStatus?: EnginePersistenceStatusProvider;
   extensions?: ExtensionRuntime;
+  composition?: TaskCompositionRuntimeLike;
   maxToolRounds?: number;
   maxToolCalls?: number;
   maxProviderCalls?: number;
@@ -469,6 +502,7 @@ export class QueryEngine {
   private onCheckpointError?: (error: unknown) => void;
   private persistenceStatus?: EnginePersistenceStatusProvider;
   private extensions?: ExtensionRuntime;
+  private composition?: TaskCompositionRuntimeLike;
   private maxToolRounds: number;
   private maxToolCalls?: number;
   private maxProviderCalls?: number;
@@ -482,11 +516,13 @@ export class QueryEngine {
 
   constructor(options: QueryEngineOptions = {}) {
     this.extensions = options.extensions;
+    this.composition = options.composition;
     this.tools =
       options.tools ??
       createToolSet({
         mcpManager: this.extensions?.mcp,
-        delegateTool: this.extensions ? createDelegateTool() : undefined
+        delegateTool: this.extensions ? createDelegateTool() : undefined,
+        compositionTools: this.composition?.getTools()
       });
     this.workspaceRoot = options.workspaceRoot ?? process.cwd();
     this.permissionMode = options.permissionMode ?? DEFAULT_PERMISSION_MODE;
@@ -732,6 +768,25 @@ export class QueryEngine {
         },
         warnings: []
       },
+      composition: this.composition?.getStatus() ?? {
+        instructions: { loaded: 0, sources: [] },
+        context: {
+          lastReferenceCount: 0,
+          maximumReferencesPerTurn: 10,
+          maximumFileBytes: 40 * 1024,
+          maximumTotalBytes: 80 * 1024
+        },
+        skills: {
+          enabled: false,
+          allowImplicit: false,
+          available: 0,
+          disabled: 0,
+          invalid: 0,
+          shadowed: 0,
+          activeThisTurn: 0
+        },
+        warnings: []
+      },
       context: {
         estimatedInputTokens: measurement.estimatedInputTokens,
         contextWindowTokens: measurement.contextWindowTokens,
@@ -773,6 +828,10 @@ export class QueryEngine {
 
   getExtensionRuntime(): ExtensionRuntime | undefined {
     return this.extensions;
+  }
+
+  getCompositionRuntime(): TaskCompositionRuntimeLike | undefined {
+    return this.composition;
   }
 
   async close(): Promise<void> {
@@ -1068,12 +1127,13 @@ export class QueryEngine {
     reason: CompactionReason,
     force: boolean,
     cumulativeUsage: ProviderUsage | undefined,
-    providerCallBudget?: ProviderCallBudget
+    providerCallBudget?: ProviderCallBudget,
+    prefixMessages: readonly ConversationMessage[] = []
   ): AsyncGenerator<AgentEventData, ContextPreparationResult> {
     let workingMessages = messages;
     let usage = cumulativeUsage;
     let measurement = this.contextManager.measure(
-      workingMessages,
+      [...prefixMessages, ...workingMessages],
       systemPrompt,
       tools,
       this.getProviderInfo()
@@ -1273,7 +1333,7 @@ export class QueryEngine {
         targetingCompactionGoal = true;
         const beforeTokens = measurement.estimatedInputTokens;
         measurement = this.contextManager.measure(
-          workingMessages,
+          [...prefixMessages, ...workingMessages],
           systemPrompt,
           tools,
           this.getProviderInfo()
@@ -1424,6 +1484,7 @@ export class QueryEngine {
       this.activeFileChangeReceipts = [];
       this.activeDelegateCalls = 0;
       this.activeSubagentUsage = undefined;
+      this.composition?.beginTurn();
       const preTurnHooks = this.runHooks('PreTurn', turnId, { userMessage }, signal);
       let preTurnHooksCompleted = false;
       try {
@@ -1440,11 +1501,29 @@ export class QueryEngine {
           await preTurnHooks.return(undefined as never);
         }
       }
+      let composedUserMessage = userMessage;
+      if (this.composition) {
+        yield event({ type: 'phase_changed', phase: 'composition' });
+        try {
+          const composed = await this.composition.compose(userMessage, signal);
+          composedUserMessage = composed.message;
+          for (const compositionEvent of composed.events) {
+            yield event(compositionEvent);
+          }
+        } catch (error) {
+          if (error instanceof TaskCompositionError) {
+            for (const compositionEvent of error.events) {
+              yield event(compositionEvent);
+            }
+          }
+          throw error;
+        }
+      }
       const pendingReceiptMessage = this.createPendingReceiptMessage();
       let workingMessages: ConversationMessage[] = [
         ...this.messages,
         ...(pendingReceiptMessage ? [pendingReceiptMessage] : []),
-        { role: 'user', content: userMessage }
+        { role: 'user', content: composedUserMessage }
       ];
       const responseParts: string[] = [];
       const providerTools = this.getProviderTools();
@@ -1460,8 +1539,9 @@ export class QueryEngine {
       let executedToolCalls = 0;
       let cumulativeUsage: ProviderUsage | undefined;
       let finalFinishReason: string | null | undefined;
+      let currentPrefixMessages = (await this.composition?.getPreludeMessages(signal)) ?? [];
       let latestMeasurement = this.contextManager.measure(
-        workingMessages,
+        [...currentPrefixMessages, ...workingMessages],
         this.getSystemPrompt(),
         providerTools,
         this.getProviderInfo()
@@ -1471,6 +1551,7 @@ export class QueryEngine {
       throwIfAborted(signal);
       for (let toolRound = 0; toolRound <= this.maxToolRounds; toolRound++) {
         throwIfAborted(signal);
+        currentPrefixMessages = (await this.composition?.getPreludeMessages(signal)) ?? [];
         const budgetFinalizationReason =
           this.finalizeOnToolBudget &&
           toolRound > 0 &&
@@ -1535,7 +1616,8 @@ export class QueryEngine {
           this.pendingCompactionReason ?? 'threshold',
           false,
           cumulativeUsage,
-          providerCallBudget
+          providerCallBudget,
+          currentPrefixMessages
         );
         let preparationCompleted = false;
         try {
@@ -1571,7 +1653,7 @@ export class QueryEngine {
           const progress: ProviderProgress = { visibleContentOrTool: false };
           const providerRun = this.runProviderWithEvents(
             {
-              messages: workingMessages,
+              messages: [...currentPrefixMessages, ...workingMessages],
               tools: providerToolsForRound,
               systemPrompt,
               signal
@@ -1614,7 +1696,8 @@ export class QueryEngine {
                 'context_exceeded',
                 true,
                 cumulativeUsage,
-                providerCallBudget
+                providerCallBudget,
+                currentPrefixMessages
               );
               let forcedPreparationCompleted = false;
               try {
@@ -1686,7 +1769,7 @@ export class QueryEngine {
             context: {
               compactions: this.contextManager.compactions - compactionsAtStart,
               inputTokens: this.contextManager.measure(
-                workingMessages,
+                [...currentPrefixMessages, ...workingMessages],
                 this.getSystemPrompt(),
                 providerTools,
                 this.getProviderInfo()
@@ -1767,7 +1850,7 @@ export class QueryEngine {
           }
           executedToolCalls += 1;
           const toolResultBudgetBytes = this.contextManager.toolResultBudgetBytes(
-            workingMessages,
+            [...currentPrefixMessages, ...workingMessages],
             systemPrompt,
             providerTools,
             this.getProviderInfo(),
@@ -1818,6 +1901,11 @@ export class QueryEngine {
             (toolCall.name === 'Write' || toolCall.name === 'Edit' || toolCall.name === 'Patch')
           ) {
             confirmedFileSideEffects.add(toolCall.name);
+          }
+          if (toolCompletedEvent?.outcome === 'success') {
+            await this.composition?.noteTouchedPaths(
+              compositionPathsForTool(toolCall.name, toolCall.input)
+            );
           }
           if (
             toolCompletedEvent?.outcome === 'denied' &&

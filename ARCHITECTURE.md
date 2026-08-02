@@ -9,12 +9,14 @@ CLI / Slash commands / Human renderer / NDJSON
                      |
               Session controller
                      |
-       QueryEngine + Context Manager
-          |          |           |
-   Provider Runner  Tool Runtime  Extension Runtime
-          |          |           |
- OpenAI-compatible  Workspace    MCP / Hooks / Delegate
- Anthropic          Shell
+       Task Composition Runtime
+          |                    |
+  @ / AGENTS / Skills      QueryEngine + Context Manager
+                                  |          |           |
+                           Provider Runner  Tool Runtime  Extension Runtime
+                                  |          |           |
+                         OpenAI-compatible  Workspace    MCP / Hooks / Delegate
+                         Anthropic          Shell
 ```
 
 ### CLI 与会话
@@ -28,6 +30,13 @@ CLI / Slash commands / Human renderer / NDJSON
 - `src/runtime-engine.ts` 拥有回合状态机、模式硬边界、审批、工具循环、上下文提交和唯一终态。
 - `src/events.ts` 定义 `AgentEvent`；终端、NDJSON 和审计消费同一事件源。
 - `src/context-manager.ts` 负责预算估算、自动/手动压缩与失败回滚。
+
+### Task Composition
+
+- `src/composition/runtime.ts` 在首次 Provider 请求前解析显式 `@` 证据、分层 `AGENTS.md` 与 `$skill`，并在后续请求重新注入当前指令。
+- 显式引用内容作为有界 user message 进入历史；AGENTS 与 Skill 目录是按当前磁盘状态生成的瞬时前缀，不提升为 system prompt。
+- `ActivateSkill` 与 `ReadSkillResource` 是只读工具。Skill 的 `allowed-tools` 或脚本不产生任何授权。
+- `src/composition/skill-installer.ts` 以固定 Git argv 安装公开 HTTPS Skill，固定 commit、校验文件类型和大小，并通过原子目录替换维护一个回滚版本。
 
 ### Provider
 
@@ -52,6 +61,7 @@ CLI / Slash commands / Human renderer / NDJSON
 5. reasoning 不进入终端正文、NDJSON、审计或会话快照。
 6. MCP 调用不自动重放；断线只影响下一次独立操作的惰性重连。
 7. Hook 与 Subagent 不能提升权限或获得未显式分配的工具。
+8. `@`、AGENTS 和 Skills 都是不可信 user-level 输入，不能修改模式、权限、审批、Hook、MCP policy 或路径边界。
 
 ## 本地数据
 
@@ -60,6 +70,8 @@ CLI / Slash commands / Human renderer / NDJSON
 - 审计：`~/.syzzz-code/audit/YYYY/MM/DD/<sessionId>.jsonl`
 - Trust：`~/.syzzz-code/trusted-workspaces.json`
 - 用户扩展：`~/.syzzz-code/mcp.json`、`~/.syzzz-code/hooks.json`
+- 用户指令与 Skills：`~/.syzzz-code/AGENTS.md`、`~/.syzzz-code/skills`、`~/.agents/skills`
+- Skill 安装记录：`~/.syzzz-code/skill-installs.json`
 
 会话快照包含恢复所需的有界模型上下文，未加密。审计只保存 allowlist 元数据。
 

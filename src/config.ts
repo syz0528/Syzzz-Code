@@ -54,6 +54,12 @@ export interface SubagentsConfig {
   enabled: boolean;
 }
 
+export interface SkillsConfig {
+  enabled: boolean;
+  allowImplicit: boolean;
+  disabled: string[];
+}
+
 export interface Config {
   schemaVersion: typeof CONFIG_SCHEMA_VERSION;
   currentProvider: string;
@@ -63,6 +69,7 @@ export interface Config {
   context: ContextConfig;
   sessions: SessionsConfig;
   subagents: SubagentsConfig;
+  skills: SkillsConfig;
 }
 
 export type ConfigInspection =
@@ -110,6 +117,12 @@ export const DEFAULT_SUBAGENTS_CONFIG: Readonly<SubagentsConfig> = Object.freeze
   enabled: true
 });
 
+export const DEFAULT_SKILLS_CONFIG: Readonly<SkillsConfig> = Object.freeze({
+  enabled: true,
+  allowImplicit: true,
+  disabled: []
+});
+
 const DEFAULT_CONFIG: Config = {
   schemaVersion: CONFIG_SCHEMA_VERSION,
   currentProvider: 'deepseek',
@@ -118,6 +131,7 @@ const DEFAULT_CONFIG: Config = {
   context: { ...DEFAULT_CONTEXT_CONFIG },
   sessions: { ...DEFAULT_SESSIONS_CONFIG },
   subagents: { ...DEFAULT_SUBAGENTS_CONFIG },
+  skills: { enabled: true, allowImplicit: true, disabled: [] },
   providers: {
     deepseek: {
       name: 'Deepseek',
@@ -256,6 +270,35 @@ function validateSubagentsConfig(value: unknown): SubagentsConfig {
   return { enabled: value.enabled };
 }
 
+function validateSkillsConfig(value: unknown): SkillsConfig {
+  if (value === undefined) {
+    return { enabled: true, allowImplicit: true, disabled: [] };
+  }
+  if (!isRecord(value)) {
+    throw new Error('skills must be an object');
+  }
+  if (typeof value.enabled !== 'boolean') {
+    throw new Error('skills.enabled must be a boolean');
+  }
+  if (typeof value.allowImplicit !== 'boolean') {
+    throw new Error('skills.allowImplicit must be a boolean');
+  }
+  if (!Array.isArray(value.disabled)) {
+    throw new Error('skills.disabled must be an array');
+  }
+  const disabled = value.disabled.map((name, index) =>
+    requireNonEmptyString(name, `skills.disabled[${index}]`)
+  );
+  if (new Set(disabled).size !== disabled.length) {
+    throw new Error('skills.disabled must not contain duplicates');
+  }
+  return {
+    enabled: value.enabled,
+    allowImplicit: value.allowImplicit,
+    disabled
+  };
+}
+
 export function validateConfig(value: unknown): Config {
   if (!isRecord(value)) {
     throw new Error('configuration root must be an object');
@@ -347,7 +390,8 @@ export function validateConfig(value: unknown): Config {
     ui: validateUiConfig(value.ui),
     context: validateContextConfig(value.context),
     sessions: validateSessionsConfig(value.sessions),
-    subagents: validateSubagentsConfig(value.subagents)
+    subagents: validateSubagentsConfig(value.subagents),
+    skills: validateSkillsConfig(value.skills)
   };
 }
 

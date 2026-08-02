@@ -210,6 +210,39 @@ export function toAuditRecord(event: AgentEvent, workspaceId: string): AuditEnve
         triggerTokens: event.triggerTokens,
         source: event.source
       };
+    case 'context_resolved':
+      return {
+        ...base,
+        referenceType: event.referenceType,
+        byteCount: event.byteCount,
+        ...(event.lineStart === undefined
+          ? {}
+          : { lineStart: event.lineStart, lineEnd: event.lineEnd }),
+        truncated: event.truncated
+      };
+    case 'context_failed':
+      return { ...base, referenceType: event.referenceType, code: event.code };
+    case 'instructions_loaded':
+      return {
+        ...base,
+        source: event.source,
+        byteCount: event.byteCount,
+        truncated: event.truncated
+      };
+    case 'skill_activated':
+      return {
+        ...base,
+        skill: event.skill,
+        activation: event.activation,
+        byteCount: event.byteCount
+      };
+    case 'skill_failed':
+      return {
+        ...base,
+        skill: event.skill,
+        activation: event.activation,
+        code: event.code
+      };
     case 'compaction_started':
       return {
         ...base,

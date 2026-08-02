@@ -1,9 +1,9 @@
 # Syzzz Code 路线图
 
 **制定日期：** 2026-06-16
-**最近更新：** 2026-07-31
-**适用基线：** `1.0.0` / Phase 5 冻结提交 `64789ec`
-**当前入口：** Phase 6 已在 `codex/phase6-quality-release` 通过跨平台 CI 和人工候选包验收，状态为 **Release Candidate Accepted**；尚未进入公开发布或 Frozen
+**最近更新：** 2026-08-02
+**适用基线：** `1.0.0` / Phase 7 起始提交 `161391a`
+**当前入口：** Phase 6 保持 **Release Candidate Accepted**；Phase 7 在 `codex/phase7-task-composition` 完成本地实现和最终本地门禁，状态为 **Implemented**，等待跨平台 CI 与人工验收
 
 > 路线图描述实施顺序和验收边界。当前代码事实以 [`README.md`](README.md) 和 [`CURRENT_STATUS.md`](CURRENT_STATUS.md) 为准。
 
@@ -148,6 +148,9 @@ Phase 5  MCP、Hooks 与受限子 Agent
    |
    v
 Phase 6  持续评测、发布与工程治理
+   |
+   v
+Phase 7  显式上下文、开放 Skills 与项目指令
 ```
 
 后续阶段可以提前研究，但不能绕过前置阶段直接进入生产路径。
@@ -752,7 +755,58 @@ RepoMap 按需调用，不自动注入每个 prompt。
 
 在最后一级之前，不得把 Phase 6 标记为 Frozen。
 
-## 12. 暂不进入近期范围
+## 12. Phase 7：显式上下文、开放 Skills 与项目指令
+
+**基线：** `161391a`、278 项测试、Phase 6 Release Candidate。
+
+**范围：** 不增加写入或自治能力，只建立 `@`、`AGENTS.md` 和 Skills 组成的任务组合层；所有内容保持 user-level，不能绕过已有 Runtime 边界。
+
+### 12.1 显式上下文
+
+- [x] `@path`、引号路径、行范围与 `@@` 转义；
+- [x] 工作区、敏感路径、realpath、symlink/junction、UTF-8 与 ignore 校验；
+- [x] 单轮 10 个引用、单文件 40 KiB/2000 行、总计 80 KiB；
+- [x] 目录仅返回有界清单，不递归注入正文；
+- [x] 引用 hash 与 receipt 进入事件，审计不记录路径或正文；
+- [x] 会话保存显式证据快照，标题与输入历史保留原始消息。
+
+### 12.2 分层项目指令
+
+- [x] 用户级 `~/.syzzz-code/AGENTS.md`；
+- [x] Git 根到当前目录的确定性覆盖顺序；
+- [x] 文件工具或 `@` 接触嵌套目录后按需加载祖先指令；
+- [x] 每文件 32 KiB、合计 64 KiB，超限明确警告；
+- [x] 指令作为瞬时 user-level 前缀，每次请求与压缩后重新注入；
+- [x] `/context` 与 `/context reload` 状态和诊断。
+
+### 12.3 开放 Skills
+
+- [x] 用户共享、用户 Syzzz、项目根和最近项目目录四级发现；
+- [x] Agent Skills YAML frontmatter，损坏 Skill 单独隔离；
+- [x] 启动只提供名称/描述，`$skill` 或 `ActivateSkill` 才加载正文；
+- [x] 每轮最多 3 个 Skill、正文合计 64 KiB；
+- [x] `ReadSkillResource` 的 Skill 根、普通 UTF-8、敏感路径和 40 KiB 限制；
+- [x] `allowed-tools`、脚本和指令均不产生授权；
+- [x] `/skills`、`syzzz skills list|inspect|doctor` 与 `@/$` 异步候选。
+
+### 12.4 公开 Git 安装
+
+- [x] 仅公开 HTTPS URL，拒绝凭证、SSH、本地协议、localhost 与私有 IP 字面量；
+- [x] 固定 Git argv、`shell:false`、禁用交互凭证、Hooks、submodule 和用户/系统配置；
+- [x] 普通文件、数量、单文件与总大小校验；
+- [x] 安装前展示来源、resolved commit、文件清单、脚本数、大小和目标；
+- [x] 完整 commit 固定、原子替换、安装记录和一个本地回滚版本；
+- [x] 手工目录保护及 install/update/rollback/remove 命令。
+
+### Phase 7 状态门槛
+
+- **Implemented**：实现、本地测试与离线 Eval 通过。
+- **Validated**：覆盖率、审计、打包和 Windows/Ubuntu Node 22/24 CI 通过。
+- **Frozen**：真实 `@`、AGENTS、显式/隐式 Skill、Git 安装和恶意 Skill 人工验收通过。
+
+当前状态为 **Implemented**。本阶段不发布 npm、不创建 Tag、不公开仓库，也不改变 Phase 6 Release Candidate 提交。
+
+## 13. 暂不进入近期范围
 
 以下能力可能有长期价值，但在 Tool Runtime、上下文和会话稳定前不进入近期开发：
 
@@ -770,7 +824,7 @@ RepoMap 按需调用，不自动注入每个 prompt。
 
 这些项目只有在出现真实用户需求、并且核心 CLI 能力稳定后才重新评估。
 
-## 13. 建议版本里程碑
+## 14. 建议版本里程碑
 
 版本号表达交付边界，不代表日期承诺：
 
@@ -786,14 +840,14 @@ RepoMap 按需调用，不自动注入每个 prompt。
 
 - 修复真实用户发现的可靠性、安全和兼容性问题；
 - 根据独立设计评估 Anthropic 流式或 OpenAI Responses API；
-- 根据需求评估 `@` 上下文、`$` Skills、LSP、MCP OAuth 和完整 TUI；
+- 根据需求评估 LSP、MCP OAuth、完整 TUI、私有 Skill 源和更强 Subagent；
 - 不以功能数量为目标，不破坏 v1.0 已冻结的安全边界。
 
 ### v2.0.0 候选方向
 
 只有出现需要不兼容配置、事件或会话协议变更的真实需求，并且迁移方案、回滚方案和跨平台验证均成熟后，才评估 `v2.0.0`。
 
-## 14. 最近行动清单
+## 15. 最近行动清单
 
 ### 已完成
 
@@ -802,6 +856,7 @@ RepoMap 按需调用，不自动注入每个 prompt。
 - [x] 建立 CI、供应链、tarball 和人工发布门禁；
 - [x] 新增 LICENSE、ARCHITECTURE、TESTING 与 CHANGELOG；
 - [x] 保持 AgentEvent、Provider、工具、会话和配置公共契约不变。
+- [x] 完成 Phase 7 任务组合层与十二项离线 Eval 的本地实现。
 
 ### Phase 6 待验收
 
@@ -812,11 +867,19 @@ RepoMap 按需调用，不自动注入每个 prompt。
 - [ ] 发布 npm、annotated Tag 和 GitHub Release；
 - [ ] registry 安装复验后标记 Frozen。
 
+### Phase 7 待验收
+
+- [x] 292 项本地测试、覆盖率门槛和 12 项离线 Eval；
+- [ ] 覆盖率、审计、pack 和 tarball smoke 最终门禁；
+- [ ] Windows/Ubuntu Node 22/24 CI；
+- [ ] 用户完成 `@`、AGENTS、Skills 与公开 Git 安装 dogfood；
+- [ ] 人工验收后标记 Frozen。
+
 ### 当前入口
 
-Phase 6 已完成真实候选 tarball 在 Windows Node 22/24 的完整能力 dogfood，由用户确认进入 **Release Candidate Accepted**，并已将完整 Phase 2–6 历史 fast-forward 到 `main`。仓库当前继续保持 Private；个人 GitHub Free 无法为私有仓库配置 protected branches、required checks、Environment 保护、Secret Scanning 或 Push Protection。下一发布入口是公开仓库后立即补齐这些设置，再执行 npm、Tag、GitHub Release 和 registry 安装复验；在完成这些发布步骤前不标记 Frozen。
+Phase 6 继续保持 **Release Candidate Accepted**，完整 Phase 2–6 历史已 fast-forward 到 `main`。Phase 7 从该基线独立开发，本地最终门禁已经通过，下一步是跨平台 CI 和人工 dogfood；不会借 Phase 7 绕过 Phase 6 的公开发布条件。
 
-## 15. 路线图完成标准
+## 16. 路线图完成标准
 
 当项目最终达到本路线图所描述的成熟状态时，应具备以下特征：
 

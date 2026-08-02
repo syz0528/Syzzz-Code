@@ -18,7 +18,7 @@ npm run check
 
 `npm run check` 是本地综合门槛；`smoke:package` 额外安装真实 tarball，耗时更长。Windows 进程、会话锁与 MCP 生命周期可用 `npm run test:stability` 连续执行三轮，任一轮失败都会立即终止。
 
-2026-07-31 的 Phase 6 发布候选基线为：278/278 项测试、覆盖率最新测得 Lines 83.62%、Branches 76.08%、Functions 86.57%、离线 Provider 契约 37/37、离线 Eval 7/7、真实 tarball 安装 smoke、Windows Node 22/24 人工 dogfood 和跨平台 CI 10/10 job 全部通过。
+2026-08-02 的 Phase 7 本地实现基线为：292/292 项测试、覆盖率 Lines 82.27%/Branches 75.14%/Functions 85.99%、离线 Eval 12/12 与真实 tarball smoke 通过。Windows/Ubuntu Node 22/24 CI 仍待执行；Phase 6 发布候选的跨平台 CI 与人工验收结论保持不变。
 
 ## 自动化层级
 
@@ -42,7 +42,7 @@ npm run check
 
 ## 固定 Agent Eval
 
-`npm run eval:offline` 在七个独立临时 Git 仓库中验证：
+`npm run eval:offline` 在十二个独立临时 Git 仓库中验证：
 
 1. 只读架构分析；
 2. 跨文件 Bug 修复；
@@ -51,12 +51,17 @@ npm run check
 5. 首次测试失败后继续修正；
 6. 拒绝越界写入；
 7. 接近上下文上限时压缩并完成任务。
+8. 通过显式文件引用使用确定版本的证据；
+9. 按嵌套目录加载项目指令；
+10. 激活 Skill 并遵循工作流；
+11. 恶意 Skill 不能获得写入权限；
+12. 安装后的 Skill 可以被发现和调用。
 
 Shell 审批只接受任务清单中完全一致的命令和 cwd。语义 grader 位于 Agent 可修改的仓库之外，使用 `spawn(..., shell:false)` 独立执行，并通过回归测试确认替换仓库内测试不能绕过评分。TypeScript 任务按导出值的类型和静态运行语义评分，不要求模型生成某一种固定语法。外部 grader 与批准的 fixture 测试还使用 Node Permission Model 限制文件访问；这是一层进程级防误用约束，不是隔离恶意代码的 OS sandbox。报告写入 `eval-results`，只包含平台、提交、协议、模型、耗时、usage、工具数、审批、重试、压缩、终态、脱敏停止原因、工具与审批结果计数、变更计数、diff 哈希和 grader 结果；不保存 prompt、回答、源码、Shell 输出、Secret、reasoning 或 transcript。
 
 ## Live Eval
 
-Live Eval 不属于普通 CI。`npm run eval:live` 默认使用当前 Syzzz 配置中的 Provider 和模型，读取凭证后会在执行 Agent Shell 前剥离进程中的凭证类环境变量，报告也不会保存凭证。它在同一组七个隔离任务上要求安全任务 100% 通过、功能任务成功率至少 80%。
+Live Eval 不属于普通 CI。`npm run eval:live` 默认使用当前 Syzzz 配置中的 Provider 和模型，读取凭证后会在执行 Agent Shell 前剥离进程中的凭证类环境变量，报告也不会保存凭证。Phase 6 Live Eval 继续使用原有七项联网任务，要求安全任务 100% 通过、功能任务成功率至少 80%。Phase 7 新增的五项任务组合 Eval 当前为强制离线门槛，避免安装来源与项目指令测试依赖外网。
 
 验证另一个 OpenAI-compatible 或 Anthropic 端点时，可用显式环境变量覆盖当前配置：
 

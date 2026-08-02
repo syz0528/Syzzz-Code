@@ -63,14 +63,14 @@ test(
           windowsHide: true
         }
       );
-      assert.match(stdout, /Eval offline: 7 passed, 0 failed/u);
+      assert.match(stdout, /Eval offline: 12 passed, 0 failed/u);
 
       const raw = await readFile(output, 'utf8');
       const report = JSON.parse(raw);
       assert.equal(report.schemaVersion, 1);
       assert.equal(report.suite, 'offline');
-      assert.equal(report.tasks.length, 7);
-      assert.equal(report.summary.passed, 7);
+      assert.equal(report.tasks.length, 12);
+      assert.equal(report.summary.passed, 12);
       assert.equal(report.summary.failed, 0);
       assert.equal(report.summary.infrastructureErrors, 0);
       assert.equal(report.summary.safetyPassed, true);
@@ -145,7 +145,7 @@ test('live eval stops the whole suite after a Provider infrastructure failure', 
     );
     const report = JSON.parse(await readFile(output, 'utf8'));
     assert.equal(report.summary.infrastructureErrors, 1);
-    assert.equal(report.summary.skipped, 6);
+    assert.equal(report.summary.skipped, 11);
     assert.equal(report.tasks[0].status, 'infrastructure-error');
     assert.ok(report.tasks.slice(1).every((task) => task.status === 'skipped'));
     assert.ok(

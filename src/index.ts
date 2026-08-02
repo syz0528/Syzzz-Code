@@ -21,6 +21,8 @@ import {
   type Config,
   type ProviderConfigItem
 } from './config.js';
+import { TaskCompositionRuntime } from './composition/runtime.js';
+import { SkillInstaller, type SkillInstallPreview } from './composition/skill-installer.js';
 import { runDoctor } from './doctor.js';
 import { QueryEngine } from './engine.js';
 import { ExtensionRuntime } from './extensions/runtime.js';
@@ -51,6 +53,24 @@ interface InteractiveStartupOptions {
 
 function collectOption(value: string, previous: string[]): string[] {
   return [...previous, value];
+}
+
+function formatSkillInstallPreview(preview: SkillInstallPreview): string {
+  const lines = [
+    `${preview.action.toUpperCase()} Skill ${preview.name}`,
+    ...(preview.sourceUrl ? [`Source: ${preview.sourceUrl}`] : []),
+    ...(preview.previousCommit ? [`Previous commit: ${preview.previousCommit}`] : []),
+    ...(preview.resolvedCommit ? [`Commit: ${preview.resolvedCommit}`] : []),
+    `Target: ${preview.targetPath}`,
+    `Files: ${preview.fileCount}; bytes: ${preview.totalBytes}; scripts: ${preview.scriptCount}`
+  ];
+  if (preview.files.length > 0) {
+    lines.push('File list:', ...preview.files.map((path) => `  ${path}`));
+  }
+  lines.push(
+    'Installing a Skill does not execute its scripts or change permissions/workspace trust.'
+  );
+  return lines.join('\n');
 }
 
 function parseOutputFormat(value: string): OutputFormat {
@@ -115,7 +135,7 @@ function configuredProviderCredentialEnvironmentNames(): string[] {
   return inspection.status === 'valid' ? providerCredentialEnvironmentNames(inspection.config) : [];
 }
 
-function createConfiguredEngine(request: SessionEngineRequest): SessionEngineResult {
+async function createConfiguredEngine(request: SessionEngineRequest): Promise<SessionEngineResult> {
   const config = loadConfig();
   const warnings: string[] = [];
   let selected = usableProvider(config, request.providerId);
@@ -150,6 +170,9 @@ function createConfiguredEngine(request: SessionEngineRequest): SessionEngineRes
     subagentsAvailable: Boolean(provider.fork),
     forbiddenEnvironmentNames: providerCredentialEnvironmentNames(config)
   });
+  const composition = await TaskCompositionRuntime.create({
+    workspaceRoot: process.cwd()
+  });
   const audit = new LocalAuditLogger({
     config: config.audit,
     sessionId: request.sessionId,
@@ -162,7 +185,8 @@ function createConfiguredEngine(request: SessionEngineRequest): SessionEngineRes
     workspaceRoot: process.cwd(),
     context: config.context,
     audit,
-    extensions
+    extensions,
+    composition
   });
   return {
     engine,
@@ -256,7 +280,7 @@ async function startInteractive(options: InteractiveStartupOptions = {}): Promis
   const store = await SessionStore.create({
     workspaceRoot: process.cwd()
   });
-  const initial = createConfiguredEngine({
+  const initial = await createConfiguredEngine({
     sessionId: randomUUID(),
     mode: 'code'
   });
@@ -767,6 +791,139 @@ program
   });
 
 program
+  .command('skills')
+  .description('Discover, inspect, validate, or manage Agent Skills')
+  .argument('<action>', 'Action: list, inspect, doctor, install, update, rollback, remove')
+  .argument('[target]', 'Skill name or public HTTPS Git URL')
+  .option('--ref <ref>', 'Git ref to resolve and pin')
+  .option('--skill <name>', 'Select one Skill from a multi-Skill repository')
+  .option('--scope <scope>', 'Installation scope: user or project', 'user')
+  .option('-y, --yes', 'Skip confirmation')
+  .option('--json', 'Emit machine-readable JSON')
+  .action(async (action, target, options) => {
+    const normalizedAction = String(action).toLowerCase();
+    const scope = String(options.scope).toLowerCase();
+    if (scope !== 'user' && scope !== 'project') {
+      console.error(chalk.red('\nSkills command failed: scope must be user or project\n'));
+      process.exitCode = 1;
+      return;
+    }
+    const abortController = new AbortController();
+    const handleInterrupt = () => abortController.abort(new OperationAbortedError());
+    process.once('SIGINT', handleInterrupt);
+    try {
+      const runtime = await TaskCompositionRuntime.create({
+        workspaceRoot: process.cwd()
+      });
+      if (normalizedAction === 'list') {
+        const skills = runtime.listSkills();
+        if (options.json) {
+          console.log(JSON.stringify(skills));
+        } else if (skills.length === 0) {
+          console.log('No Skills discovered.');
+        } else {
+          for (const skill of skills) {
+            console.log(
+              `${skill.name}  ${skill.enabled ? 'enabled' : 'disabled'}  ` +
+                `${skill.source}${skill.shadowed ? '  shadowed' : ''}`
+            );
+          }
+        }
+        return;
+      }
+      if (normalizedAction === 'inspect') {
+        if (!target) {
+          throw new Error('skills inspect requires a Skill name');
+        }
+        const skill = runtime.inspectSkill(target);
+        if (!skill) {
+          throw new Error(`Unknown Skill: ${target}`);
+        }
+        console.log(options.json ? JSON.stringify(skill) : JSON.stringify(skill, null, 2));
+        return;
+      }
+      if (normalizedAction === 'doctor') {
+        const status = runtime.getStatus();
+        const result = {
+          ok: status.skills.invalid === 0,
+          skills: status.skills,
+          warnings: status.warnings
+        };
+        if (options.json) {
+          console.log(JSON.stringify(result));
+        } else {
+          console.log(
+            `Skills: ${status.skills.available} available, ` +
+              `${status.skills.disabled} disabled, ${status.skills.invalid} invalid`
+          );
+          status.warnings.forEach((warning) => console.log(`WARN: ${warning}`));
+        }
+        process.exitCode = result.ok ? 0 : 1;
+        return;
+      }
+      if (!target) {
+        throw new Error(`skills ${normalizedAction} requires a target`);
+      }
+      const installer = new SkillInstaller({ workspaceRoot: process.cwd() });
+      const confirm = options.yes
+        ? async () => true
+        : async (preview: SkillInstallPreview) => {
+            console.log(`\n${formatSkillInstallPreview(preview)}\n`);
+            return await confirmAction(`Proceed with Skill ${preview.action}?`);
+          };
+      if (normalizedAction === 'install') {
+        const record = await installer.install(target, {
+          ref: options.ref,
+          skill: options.skill,
+          scope,
+          signal: abortController.signal,
+          confirm
+        });
+        console.log(options.json ? JSON.stringify(record) : `Installed ${record.name}.`);
+        return;
+      }
+      if (normalizedAction === 'update') {
+        const record = await installer.update(target, {
+          scope,
+          signal: abortController.signal,
+          confirm
+        });
+        console.log(options.json ? JSON.stringify(record) : `Updated ${record.name}.`);
+        return;
+      }
+      if (normalizedAction === 'rollback') {
+        const record = await installer.rollback(target, {
+          scope,
+          signal: abortController.signal,
+          confirm
+        });
+        console.log(options.json ? JSON.stringify(record) : `Rolled back ${record.name}.`);
+        return;
+      }
+      if (normalizedAction === 'remove') {
+        await installer.remove(target, {
+          scope,
+          signal: abortController.signal,
+          confirm
+        });
+        console.log(
+          options.json ? JSON.stringify({ removed: target, scope }) : `Removed ${target}.`
+        );
+        return;
+      }
+      throw new Error(
+        'skills action must be list, inspect, doctor, install, update, rollback, or remove'
+      );
+    } catch (error) {
+      const reason = error instanceof Error ? error.message : String(error);
+      console.error(chalk.red('\nSkills command failed:'), `${reason}\n`);
+      process.exitCode = isAbortError(error) ? 130 : 1;
+    } finally {
+      process.removeListener('SIGINT', handleInterrupt);
+    }
+  });
+
+program
   .command('doctor')
   .description('Run offline configuration and runtime diagnostics')
   .option('--repair-config', 'Back up and reset a damaged configuration')
@@ -842,7 +999,7 @@ program
         if (options.continue || options.resume) {
           throw new Error('--continue and --resume are available only for interactive sessions');
         }
-        const created = createConfiguredEngine({
+        const created = await createConfiguredEngine({
           sessionId: randomUUID(),
           mode: parseMode(options.mode)
         });
