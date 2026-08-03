@@ -340,6 +340,21 @@ syzzz skills update|rollback|remove <name> [--yes]
 
 `syzzz doctor`、`syzzz extensions status` 与 `syzzz skills doctor` 始终离线；只有 `syzzz mcp doctor` 会连接服务器。项目 MCP/Hook 配置变更后必须重新 `/trust`。项目 Skill 是无权限指令资源，不进入 workspace trust；安装只支持公开 HTTPS Git，固定到完整 commit，执行前展示文件清单并要求 `y/Y` 或 `--yes`，且不会运行仓库中的脚本。
 
+`AGENTS.md`、`SKILL.md` 和 Skill 资源必须是 UTF-8。Windows PowerShell 5.1 的 `Set-Content` 默认使用当前 ANSI 代码页，创建中文测试文件时必须显式指定编码：
+
+```powershell
+Set-Content -LiteralPath .\AGENTS.md -Encoding UTF8 -Value '回答时必须包含 ROOT_RULE。'
+@'
+---
+name: phase7-demo
+description: 使用固定步骤审查 TypeScript 证据
+---
+回答必须包含 SKILL_ACTIVE，并引用给定证据。
+'@ | Set-Content -LiteralPath .\.agents\skills\phase7-demo\SKILL.md -Encoding UTF8
+```
+
+无效 Skill 会被单独隔离并由 `/context`、`/skills inspect` 或 `syzzz skills doctor` 报告，不会阻塞其他 Skill。Agent Skills 规范要求 `description` 不超过 1024 个字符；超限 Skill 需要由其作者缩短描述后才能加载。
+
 ### 其他命令
 
 ```bash
@@ -381,7 +396,7 @@ git diff --check
 
 自动化套件覆盖路径与权限安全、事件 Runtime、Provider 可靠性、终端交互、代码库上下文、压缩、会话恢复、Trust V2、MCP、Hooks 和只读 Subagent。Phase 6 增加四种离线 Provider Profile 与发布门禁；Phase 7 增加 `@`、分层 AGENTS、Skills、公开 Git 安装及五项任务组合 Eval。
 
-当前 Phase 7 本地基线为 **292/292** 项测试和离线 Eval **12/12** 通过；综合门槛覆盖率为 Lines **82.27%**、Branches **75.14%**、Functions **85.99%**，均高于 82%/74%/84% 门槛。打包与安全扫描已通过，跨平台 CI 仍待执行。Phase 6 的真实 DeepSeek/OpenCode Live Eval 保持 7/7、功能成功率 100%、安全项通过且无基础设施错误。
+当前 Phase 7 本地基线为 **293/293** 项测试和离线 Eval **12/12** 通过；综合门槛覆盖率为 Lines **82.31%**、Branches **75.28%**、Functions **85.99%**，均高于 82%/74%/84% 门槛。打包与安全扫描已通过，跨平台 CI 仍待执行。Phase 6 的真实 DeepSeek/OpenCode Live Eval 保持 7/7、功能成功率 100%、安全项通过且无基础设施错误。
 
 Phase 5 冻结验收还完成了 11 项真实终端 dogfood，覆盖未信任边界、Trust V2 复审、MCP 策略与惰性重连、Hook 拒绝与生命周期、取消清理、Subagent 预算、隐私恢复和撤销信任。公开 Streamable HTTP MCP 的真实握手、工具发现及只读天气调用同样通过；该外部服务只用于兼容性验证，不是 Syzzz 的运行依赖。
 

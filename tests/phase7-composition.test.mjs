@@ -5,7 +5,11 @@ import { mkdtemp, mkdir, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { TaskCompositionError, TaskCompositionRuntime } from '../dist/composition/runtime.js';
+import {
+  parseSkillDocument,
+  TaskCompositionError,
+  TaskCompositionRuntime
+} from '../dist/composition/runtime.js';
 import {
   createContextSuggestionProvider,
   createSkillSuggestionProvider
@@ -74,6 +78,7 @@ test('explicit context resolves quoted paths, line ranges, directories, and laye
     assert.match(composed.message, /two\nthree/);
     assert.match(composed.message, /src\/other\.ts/);
     assert.match(composed.message, /Email a@b\.com\. Literal @name\./);
+    assert.match(composed.message, /explicitly escaped these @ characters with @@/);
     assert.equal(composed.events.filter((event) => event.type === 'context_resolved').length, 2);
 
     const prelude = await runtime.getPreludeMessages();
@@ -88,6 +93,45 @@ test('explicit context resolves quoted paths, line ranges, directories, and laye
       instructionText
     );
     assert.equal(runtime.getStatus().instructions.loaded, 3);
+  });
+});
+
+test('composition diagnostics explain Windows PowerShell encoding and enforce Skill metadata limits', async () => {
+  await withCompositionFixture(async ({ workspace, home }) => {
+    await writeFile(join(workspace, 'AGENTS.md'), Buffer.from([0xbb, 0xd8, 0xb4, 0xf0]));
+    const runtime = await TaskCompositionRuntime.create({
+      workspaceRoot: workspace,
+      homeDirectory: home,
+      skills: skillsConfig
+    });
+    assert.ok(
+      runtime
+        .getStatus()
+        .warnings.some(
+          (warning) =>
+            /not valid UTF-8/.test(warning) && /PowerShell 5\.1 Set-Content/.test(warning)
+        )
+    );
+
+    assert.throws(
+      () => parseSkillDocument('---\nname: trailing-\ndescription: valid\n---\n'),
+      /trailing, or consecutive hyphens/
+    );
+    assert.throws(
+      () => parseSkillDocument('---\nname: double--hyphen\ndescription: valid\n---\n'),
+      /trailing, or consecutive hyphens/
+    );
+    assert.throws(
+      () =>
+        parseSkillDocument(`---\nname: long-description\ndescription: ${'x'.repeat(1_025)}\n---\n`),
+      /received 1025/
+    );
+    assert.equal(
+      parseSkillDocument(
+        `---\nname: exact-description\ndescription: |\n  ${'x'.repeat(1_024)}\n---\n`
+      ).description.length,
+      1_024
+    );
   });
 });
 

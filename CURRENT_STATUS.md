@@ -26,7 +26,7 @@ Phase 5.0 Core 已完成“可信扩展运行时、MCP Broker 与受限委派”
 
 Phase 5.1 在此基础上补齐扩展配置复审、MCP 本地收紧策略与断线生命周期、统一扩展状态、压缩/委派 Hook，以及 Subagent 软硬预算和停止语义。
 
-当前完整自动化测试为 **292/292**。Phase 1 至 Phase 6 的路径、权限、事件、Provider、终端、上下文、可靠编辑、会话恢复、扩展和发布契约继续通过。
+当前完整自动化测试为 **293/293**。Phase 1 至 Phase 6 的路径、权限、事件、Provider、终端、上下文、可靠编辑、会话恢复、扩展和发布契约继续通过。
 
 11 项真实终端 dogfood 已全部通过，覆盖项目 trust 复审、MCP 策略与断线重连、Hook、Subagent 预算、取消清理、隐私恢复和撤销信任。公开 Streamable HTTP MCP 的真实握手、工具发现与只读天气调用也已通过，Phase 5 的扩展信任和传输闭环达到冻结条件。
 
@@ -197,8 +197,8 @@ subagents.enabled = true
 
 当前结果：
 
-- `npm test`：**292/292**
-- `npm run test:coverage`：综合门槛测得 Lines **82.27%**、Branches **75.14%**、Functions **85.99%**，均高于 82%/74%/84% 门槛
+- `npm test`：**293/293**
+- `npm run test:coverage`：综合门槛测得 Lines **82.31%**、Branches **75.28%**、Functions **85.99%**，均高于 82%/74%/84% 门槛
 - `npm run eval:offline`：十二项固定任务 **12/12**
 - `npm run test:providers`：四种离线 Provider Profile 与共享 Runner 契约 **37/37**
 - `npm run test:stability`：Windows Shell、会话和 MCP/Hook 生命周期连续三轮通过

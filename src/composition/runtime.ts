@@ -65,6 +65,9 @@ interface ExplicitSkillRequest {
   escapedMessage: string;
 }
 
+const UTF8_ENCODING_HINT =
+  'Save the file as UTF-8. Windows PowerShell 5.1 Set-Content uses the active ANSI encoding unless -Encoding UTF8 is specified.';
+
 function sha256(value: Uint8Array | string): string {
   return createHash('sha256').update(value).digest('hex');
 }
@@ -85,7 +88,7 @@ function decodeUtf8(bytes: Uint8Array, label: string): string {
   try {
     return new TextDecoder('utf-8', { fatal: true }).decode(bytes).replace(/^\uFEFF/, '');
   } catch (error) {
-    throw new Error(`${label} is not valid UTF-8`, { cause: error });
+    throw new Error(`${label} is not valid UTF-8. ${UTF8_ENCODING_HINT}`, { cause: error });
   }
 }
 
@@ -102,9 +105,11 @@ function errorCode(error: unknown): string {
 function parseContextReferences(message: string): {
   references: ContextReference[];
   escapedMessage: string;
+  literalAtCount: number;
 } {
   const references: ContextReference[] = [];
   let escapedMessage = '';
+  let literalAtCount = 0;
   let index = 0;
 
   while (index < message.length) {
@@ -115,6 +120,7 @@ function parseContextReferences(message: string): {
     }
     if (message[index + 1] === '@') {
       escapedMessage += '@';
+      literalAtCount += 1;
       index += 2;
       continue;
     }
@@ -173,7 +179,7 @@ function parseContextReferences(message: string): {
     });
     escapedMessage += message.slice(start, index);
   }
-  return { references, escapedMessage };
+  return { references, escapedMessage, literalAtCount };
 }
 
 function parseExplicitSkill(message: string): ExplicitSkillRequest | undefined {
@@ -284,7 +290,7 @@ async function readBoundedInstruction(
       ? new TextDecoder('utf-8', { fatal: true }).decode(bytes, { stream: true })
       : decodeUtf8(bytes, path);
   } catch (error) {
-    throw new Error(`${path} is not valid UTF-8`, { cause: error });
+    throw new Error(`${path} is not valid UTF-8. ${UTF8_ENCODING_HINT}`, { cause: error });
   }
   const limited = limitUtf8Head(content, maximum, '\n\n[AGENTS.md truncated]');
   return {
@@ -310,23 +316,33 @@ export function parseSkillDocument(content: string, directoryName?: string): Par
     throw new Error('Skill frontmatter must be an object');
   }
   const record = value as Record<string, unknown>;
-  if (typeof record.name !== 'string' || !SKILL_NAME_PATTERN.test(record.name)) {
-    throw new Error('Skill name must use lowercase letters, digits, and hyphens');
+  if (
+    typeof record.name !== 'string' ||
+    !SKILL_NAME_PATTERN.test(record.name) ||
+    record.name.endsWith('-') ||
+    record.name.includes('--')
+  ) {
+    throw new Error(
+      'Skill name must be 1-64 lowercase letters, digits, or hyphens, without leading, trailing, or consecutive hyphens'
+    );
   }
   if (directoryName && record.name !== directoryName) {
     throw new Error(`Skill name ${record.name} must match its directory ${directoryName}`);
   }
-  if (
-    typeof record.description !== 'string' ||
-    !record.description.trim() ||
-    record.description.length > 1_024
-  ) {
+  if (typeof record.description !== 'string' || !record.description.trim()) {
     throw new Error('Skill description must be a non-empty string up to 1024 characters');
+  }
+  const description = record.description.trim();
+  const descriptionCharacters = [...description].length;
+  if (descriptionCharacters > 1_024) {
+    throw new Error(
+      `Skill description must be a non-empty string up to 1024 characters (received ${descriptionCharacters})`
+    );
   }
   const supported = new Set(['name', 'description', 'license', 'compatibility', 'metadata']);
   return {
     name: record.name,
-    description: record.description.trim(),
+    description,
     unsupportedFields: Object.keys(record).filter((key) => !supported.has(key))
   };
 }
@@ -501,6 +517,11 @@ export class TaskCompositionRuntime implements TaskCompositionRuntimeLike {
     const blocks: string[] = [];
     const receipts: ContextReceipt[] = [];
     let totalBytes = 0;
+    if (parsedContext.literalAtCount > 0) {
+      blocks.push(
+        `<escaped_context_reference count="${parsedContext.literalAtCount}">The user explicitly escaped these @ characters with @@. They are literal text, not unresolved context references. Do not search for them unless the user separately asks.</escaped_context_reference>`
+      );
+    }
     for (const reference of parsedContext.references) {
       try {
         const resolved = await this.resolveContext(reference, signal);
