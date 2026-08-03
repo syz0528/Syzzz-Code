@@ -172,6 +172,43 @@ test('enhanced input discards stale asynchronous suggestions', async () => {
   terminal.close();
 });
 
+test('Enter submits a complete context token instead of repeatedly accepting the same suggestion', async () => {
+  const tty = createFakeTty();
+  const terminal = new TerminalInputController(tty.input, tty.output);
+  const value = '$phase7-demo 检查 @src/evidence.ts';
+  const replaceStart = value.indexOf('@');
+  const provider = {
+    trigger: '@',
+    match(currentValue, cursor) {
+      return currentValue === value && cursor === currentValue.length ? { query: '' } : null;
+    },
+    suggest() {
+      return [
+        {
+          id: 'context:src/evidence.ts',
+          label: '@src/evidence.ts',
+          description: 'Workspace file context',
+          insertText: '@src/evidence.ts',
+          replaceStart,
+          replaceEnd: value.length
+        }
+      ];
+    }
+  };
+
+  const reading = terminal.readLine({
+    prompt: 'You: ',
+    suggestionProviders: [provider]
+  });
+  tty.input.write(value);
+  await delay(15);
+  assert.match(tty.transcript(), /> @src\/evidence\.ts/);
+  tty.input.write('\r');
+
+  assert.deepEqual(await reading, { type: 'line', value });
+  terminal.close();
+});
+
 test('escape dismisses suggestions and Ctrl+C interrupts an empty line', async () => {
   const tty = createFakeTty();
   const terminal = new TerminalInputController(tty.input, tty.output);

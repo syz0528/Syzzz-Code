@@ -396,7 +396,7 @@ git diff --check
 
 自动化套件覆盖路径与权限安全、事件 Runtime、Provider 可靠性、终端交互、代码库上下文、压缩、会话恢复、Trust V2、MCP、Hooks 和只读 Subagent。Phase 6 增加四种离线 Provider Profile 与发布门禁；Phase 7 增加 `@`、分层 AGENTS、Skills、公开 Git 安装及五项任务组合 Eval。
 
-当前 Phase 7 本地基线为 **293/293** 项测试和离线 Eval **12/12** 通过；综合门槛覆盖率为 Lines **82.31%**、Branches **75.28%**、Functions **85.99%**，均高于 82%/74%/84% 门槛。打包与安全扫描已通过，跨平台 CI 仍待执行。Phase 6 的真实 DeepSeek/OpenCode Live Eval 保持 7/7、功能成功率 100%、安全项通过且无基础设施错误。
+当前 Phase 7 本地基线为 **294/294** 项测试和离线 Eval **12/12** 通过；综合门槛覆盖率为 Lines **82.29%**、Branches **75.28%**、Functions **85.99%**，均高于 82%/74%/84% 门槛。打包与安全扫描已通过，跨平台 CI 仍待执行。Phase 6 的真实 DeepSeek/OpenCode Live Eval 保持 7/7、功能成功率 100%、安全项通过且无基础设施错误。
 
 Phase 5 冻结验收还完成了 11 项真实终端 dogfood，覆盖未信任边界、Trust V2 复审、MCP 策略与惰性重连、Hook 拒绝与生命周期、取消清理、Subagent 预算、隐私恢复和撤销信任。公开 Streamable HTTP MCP 的真实握手、工具发现及只读天气调用同样通过；该外部服务只用于兼容性验证，不是 Syzzz 的运行依赖。
 

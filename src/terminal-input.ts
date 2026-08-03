@@ -374,20 +374,27 @@ export class TerminalInputController {
           });
         render();
       };
-      const replaceWithSuggestion = (item: SuggestionItem) => {
-        value = value.slice(0, item.replaceStart) + item.insertText + value.slice(item.replaceEnd);
+      const replaceWithSuggestion = (item: SuggestionItem): boolean => {
+        const replacedValue =
+          value.slice(0, item.replaceStart) + item.insertText + value.slice(item.replaceEnd);
+        const unchanged = replacedValue === value;
+        value = replacedValue;
         cursor = item.replaceStart + item.insertText.length;
         historyIndex = this.history.length;
         dismissedValue = undefined;
+        return unchanged;
       };
       const acceptSuggestion = (submit: boolean): boolean => {
         const item = suggestions?.items[suggestions.selected];
         if (!item) {
           return false;
         }
-        replaceWithSuggestion(item);
-        if (submit && item.submitOnAccept) {
+        const unchanged = replaceWithSuggestion(item);
+        if (submit && (item.submitOnAccept || unchanged)) {
           finish({ type: 'line', value });
+        } else if (submit || unchanged) {
+          dismissedValue = value;
+          refreshSuggestions();
         } else {
           refreshSuggestions();
         }
