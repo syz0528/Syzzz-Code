@@ -92,6 +92,14 @@ function decodeUtf8(bytes: Uint8Array, label: string): string {
   }
 }
 
+function splitContextLines(content: string): string[] {
+  const lines = content.split(/\r\n|\n|\r/);
+  if ((content.endsWith('\n') || content.endsWith('\r')) && lines.at(-1) === '') {
+    lines.pop();
+  }
+  return lines;
+}
+
 function errorCode(error: unknown): string {
   if (error && typeof error === 'object' && 'code' in error && error.code) {
     return String(error.code).toLowerCase();
@@ -1012,7 +1020,7 @@ export class TaskCompositionRuntime implements TaskCompositionRuntimeLike {
     }
     throwIfAborted(signal);
     const content = decodeUtf8(bytes, reference.path);
-    const allLines = content.split(/\r\n|\n|\r/);
+    const allLines = splitContextLines(content);
     const lineStart = reference.lineStart ?? 1;
     const lineEnd = Math.min(reference.lineEnd ?? allLines.length, allLines.length);
     const selected = allLines.slice(lineStart - 1, lineEnd).join('\n');

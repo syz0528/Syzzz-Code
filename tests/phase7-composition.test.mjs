@@ -169,6 +169,24 @@ test('context failures are explicit and sensitive files never enter composed his
   });
 });
 
+test('context line receipts do not count a trailing newline as an extra line', async () => {
+  await withCompositionFixture(async ({ workspace, home }) => {
+    await writeFile(join(workspace, 'evidence.ts'), '\uFEFFline one\r\nline two\r\n', 'utf8');
+    const runtime = await TaskCompositionRuntime.create({
+      workspaceRoot: workspace,
+      homeDirectory: home,
+      skills: skillsConfig
+    });
+
+    const composed = await runtime.compose('Review @evidence.ts', new AbortController().signal);
+    assert.equal(composed.receipts[0].lineStart, 1);
+    assert.equal(composed.receipts[0].lineEnd, 2);
+    assert.match(composed.message, /lines="1-2"/);
+    assert.match(composed.message, /line one\nline two/);
+    assert.doesNotMatch(composed.message, /\uFEFF/);
+  });
+});
+
 test('AGENTS loading is bounded, rejects symlinks, and does not duplicate diagnostics', async () => {
   await withCompositionFixture(async ({ root, workspace, home }) => {
     await writeFile(join(workspace, 'AGENTS.md'), 'A'.repeat(128 * 1024), 'utf8');
