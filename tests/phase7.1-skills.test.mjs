@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { mkdtemp, mkdir, readFile, rm, symlink, writeFile } from 'node:fs/promises';
+import { mkdtemp, mkdir, readFile, realpath, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -303,7 +303,7 @@ test('user Skill symlinks and in-root resource links work but target changes fai
     });
     runtime.beginTurn();
     await runtime.compose('$linked-skill', new AbortController().signal);
-    assert.equal(await runtime.resolveActiveSkillRoot('linked-skill'), outside);
+    assert.equal(await runtime.resolveActiveSkillRoot('linked-skill'), await realpath(outside));
     const resource = runtime.getTools().find((tool) => tool.name === 'ReadSkillResource');
     if (await readFile(resourceLink, 'utf8').catch(() => undefined)) {
       const result = await resource.execute(
@@ -349,7 +349,7 @@ test('project Skill symlinks are accepted only when their canonical target stays
     });
     const descriptor = runtime.inspectSkill('project-link');
     assert.equal(descriptor.source, 'project');
-    assert.equal(descriptor.canonicalRootPath, target);
+    assert.equal(descriptor.canonicalRootPath, await realpath(target));
     const composed = await runtime.compose('$project-link', new AbortController().signal);
     assert.match(composed.message, /PROJECT LINK BODY/);
   });
@@ -710,9 +710,10 @@ test('Shell can use only an activated Skill cwd and includes it in approval', as
         return Promise.resolve('allow-once');
       }
     });
+    const canonicalSkillRoot = await realpath(skillRoot);
     assert.equal(response, 'done');
     assert.match(approval.description, /Skill shell-skill/);
-    assert.match(approval.preview, new RegExp(skillRoot.replaceAll('\\', '\\\\')));
-    assert.match(toolResult, new RegExp(skillRoot.replaceAll('\\', '\\\\')));
+    assert.ok(approval.preview.includes(canonicalSkillRoot));
+    assert.ok(toolResult.includes(canonicalSkillRoot));
   });
 });

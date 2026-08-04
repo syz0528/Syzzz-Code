@@ -464,6 +464,39 @@ function handleResponses(body, response) {
   const userText = responsesUserText(body);
 
   if (!body.stream) {
+    if (userText.includes('non-stream-fallback')) {
+      json(response, 200, completedResponse(model, [responseMessage('FALLBACK_TEXT')]), {
+        'x-request-id': 'request-responses-fallback'
+      });
+      return;
+    }
+    if (userText.includes('non-stream-refusal')) {
+      const refusal = {
+        ...responseMessage(''),
+        content: [{ type: 'refusal', refusal: 'REFUSAL_TEXT' }]
+      };
+      json(response, 200, completedResponse(model, [refusal]));
+      return;
+    }
+    if (userText.includes('non-stream-invalid-tool')) {
+      json(
+        response,
+        200,
+        completedResponse(model, [
+          {
+            type: 'function_call',
+            call_id: 'call_invalid',
+            name: 'Read',
+            arguments: '{invalid'
+          }
+        ])
+      );
+      return;
+    }
+    if (userText.includes('non-stream-empty')) {
+      json(response, 200, completedResponse(model, []));
+      return;
+    }
     const text = 'RESPONSES_NON_STREAM_OK';
     json(response, 200, completedResponse(model, [responseMessage(text)], text), {
       'x-request-id': 'request-responses-non-stream'
@@ -494,6 +527,65 @@ function handleResponses(body, response) {
     };
     response.writeHead(200, { 'content-type': 'text/event-stream; charset=utf-8' });
     response.write(sseEvent({ type: 'response.failed', sequence_number: 1, response: failed }));
+    response.end('data: [DONE]\n\n');
+    return;
+  }
+  if (userText.includes('stream-error-rate-limit')) {
+    response.writeHead(200, { 'content-type': 'text/event-stream; charset=utf-8' });
+    response.write(sseEvent({ type: 'error', sequence_number: 1, code: 'rate_limit_exceeded' }));
+    response.end('data: [DONE]\n\n');
+    return;
+  }
+  if (userText.includes('stream-mismatch')) {
+    response.writeHead(200, { 'content-type': 'text/event-stream; charset=utf-8' });
+    response.write(
+      sseEvent({ type: 'response.output_text.delta', sequence_number: 1, delta: 'STREAMED' })
+    );
+    response.write(
+      sseEvent({
+        type: 'response.completed',
+        sequence_number: 2,
+        response: completedResponse(model, [responseMessage('FINAL')], 'FINAL')
+      })
+    );
+    response.end('data: [DONE]\n\n');
+    return;
+  }
+  if (userText.includes('stream-final-only')) {
+    response.writeHead(200, { 'content-type': 'text/event-stream; charset=utf-8' });
+    response.write(
+      sseEvent({
+        type: 'response.completed',
+        sequence_number: 1,
+        response: completedResponse(model, [responseMessage('FINAL_ONLY')], 'FINAL_ONLY')
+      })
+    );
+    response.end('data: [DONE]\n\n');
+    return;
+  }
+  if (userText.includes('reasoning-refusal')) {
+    const refusal = {
+      ...responseMessage(''),
+      content: [{ type: 'refusal', refusal: 'REFUSED' }]
+    };
+    response.writeHead(200, { 'content-type': 'text/event-stream; charset=utf-8' });
+    response.write(
+      sseEvent({
+        type: 'response.reasoning_summary_text.delta',
+        sequence_number: 1,
+        delta: 'PRIVATE_REASONING'
+      })
+    );
+    response.write(
+      sseEvent({ type: 'response.refusal.delta', sequence_number: 2, delta: 'REFUSED' })
+    );
+    response.write(
+      sseEvent({
+        type: 'response.completed',
+        sequence_number: 3,
+        response: completedResponse(model, [refusal])
+      })
+    );
     response.end('data: [DONE]\n\n');
     return;
   }
