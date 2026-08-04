@@ -6,7 +6,7 @@
 
 发布候选包已于 2026-07-31 完成人工验收，当前状态为 **Release Candidate Accepted**；npm、Tag、GitHub Release 和 registry 安装复验尚未完成。
 
-Phase 7 的任务组合层当前为 **Implemented**，尚未完成跨平台 CI 与人工 dogfood，不改变上述 Phase 6 发布候选状态。
+Phase 7 的任务组合层与 Phase 7.1 Skills 产品化已完成本地门禁、人工 dogfood 和 Windows/Ubuntu Node 22/24 CI，并标记为 **Frozen**；这不改变上述 Phase 6 发布候选状态。
 
 ### Added
 

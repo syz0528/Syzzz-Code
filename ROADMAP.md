@@ -3,7 +3,7 @@
 **制定日期：** 2026-06-16
 **最近更新：** 2026-08-04
 **适用基线：** `1.0.0` / Phase 7 起始提交 `161391a`
-**当前入口：** Phase 6 保持 **Release Candidate Accepted**；Phase 7.1 在 `codex/phase7.1-skills` 完成本地门禁与人工验收，等待跨平台 CI 后冻结
+**当前入口：** Phase 6 保持 **Release Candidate Accepted**；Phase 7 与 Phase 7.1 已完成跨平台 CI 与人工验收并标记 **Frozen**，下一阶段进入 Phase 8 规划
 
 > 路线图描述实施顺序和验收边界。当前代码事实以 [`README.md`](README.md) 和 [`CURRENT_STATUS.md`](CURRENT_STATUS.md) 为准。
 
@@ -804,7 +804,7 @@ RepoMap 按需调用，不自动注入每个 prompt。
 - **Validated**：覆盖率、审计、打包和 Windows/Ubuntu Node 22/24 CI 通过。
 - **Frozen**：真实 `@`、AGENTS、显式/隐式 Skill、Git 安装和恶意 Skill 人工验收通过。
 
-当前本地实现与人工验收已通过，等待跨平台 CI 后冻结。本阶段不发布 npm、不创建 Tag、不公开仓库，也不改变 Phase 6 Release Candidate 提交。
+本地实现、人工验收与 Windows/Ubuntu Node 22/24 CI 已全部通过，Phase 7 标记为 **Frozen**。本阶段不发布 npm、不创建 Tag、不公开仓库，也不改变 Phase 6 Release Candidate 提交。
 
 ### 12.5 Phase 7.1：Skills 产品化
 
@@ -819,7 +819,7 @@ RepoMap 按需调用，不自动注入每个 prompt。
 - [x] `$` 候选单行、来源标签和重复唤起不污染 scrollback；
 - [x] 完整 TUI、多行 Composer 和结构化交互明确留给 Phase 8。
 
-Phase 7.1 本地自动基线为 316/316、coverage 82.07%/75.45%/86.41%、offline Eval 12/12，生产依赖审计、包检查、候选包 smoke 与用户 dogfood 已通过。跨平台 CI 全绿后标记 **Frozen**。
+Phase 7.1 冻结基线为 319/319、coverage 82.34%/75.91%/86.41%、offline Eval 12/12；生产依赖审计、包检查、候选包 smoke、用户 dogfood 与 Windows/Ubuntu Node 22/24 CI 均已通过，状态为 **Frozen**。
 
 ## 13. Phase 8：双 Renderer TUI 与结构化交互
 
@@ -888,17 +888,17 @@ Phase 8 单独规划，不回填 Phase 7.1。目标是在保留现有 inline/非
 - [ ] 发布 npm、annotated Tag 和 GitHub Release；
 - [ ] registry 安装复验后标记 Frozen。
 
-### Phase 7 待验收
+### Phase 7 验收
 
-- [x] 292 项本地测试、覆盖率门槛和 12 项离线 Eval；
-- [ ] 覆盖率、审计、pack 和 tarball smoke 最终门禁；
-- [ ] Windows/Ubuntu Node 22/24 CI；
-- [ ] 用户完成 `@`、AGENTS、Skills 与公开 Git 安装 dogfood；
-- [ ] 人工验收后标记 Frozen。
+- [x] 319 项本地测试、覆盖率门槛和 12 项离线 Eval；
+- [x] 覆盖率、审计、pack 和 tarball smoke 最终门禁；
+- [x] Windows/Ubuntu Node 22/24 CI；
+- [x] 用户完成 `@`、AGENTS、Skills 与公开 Git 安装 dogfood；
+- [x] 人工验收后标记 Frozen。
 
 ### 当前入口
 
-Phase 6 继续保持 **Release Candidate Accepted**，完整 Phase 2–6 历史已 fast-forward 到 `main`。Phase 7 从该基线独立开发，本地最终门禁已经通过，下一步是跨平台 CI 和人工 dogfood；不会借 Phase 7 绕过 Phase 6 的公开发布条件。
+Phase 6 继续保持 **Release Candidate Accepted**，完整 Phase 2–6 历史已 fast-forward 到 `main`。Phase 7 与 Phase 7.1 已在独立分支完成冻结，下一步正式规划 Phase 8；不会借后续阶段绕过 Phase 6 的公开发布条件。
 
 ## 16. 路线图完成标准
 

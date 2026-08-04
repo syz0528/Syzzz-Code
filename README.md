@@ -2,7 +2,7 @@
 
 Syzzz Code 是一个使用 TypeScript 构建的实验性命令行 AI 编程 Agent。它提供统一的 Provider 接口、事件化 Agent Runtime、受约束的代码库工具、可靠编辑、上下文压缩、可恢复的本地会话，以及受信任边界约束的 MCP、Hooks、只读 Subagent、显式上下文和开放 Skills。
 
-Phase 1 至 Phase 5.1 已完成并保持 **Frozen**。Phase 6 保持 **Release Candidate Accepted**；Phase 7 的任务组合层已完成。Phase 7.1 的 Skills 产品化改造已通过本地自动门禁和人工 dogfood，当前等待跨平台 CI 后完成冻结。
+Phase 1 至 Phase 5.1、Phase 7 与 Phase 7.1 已完成并保持 **Frozen**。Phase 6 继续保持 **Release Candidate Accepted**，其 npm、Tag、GitHub Release 与 registry 安装复验仍需单独完成。
 
 > [!WARNING]
 > Syzzz Code 仍处于实验阶段。文件工具受工作区边界、敏感路径和并发 hash 校验保护，但 Shell 不是 OS sandbox。获批或在 `fullAccess` 下自动执行的命令仍可产生工作区外副作用。
@@ -439,7 +439,7 @@ git diff --check
 
 自动化套件覆盖路径与权限安全、事件 Runtime、Provider 可靠性、终端交互、代码库上下文、压缩、会话恢复、Trust V2、MCP、Hooks 和只读 Subagent。当前包含五种离线 Provider Profile 与发布门禁；Phase 7 增加 `@`、分层 AGENTS、Skills、公开 Git 安装及五项任务组合 Eval。
 
-当前 Phase 7.1 本地基线为 **316/316** 项测试和离线 Eval **12/12** 通过；综合门槛覆盖率为 Lines **82.07%**、Branches **75.45%**、Functions **86.41%**，均高于 82%/74%/84% 门槛。打包、安全扫描、生产依赖审计和候选包安装 smoke 已通过，跨平台 CI 仍待执行。Phase 6 的真实 DeepSeek/OpenCode Live Eval 保持 7/7、功能成功率 100%、安全项通过且无基础设施错误；OpenCode `gpt-5.6-luna` 的 Responses 文本流与 function call 往返 smoke 已通过。
+当前 Phase 7.1 冻结基线为 **319/319** 项测试和离线 Eval **12/12** 通过；综合门槛覆盖率为 Lines **82.34%**、Branches **75.91%**、Functions **86.41%**，均高于 82%/74%/84% 门槛。打包、安全扫描、生产依赖审计、候选包安装 smoke 以及 Windows/Ubuntu × Node 22/24 CI 均已通过。Phase 6 的真实 DeepSeek/OpenCode Live Eval 保持 7/7、功能成功率 100%、安全项通过且无基础设施错误；OpenCode `gpt-5.6-luna` 的 Responses 文本流与 function call 往返 smoke 已通过。
 
 Phase 5 冻结验收还完成了 11 项真实终端 dogfood，覆盖未信任边界、Trust V2 复审、MCP 策略与惰性重连、Hook 拒绝与生命周期、取消清理、Subagent 预算、隐私恢复和撤销信任。公开 Streamable HTTP MCP 的真实握手、工具发现及只读天气调用同样通过；该外部服务只用于兼容性验证，不是 Syzzz 的运行依赖。
 
@@ -465,4 +465,4 @@ npm 包使用 allowlist，只包含 `dist`、README、SECURITY、LICENSE、CHANG
 
 ## 当前阶段
 
-Phase 1 至 Phase 5.1 均保持 **Frozen**，Phase 6 保持 **Release Candidate Accepted**。Phase 7.1 位于 `codex/phase7.1-skills`，本地实现、自动门禁以及全局 Skill、Legacy、自动刷新、显式/隐式策略、symlink、资源读取、脚本审批、activation eval、Git 安装生命周期与 `$` 菜单人工 dogfood 均已通过；等待 Windows/Ubuntu Node 22/24 CI 全绿后标记 Frozen。
+Phase 1 至 Phase 5.1、Phase 7 与 Phase 7.1 均保持 **Frozen**，Phase 6 保持 **Release Candidate Accepted**。`codex/phase7-task-composition` 与 `codex/phase7.1-skills` 已合并到同一提交历史；本地门禁、全局 Skill、Legacy、自动刷新、显式/隐式策略、symlink、资源读取、脚本审批、activation eval、Git 安装生命周期、`$` 菜单人工 dogfood 及 Windows/Ubuntu Node 22/24 CI 全部通过。

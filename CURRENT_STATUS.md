@@ -14,7 +14,7 @@
 
 **Phase 7 起始基线：** `161391a`
 
-**当前阶段：** Phase 7.1 本地门禁与人工验收通过，等待跨平台 CI 后冻结；Phase 6 保持 **Release Candidate Accepted**；Phase 1 至 Phase 5.1 保持 **Frozen**
+**当前阶段：** Phase 7 与 Phase 7.1 已 **Frozen**；Phase 6 保持 **Release Candidate Accepted**；Phase 1 至 Phase 5.1 保持 **Frozen**
 
 ## 1. 当前结论
 
@@ -26,7 +26,7 @@ Phase 5.0 Core 已完成“可信扩展运行时、MCP Broker 与受限委派”
 
 Phase 5.1 在此基础上补齐扩展配置复审、MCP 本地收紧策略与断线生命周期、统一扩展状态、压缩/委派 Hook，以及 Subagent 软硬预算和停止语义。
 
-当前完整自动化测试为 **316/316**。Phase 1 至 Phase 7 的路径、权限、事件、Provider、终端、上下文、可靠编辑、会话恢复、扩展、任务组合和发布契约继续通过。
+当前完整自动化测试为 **319/319**。Phase 1 至 Phase 7.1 的路径、权限、事件、Provider、终端、上下文、可靠编辑、会话恢复、扩展、任务组合和发布契约继续通过。
 
 11 项真实终端 dogfood 已全部通过，覆盖项目 trust 复审、MCP 策略与断线重连、Hook、Subagent 预算、取消清理、隐私恢复和撤销信任。公开 Streamable HTTP MCP 的真实握手、工具发现与只读天气调用也已通过，Phase 5 的扩展信任和传输闭环达到冻结条件。
 
@@ -65,7 +65,7 @@ Phase 7.1 从 `9bb4e62` 新建 `codex/phase7.1-skills`，只做 Skills 产品化
 - `skills create|validate|test`，其中 Live activation eval 使用隔离 ask+safe Engine 且只暴露 `ActivateSkill`；
 - `$` 候选单行压缩、来源标记和预留行复用，完整 TUI 留给 Phase 8。
 
-本地自动门禁为 316/316、coverage 82.07%/75.45%/86.41%、offline Eval 12/12；生产依赖审计、包内容检查与候选包安装 smoke 全部通过。用户 dogfood 已覆盖全局与 Legacy Skill、自动刷新、显式/隐式激活、资源读取、Skill cwd 脚本审批、activation eval、Git 安装生命周期、供应链拒绝、`$` 菜单和 Windows junction 边界。当前仅等待跨平台 CI，不提前标记 Frozen。
+冻结门禁为 319/319、coverage 82.34%/75.91%/86.41%、offline Eval 12/12；生产依赖审计、包内容检查、候选包安装 smoke 与 Windows/Ubuntu Node 22/24 CI 全部通过。用户 dogfood 已覆盖全局与 Legacy Skill、自动刷新、显式/隐式激活、资源读取、Skill cwd 脚本审批、activation eval、Git 安装生命周期、供应链拒绝、`$` 菜单和 Windows junction 边界。Phase 7 与 Phase 7.1 已达到冻结条件。
 
 ## 2. 扩展信任
 
@@ -209,10 +209,10 @@ subagents.enabled = true
 
 当前结果：
 
-- `npm test`：**316/316**
-- `npm run test:coverage`：综合门槛测得 Lines **82.09%**、Branches **75.48%**、Functions **86.41%**，均高于 82%/74%/84% 门槛
+- `npm test`：**319/319**
+- `npm run test:coverage`：综合门槛测得 Lines **82.34%**、Branches **75.91%**、Functions **86.41%**，均高于 82%/74%/84% 门槛
 - `npm run eval:offline`：十二项固定任务 **12/12**
-- `npm run test:providers`：五种离线 Provider Profile 与共享 Runner 契约 **43/43**
+- `npm run test:providers`：五种离线 Provider Profile 与共享 Runner 契约 **46/46**
 - `npm run test:stability`：Windows Shell、会话和 MCP/Hook 生命周期连续三轮通过
 - 官方 MCP v2 stdio：legacy 与 modern 均完成真实握手
 - Streamable HTTP：真实 loopback 握手、显式认证头和不跟随重定向
@@ -243,6 +243,7 @@ Phase 6/7 本地发布前卫生已通过：
 - 当前 DeepSeek/OpenCode Live Eval：**7/7**，功能成功率 100%，安全项通过，0 个基础设施错误；完整套件一次运行通过
 - OpenCode `gpt-5.6-luna` Responses 真实 smoke：文本流以 `response.completed` 正常结束；function call、私有 output items 续接与最终回答往返通过
 - GitHub Actions：提交 `014e182` 的完整流水线 **10/10 jobs** 通过，包括 Windows/Ubuntu × Node 22/24、quality、Provider contracts、offline Eval、双平台 package smoke 与 security
+- Phase 7/7.1 GitHub Actions：提交 `75c3967` 在两个同步分支上的流水线均为 **10/10 jobs** 通过；Ubuntu 覆盖率、Windows canonical path、Node 22/24 与双平台 package smoke 全绿
 - Phase 6 候选包人工验收：真实 tarball 隔离安装、Node 22/24、doctor、会话恢复、取消、NDJSON、MCP、Hook 与只读 Subagent 均通过；上游 Provider 的瞬时 503 按有限重试和结构化失败规则处理，后续请求恢复成功
 
 ## 8. 已知边界
@@ -270,7 +271,8 @@ Phase 6/7 本地发布前卫生已通过：
 - Phase 6 Windows 稳定性修复提交：`014e182`
 - Phase 7 起始基线：`161391a`
 - Phase 7.1 起始基线：`9bb4e62`
-- 远程目标分支：人工验收后推送 `origin/codex/phase7.1-skills`
+- Phase 7/7.1 跨平台验证提交：`75c3967`
+- 远程 `codex/phase7-task-composition` 与 `codex/phase7.1-skills` 已同步到同一历史
 - 版本号保持 `1.0.0`
 - 未发布 npm 包，未创建 Tag
 - 本地 `main`、远程 `main` 与 Phase 6 分支指向同一发布准备提交
@@ -288,4 +290,4 @@ Phase 6 使用四级状态：
 3. 用户完成人工 dogfood：**Release Candidate Accepted**。
 4. npm、annotated `v1.0.0` Tag、GitHub Release 和 registry 安装验证完成：**Frozen**。
 
-Phase 6 继续停留在 **Release Candidate Accepted**，不越过公开发布门槛。Phase 7.1 的本地测试、覆盖率、审计、离线 Eval、包检查、tarball smoke 与用户 dogfood 已通过；推送分支并等待 Windows/Ubuntu Node 22/24 CI，全绿后标记 Frozen。OpenAI Responses 协议与显式 Provider 路由已经实现，并通过离线契约及 OpenCode Luna 真实文本与 function call smoke。Anthropic 真流式、MCP OAuth、完整 TUI、LSP、持久索引、并行或写入型 Subagent 继续留在后续独立阶段评估。
+Phase 6 继续停留在 **Release Candidate Accepted**，不越过公开发布门槛。Phase 7 与 Phase 7.1 的本地测试、覆盖率、审计、离线 Eval、包检查、tarball smoke、用户 dogfood 和 Windows/Ubuntu Node 22/24 CI 已全部通过，现标记为 **Frozen**。OpenAI Responses 协议与显式 Provider 路由已经实现，并通过离线契约及 OpenCode Luna 真实文本与 function call smoke。Anthropic 真流式、MCP OAuth、完整 TUI、LSP、持久索引、并行或写入型 Subagent 继续留在后续独立阶段评估。

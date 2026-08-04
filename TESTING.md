@@ -18,7 +18,7 @@ npm run check
 
 `npm run check` 是本地综合门槛；`smoke:package` 额外安装真实 tarball，耗时更长。Windows 进程、会话锁与 MCP 生命周期可用 `npm run test:stability` 连续执行三轮，任一轮失败都会立即终止。
 
-2026-08-04 的 Phase 7.1 本地实现基线为：316/316 项测试、覆盖率 Lines 82.07%/Branches 75.45%/Functions 86.41%、离线 Eval 12/12 通过。生产依赖审计、包内容检查、候选包安装 smoke 与人工 dogfood 同样通过。覆盖率进程固定 `--test-concurrency=4`，用于避免 Windows instrumentation 与多个进程型测试争抢资源；测试失败不会自动重跑。Windows/Ubuntu Node 22/24 CI 仍待执行；Phase 6 发布候选的跨平台 CI 与人工验收结论保持不变。
+2026-08-04 的 Phase 7.1 冻结基线为：319/319 项测试、覆盖率 Lines 82.34%/Branches 75.91%/Functions 86.41%、离线 Eval 12/12 通过。生产依赖审计、包内容检查、候选包安装 smoke、人工 dogfood 与 Windows/Ubuntu Node 22/24 CI 同样通过。覆盖率进程固定 `--test-concurrency=4`，用于避免 Windows instrumentation 与多个进程型测试争抢资源；测试失败不会自动重跑。Phase 6 发布候选的跨平台 CI 与人工验收结论保持不变。
 
 Windows PowerShell 5.1 手工创建包含中文的 `AGENTS.md` 或 `SKILL.md` 时，必须使用 `Set-Content -Encoding UTF8`；默认 `Set-Content` 会使用当前 ANSI 代码页并被 UTF-8 安全校验拒绝。`@@name` 的模型可见结果是字面量 `@name`，并附带“已显式转义”的组合证据，模型不应把它当作缺失路径继续搜索。
 
