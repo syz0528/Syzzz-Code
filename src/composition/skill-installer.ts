@@ -461,17 +461,22 @@ async function readStore(path: string): Promise<SkillInstallStoreV1> {
 export interface SkillInstallerOptions {
   workspaceRoot: string;
   userRoot?: string;
+  userSkillsRoot?: string;
   gitCommand?: { executable: string; argumentsPrefix?: readonly string[] };
 }
 
 export class SkillInstaller {
   private readonly workspaceRoot: string;
   private readonly userRoot: string;
+  private readonly userSkillsRoot: string;
   private readonly gitCommand: { executable: string; argumentsPrefix: readonly string[] };
 
   constructor(options: SkillInstallerOptions) {
     this.workspaceRoot = resolve(options.workspaceRoot);
     this.userRoot = resolve(options.userRoot ?? join(homedir(), '.syzzz-code'));
+    this.userSkillsRoot = resolve(
+      options.userSkillsRoot ?? join(dirname(this.userRoot), '.agents', 'skills')
+    );
     this.gitCommand = {
       executable: options.gitCommand?.executable ?? 'git',
       argumentsPrefix: options.gitCommand?.argumentsPrefix ?? []
@@ -487,14 +492,23 @@ export class SkillInstaller {
       const targetPath = this.targetPath(scope, prepared.name);
       const store = await this.readManagedStore(scope);
       const existing = store.installs[prepared.name];
-      try {
-        await lstat(targetPath);
-        if (!existing) {
-          throw new Error(
-            `Refusing to overwrite manually managed Skill ${prepared.name}; no install record exists`
-          );
-        }
+      if (existing) {
         throw new Error(`Skill ${prepared.name} is already installed; use update`);
+      }
+      const possibleTargets = this.legalTargetPaths(scope, prepared.name);
+      try {
+        for (const possibleTarget of possibleTargets) {
+          try {
+            await lstat(possibleTarget);
+            throw new Error(
+              `Refusing to shadow or overwrite manually managed Skill ${prepared.name}; no install record exists`
+            );
+          } catch (error) {
+            if ((error as NodeJS.ErrnoException).code !== 'ENOENT') {
+              throw error;
+            }
+          }
+        }
       } catch (error) {
         if ((error as NodeJS.ErrnoException).code !== 'ENOENT') {
           throw error;
@@ -502,7 +516,7 @@ export class SkillInstaller {
       }
       const preview = this.preview('install', prepared, targetPath, sourceUrl);
       await this.requireConfirmation(preview, options.confirm);
-      const record = await this.applyPrepared(prepared, scope, sourceUrl, ref);
+      const record = await this.applyPrepared(prepared, scope, sourceUrl, ref, targetPath);
       return record;
     } finally {
       await prepared.cleanup();
@@ -541,7 +555,8 @@ export class SkillInstaller {
         prepared,
         scope,
         current.sourceUrl,
-        current.requestedRef ?? 'HEAD'
+        current.requestedRef ?? 'HEAD',
+        current.targetPath
       );
     } finally {
       await prepared.cleanup();
@@ -739,9 +754,9 @@ export class SkillInstaller {
     prepared: PreparedSkill,
     scope: 'user' | 'project',
     sourceUrl: string,
-    requestedRef: string
+    requestedRef: string,
+    targetPath: string
   ): Promise<SkillInstallRecordV1> {
-    const targetPath = this.targetPath(scope, prepared.name);
     const storePath = this.storePath(scope);
     const store = await this.readManagedStore(scope);
     const existing = store.installs[prepared.name];
@@ -805,8 +820,14 @@ export class SkillInstaller {
 
   private targetPath(scope: 'user' | 'project', name: string): string {
     return scope === 'user'
-      ? join(this.userRoot, 'skills', name)
+      ? join(this.userSkillsRoot, name)
       : join(this.workspaceRoot, '.agents', 'skills', name);
+  }
+
+  private legalTargetPaths(scope: 'user' | 'project', name: string): string[] {
+    return scope === 'user'
+      ? [join(this.userSkillsRoot, name), join(this.userRoot, 'skills', name)]
+      : [join(this.workspaceRoot, '.agents', 'skills', name)];
   }
 
   private storePath(scope: 'user' | 'project'): string {
@@ -828,7 +849,7 @@ export class SkillInstaller {
       const record = rawRecord as ManagedSkillRecord;
       if (
         typeof record.targetPath !== 'string' ||
-        !pathsEqual(record.targetPath, this.targetPath(scope, name))
+        !this.legalTargetPaths(scope, name).some((path) => pathsEqual(record.targetPath, path))
       ) {
         throw new Error(`Skill install lock record has an unsafe target path: ${name}`);
       }

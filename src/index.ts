@@ -23,6 +23,12 @@ import {
 } from './config.js';
 import { TaskCompositionRuntime } from './composition/runtime.js';
 import { SkillInstaller, type SkillInstallPreview } from './composition/skill-installer.js';
+import {
+  createSkill,
+  validateSkillDescriptors,
+  validateSkillPath
+} from './composition/skill-authoring.js';
+import { runSkillActivationEval } from './composition/skill-eval.js';
 import { runDoctor } from './doctor.js';
 import { QueryEngine } from './engine.js';
 import { ExtensionRuntime } from './extensions/runtime.js';
@@ -249,6 +255,15 @@ function createInteractiveOptions(controller: SessionController, streamOutput?: 
     getProviderOptions: providerOptions,
     modelsForProvider(providerId: string) {
       return loadConfig().providers[providerId]?.models ?? [];
+    },
+    createSkillEvalProvider() {
+      const latest = loadConfig();
+      const selected = usableProvider(latest, controller.providerId);
+      if (!selected) {
+        throw new Error(`Current Provider ${controller.providerId} is unavailable`);
+      }
+      const model = controller.engine.getProviderInfo().model;
+      return createProvider(providerWithModel(selected.provider, model));
     },
     async activateProvider(providerId: string, engine: QueryEngine) {
       const latest = loadConfig();
@@ -793,11 +808,16 @@ program
 program
   .command('skills')
   .description('Discover, inspect, validate, or manage Agent Skills')
-  .argument('<action>', 'Action: list, inspect, doctor, install, update, rollback, remove')
+  .argument(
+    '<action>',
+    'Action: list, inspect, doctor, create, validate, test, install, update, rollback, remove'
+  )
   .argument('[target]', 'Skill name or public HTTPS Git URL')
   .option('--ref <ref>', 'Git ref to resolve and pin')
   .option('--skill <name>', 'Select one Skill from a multi-Skill repository')
   .option('--scope <scope>', 'Installation scope: user or project', 'user')
+  .option('--description <text>', 'Description for a newly created Skill')
+  .option('--body-file <path>', 'Markdown body for a newly created Skill')
   .option('-y, --yes', 'Skip confirmation')
   .option('--json', 'Emit machine-readable JSON')
   .action(async (action, target, options) => {
@@ -825,7 +845,9 @@ program
           for (const skill of skills) {
             console.log(
               `${skill.name}  ${skill.enabled ? 'enabled' : 'disabled'}  ` +
-                `${skill.source}${skill.shadowed ? '  shadowed' : ''}`
+                `${skill.source}  ` +
+                `${skill.policy.allowImplicitInvocation ? 'implicit' : 'explicit-only'}` +
+                `${skill.shadowed ? '  shadowed' : ''}`
             );
           }
         }
@@ -859,6 +881,85 @@ program
           status.warnings.forEach((warning) => console.log(`WARN: ${warning}`));
         }
         process.exitCode = result.ok ? 0 : 1;
+        return;
+      }
+      if (normalizedAction === 'create') {
+        if (!target || !options.description) {
+          throw new Error('skills create requires a name and --description <text>');
+        }
+        const result = await createSkill({
+          name: target,
+          description: options.description,
+          scope,
+          bodyFile: options.bodyFile,
+          workspaceRoot: process.cwd()
+        });
+        console.log(
+          options.json
+            ? JSON.stringify(result)
+            : `Created explicit-only Skill ${result.name} at ${result.rootPath}.`
+        );
+        return;
+      }
+      if (normalizedAction === 'validate') {
+        let results;
+        if (!target) {
+          results = await validateSkillDescriptors(runtime.listSkills());
+        } else {
+          const descriptor = runtime.inspectSkill(target);
+          results = [await validateSkillPath(descriptor?.rootPath ?? target)];
+        }
+        const ok = results.every((result) => result.ok);
+        if (options.json) {
+          console.log(JSON.stringify({ ok, results }));
+        } else {
+          for (const result of results) {
+            console.log(
+              `${result.ok ? 'OK' : 'ERROR'} ${result.name ?? '(unknown)'} ${result.path}`
+            );
+            result.warnings.forEach((warning) => console.log(`  WARN: ${warning}`));
+            result.errors.forEach((error) => console.log(`  ERROR: ${error}`));
+          }
+        }
+        process.exitCode = ok ? 0 : 1;
+        return;
+      }
+      if (normalizedAction === 'test') {
+        if (!target) {
+          throw new Error('skills test requires a Skill name');
+        }
+        const descriptor = runtime.inspectSkill(target);
+        if (!descriptor) {
+          throw new Error(`Unknown Skill: ${target}`);
+        }
+        const config = loadConfig();
+        const selected = usableProvider(config, config.currentProvider);
+        if (!selected) {
+          throw new Error(`No usable Provider is configured for Skill activation testing`);
+        }
+        const providerFactory = () => createProvider(structuredClone(selected.provider));
+        const report = await runSkillActivationEval({
+          descriptor,
+          workspaceRoot: process.cwd(),
+          providerFactory,
+          signal: abortController.signal
+        });
+        if (options.json) {
+          console.log(JSON.stringify(report));
+        } else {
+          for (const result of report.cases) {
+            console.log(
+              `${result.passed ? 'PASS' : 'FAIL'} ${result.id}: ` +
+                `expected ${result.expected}, actual ${result.actual}, ${result.durationMs}ms` +
+                `${result.infrastructureError ? `, infrastructure ${result.infrastructureError}` : ''}`
+            );
+          }
+          console.log(
+            `Skill activation eval: ${report.passed} passed, ${report.failed} failed, ` +
+              `${report.infrastructureFailures} infrastructure failures`
+          );
+        }
+        process.exitCode = report.failed > 0 || report.infrastructureFailures > 0 ? 1 : 0;
         return;
       }
       if (!target) {
@@ -912,7 +1013,7 @@ program
         return;
       }
       throw new Error(
-        'skills action must be list, inspect, doctor, install, update, rollback, or remove'
+        'skills action must be list, inspect, doctor, create, validate, test, install, update, rollback, or remove'
       );
     } catch (error) {
       const reason = error instanceof Error ? error.message : String(error);

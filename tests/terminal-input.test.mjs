@@ -18,10 +18,13 @@ function createFakeTty() {
   output.rows = 24;
 
   let transcript = '';
+  const chunks = [];
   output.on('data', (chunk) => {
-    transcript += chunk.toString('utf8');
+    const text = chunk.toString('utf8');
+    chunks.push(text);
+    transcript += text;
   });
-  return { input, output, transcript: () => transcript };
+  return { input, output, transcript: () => transcript, chunks: () => chunks };
 }
 
 function suggestion(id, insertText, label = insertText) {
@@ -206,6 +209,45 @@ test('Enter submits a complete context token instead of repeatedly accepting the
   tty.input.write('\r');
 
   assert.deepEqual(await reading, { type: 'line', value });
+  terminal.close();
+});
+
+test('suggestion redraws normalize multiline descriptions and reuse reserved rows', async () => {
+  const tty = createFakeTty();
+  tty.output.rows = 4;
+  const terminal = new TerminalInputController(tty.input, tty.output);
+  const provider = {
+    trigger: '$',
+    match(value, cursor) {
+      return value === '$' && cursor === value.length ? { query: '' } : null;
+    },
+    suggest() {
+      return [
+        {
+          ...suggestion('profile', '$profile ', '$profile'),
+          description: 'Identity and profile management\nfor every workspace'
+        }
+      ];
+    }
+  };
+
+  const reading = terminal.readLine({
+    prompt: 'You: ',
+    suggestionProviders: [provider]
+  });
+  tty.input.write('$');
+  await delay(15);
+  assert.match(tty.transcript(), /Identity and profile management for every workspace/);
+  assert.equal(tty.chunks().filter((chunk) => chunk === '\n').length, 1);
+
+  tty.input.write('\x03');
+  tty.input.write('$');
+  await delay(15);
+  assert.equal(tty.chunks().filter((chunk) => chunk === '\n').length, 1);
+
+  tty.input.write('\x03');
+  tty.input.write('\x03');
+  assert.deepEqual(await reading, { type: 'interrupt' });
   terminal.close();
 });
 

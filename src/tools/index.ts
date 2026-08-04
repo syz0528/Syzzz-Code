@@ -111,9 +111,37 @@ const shellInputSchema = z
       .min(100)
       .max(MAX_SHELL_TIMEOUT_MS)
       .optional()
-      .describe('Optional timeout in milliseconds')
+      .describe('Optional timeout in milliseconds'),
+    workingDirectory: z
+      .discriminatedUnion('type', [
+        z.object({ type: z.literal('workspace') }).strict(),
+        z.object({ type: z.literal('skill'), name: z.string().min(1).max(64) }).strict()
+      ])
+      .optional()
+      .describe('Run in the workspace or in an already activated Skill directory')
   })
   .strict();
+
+interface ApprovedShellWorkingDirectory {
+  type: 'workspace' | 'skill';
+  path: string;
+  skill?: string;
+}
+
+async function resolveShellWorkingDirectory(
+  input: z.infer<typeof shellInputSchema>,
+  context: import('../types.js').ToolContext
+): Promise<ApprovedShellWorkingDirectory> {
+  if (!input.workingDirectory || input.workingDirectory.type === 'workspace') {
+    return { type: 'workspace', path: context.workspaceRoot };
+  }
+  if (!context.resolveSkillWorkingDirectory) {
+    throw new Error('Skill working directories are unavailable');
+  }
+  const skill = input.workingDirectory.name.toLowerCase();
+  const path = await context.resolveSkillWorkingDirectory(skill, context.signal);
+  return { type: 'skill', path, skill };
+}
 
 export const shellTool = defineTool({
   name: 'Shell',
@@ -121,16 +149,30 @@ export const shellTool = defineTool({
   inputSchema: shellInputSchema,
   risk: 'execute',
   approval: 'always',
-  async prepareApproval(input) {
+  async prepareApproval(input, context) {
+    const workingDirectory = await resolveShellWorkingDirectory(input, context);
     return {
-      description: `Execute a shell command with a timeout of ${input.timeoutMs ?? 30_000} ms`,
-      preview: input.command
+      description:
+        `Execute a shell command with a timeout of ${input.timeoutMs ?? 30_000} ms ` +
+        `in ${workingDirectory.type === 'skill' ? `Skill ${workingDirectory.skill}` : 'the workspace'}`,
+      preview: `${input.command}\n\nWorking directory: ${workingDirectory.path}`,
+      executionData: workingDirectory
     };
   },
   async execute(input, context) {
     throwIfAborted(context.signal);
+    const workingDirectory = await resolveShellWorkingDirectory(input, context);
+    const approved = context.approvalData as ApprovedShellWorkingDirectory | undefined;
+    if (
+      !approved ||
+      approved.type !== workingDirectory.type ||
+      approved.path !== workingDirectory.path ||
+      approved.skill !== workingDirectory.skill
+    ) {
+      throw new Error('Shell working directory changed after approval preparation');
+    }
     const result = await runShellCommand(input.command, {
-      cwd: context.workingDirectory,
+      cwd: workingDirectory.path,
       signal: context.signal,
       timeoutMs: input.timeoutMs
     });

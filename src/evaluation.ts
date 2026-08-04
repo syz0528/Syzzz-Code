@@ -52,7 +52,7 @@ export interface EvalRunReportV1 {
   platform: NodeJS.Platform;
   arch: string;
   nodeVersion: string;
-  providerProtocol: 'scripted' | 'openai-compatible' | 'anthropic';
+  providerProtocol: 'scripted' | 'openai-compatible' | 'openai-responses' | 'anthropic';
   providerName: string;
   model: string;
   tasks: EvalTaskReportV1[];

@@ -21,7 +21,7 @@ const CONFIG_FILE = join(CONFIG_DIR, 'config.json');
 
 export interface ProviderConfigItem {
   name: string;
-  type: 'anthropic' | 'openai-compatible';
+  type: 'anthropic' | 'openai-compatible' | 'openai-responses';
   model: string;
   models: string[];
   modelContextWindows?: Record<string, number>;
@@ -319,8 +319,10 @@ export function validateConfig(value: unknown): Config {
       throw new Error(`${providerPath} must be an object`);
     }
     const type = requireNonEmptyString(providerValue.type, `${providerPath}.type`);
-    if (type !== 'anthropic' && type !== 'openai-compatible') {
-      throw new Error(`${providerPath}.type must be "anthropic" or "openai-compatible"`);
+    if (type !== 'anthropic' && type !== 'openai-compatible' && type !== 'openai-responses') {
+      throw new Error(
+        `${providerPath}.type must be "anthropic", "openai-compatible", or "openai-responses"`
+      );
     }
     if (!Array.isArray(providerValue.models) || providerValue.models.length === 0) {
       throw new Error(`${providerPath}.models must contain at least one model`);

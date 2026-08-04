@@ -1,6 +1,14 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync, mkdirSync } from 'node:fs';
+import {
+  existsSync,
+  mkdtempSync,
+  readFileSync,
+  renameSync,
+  rmSync,
+  writeFileSync,
+  mkdirSync
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { SkillInstaller, validateSkillSourceUrl } from '../dist/composition/skill-installer.js';
@@ -80,7 +88,7 @@ test('managed Skill install pins a commit and supports update, rollback, and rem
       signal,
       confirm
     });
-    const target = join(fixture.userRoot, 'skills', 'weather-check');
+    const target = join(fixture.root, '.agents', 'skills', 'weather-check');
     assert.equal(installed.resolvedCommit, firstCommit);
     assert.match(readFileSync(join(target, 'SKILL.md'), 'utf8'), /VERSION ONE/);
     assert.equal(previews[0].scriptCount, 0);
@@ -131,7 +139,7 @@ test('Skill install cancellation and manual directories fail without overwriting
       }),
       /cancelled/
     );
-    const target = join(fixture.userRoot, 'skills', 'weather-check');
+    const target = join(fixture.root, '.agents', 'skills', 'weather-check');
     assert.equal(existsSync(target), false);
 
     mkdirSync(target, { recursive: true });
@@ -148,6 +156,41 @@ test('Skill install cancellation and manual directories fail without overwriting
       installer.remove('weather-check', { signal, confirm: () => true }),
       /manual Skills are never removed/
     );
+  } finally {
+    rmSync(fixture.root, { recursive: true, force: true });
+  }
+});
+
+test('legacy managed user targets continue updating in place', async () => {
+  const fixture = createFixture();
+  try {
+    writeSource(fixture.source, 'VERSION ONE', '5'.repeat(40));
+    const installer = new SkillInstaller({
+      workspaceRoot: fixture.workspace,
+      userRoot: fixture.userRoot,
+      gitCommand: {
+        executable: process.execPath,
+        argumentsPrefix: [fixture.fakeGit, fixture.source]
+      }
+    });
+    const signal = new AbortController().signal;
+    await installer.install('https://example.com/public-skills.git', {
+      signal,
+      confirm: () => true
+    });
+    const standardTarget = join(fixture.root, '.agents', 'skills', 'weather-check');
+    const legacyTarget = join(fixture.userRoot, 'skills', 'weather-check');
+    mkdirSync(join(fixture.userRoot, 'skills'), { recursive: true });
+    renameSync(standardTarget, legacyTarget);
+    const storePath = join(fixture.userRoot, 'skill-installs.json');
+    const store = JSON.parse(readFileSync(storePath, 'utf8'));
+    store.installs['weather-check'].targetPath = legacyTarget;
+    writeFileSync(storePath, JSON.stringify(store), 'utf8');
+
+    writeSource(fixture.source, 'VERSION TWO', '6'.repeat(40));
+    await installer.update('weather-check', { signal, confirm: () => true });
+    assert.match(readFileSync(join(legacyTarget, 'SKILL.md'), 'utf8'), /VERSION TWO/);
+    assert.equal(existsSync(standardTarget), false);
   } finally {
     rmSync(fixture.root, { recursive: true, force: true });
   }

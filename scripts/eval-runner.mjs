@@ -13,6 +13,7 @@ import { TaskCompositionRuntime } from '../dist/composition/runtime.js';
 import { AnthropicProvider } from '../dist/providers/anthropic.js';
 import { createProvider } from '../dist/providers/factory.js';
 import { OpenAICompatibleProvider } from '../dist/providers/openai-compatible.js';
+import { OpenAIResponsesProvider } from '../dist/providers/openai-responses.js';
 import { createToolSet } from '../dist/tools/index.js';
 import { collectEvalExecutionMetadata, emptyEvalExecutionMetadata } from './eval-reporting.mjs';
 import { OFFLINE_TASKS, ScriptedEvalProvider } from './eval-tasks.mjs';
@@ -599,17 +600,30 @@ function explicitLiveConfiguration() {
   if (supplied > 0 && supplied < 4) {
     throw new Error('Explicit live Eval Provider environment is incomplete');
   }
-  if ((type !== 'openai-compatible' && type !== 'anthropic') || !baseURL || !apiKey || !model) {
+  if (
+    (type !== 'openai-compatible' && type !== 'openai-responses' && type !== 'anthropic') ||
+    !baseURL ||
+    !apiKey ||
+    !model
+  ) {
     return undefined;
   }
+  const providerName =
+    type === 'anthropic'
+      ? 'Anthropic'
+      : type === 'openai-responses'
+        ? 'Live OpenAI Responses'
+        : 'Live OpenAI-compatible';
   return {
     type,
-    providerName: type === 'anthropic' ? 'Anthropic' : 'Live OpenAI-compatible',
+    providerName,
     model,
     provider:
       type === 'anthropic'
         ? new AnthropicProvider(apiKey, baseURL, model)
-        : new OpenAICompatibleProvider(apiKey, baseURL, model, 'Live OpenAI-compatible')
+        : type === 'openai-responses'
+          ? new OpenAIResponsesProvider(apiKey, baseURL, model, providerName)
+          : new OpenAICompatibleProvider(apiKey, baseURL, model, 'Live OpenAI-compatible')
   };
 }
 

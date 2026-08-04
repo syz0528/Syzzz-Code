@@ -126,6 +126,10 @@ function truncateToWidth(value: string, maximumWidth: number): string {
   return result + ellipsis;
 }
 
+function normalizeSuggestionText(value: string): string {
+  return value.replace(/\s+/g, ' ').trim();
+}
+
 export class TerminalInputController {
   private readonly input: TtyReadable;
   private readonly output: TtyWritable;
@@ -248,6 +252,7 @@ export class TerminalInputController {
       let suggestionsController: AbortController | undefined;
       let dismissedValue: string | undefined;
       let cursorRowFromTop = 0;
+      let reservedRows = 0;
       let settled = false;
       let isPasting = false;
       let pasteBuffer = '';
@@ -285,18 +290,33 @@ export class TerminalInputController {
         );
         return suggestions.items.slice(start, start + maximum);
       };
+      const reserveRenderedRows = (rows: number) => {
+        if (rows <= reservedRows) {
+          return;
+        }
+        this.output.write('\n'.repeat(rows));
+        moveCursor(this.output, 0, -rows);
+        cursorTo(this.output, 0);
+        reservedRows = rows;
+      };
       const render = () => {
         clearRendered();
         const columns = Math.max(20, this.output.columns ?? 80);
         const promptAndValue = options.prompt + value;
+        const items = visibleItems();
+        const inputRows = Math.floor(stringWidth(promptAndValue) / columns) + 1;
+        const finalRow = inputRows - 1 + items.length;
+        reserveRenderedRows(finalRow);
         this.output.write(promptAndValue);
 
-        const items = visibleItems();
         const selectedItem = suggestions?.items[suggestions.selected];
         for (const item of items) {
           const marker = item === selectedItem ? '> ' : '  ';
-          const label = marker + item.label;
-          const description = item.description ? `  ${item.description}` : '';
+          const label = marker + normalizeSuggestionText(item.label);
+          const normalizedDescription = item.description
+            ? normalizeSuggestionText(item.description)
+            : '';
+          const description = normalizedDescription ? `  ${normalizedDescription}` : '';
           this.output.write(`\n${truncateToWidth(label + description, columns - 1)}`);
         }
 
@@ -304,8 +324,6 @@ export class TerminalInputController {
         const targetWidth = stringWidth(beforeCursor);
         const targetRow = Math.floor(targetWidth / columns);
         const targetColumn = targetWidth % columns;
-        const inputRows = Math.floor(stringWidth(promptAndValue) / columns) + 1;
-        const finalRow = inputRows - 1 + items.length;
         cursorTo(this.output, targetColumn);
         if (finalRow !== targetRow) {
           moveCursor(this.output, 0, targetRow - finalRow);
@@ -554,7 +572,10 @@ export class TerminalInputController {
           insertText(text);
         }
       };
-      const handleResize = () => render();
+      const handleResize = () => {
+        reservedRows = 0;
+        render();
+      };
 
       options.signal?.addEventListener('abort', handleAbort, { once: true });
       this.output.on('resize', handleResize);

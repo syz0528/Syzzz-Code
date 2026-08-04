@@ -2,7 +2,7 @@
 
 Syzzz Code 是一个使用 TypeScript 构建的实验性命令行 AI 编程 Agent。它提供统一的 Provider 接口、事件化 Agent Runtime、受约束的代码库工具、可靠编辑、上下文压缩、可恢复的本地会话，以及受信任边界约束的 MCP、Hooks、只读 Subagent、显式上下文和开放 Skills。
 
-Phase 1 至 Phase 5.1 已完成并保持 **Frozen**。Phase 6 保持 **Release Candidate Accepted**；Phase 7 的任务组合层已完成本地实现与自动化验证，当前状态为 **Implemented**，尚未经过跨平台 CI 和人工 dogfood，因此不标记 Validated 或 Frozen。
+Phase 1 至 Phase 5.1 已完成并保持 **Frozen**。Phase 6 保持 **Release Candidate Accepted**；Phase 7 的任务组合层已完成。Phase 7.1 的 Skills 产品化改造已通过本地自动门禁和人工 dogfood，当前等待跨平台 CI 后完成冻结。
 
 > [!WARNING]
 > Syzzz Code 仍处于实验阶段。文件工具受工作区边界、敏感路径和并发 hash 校验保护，但 Shell 不是 OS sandbox。获批或在 `fullAccess` 下自动执行的命令仍可产生工作区外副作用。
@@ -15,7 +15,8 @@ Phase 1 至 Phase 5.1 已完成并保持 **Frozen**。Phase 6 保持 **Release C
 ### Agent Runtime
 
 - `QueryEngine.runTurn()` 以 `AsyncGenerator<AgentEvent, TurnResult>` 输出版本化事件流。
-- OpenAI-compatible Provider 支持真实流式文本、reasoning 状态、tool call 聚合和 usage。
+- OpenAI-compatible Provider 支持 Chat Completions 流式文本、reasoning 状态、tool call 聚合和 usage。
+- OpenAI Responses Provider 按语义事件处理文本、reasoning 状态、function call、usage 和 `response.completed`，并支持无状态工具链续接。
 - Anthropic 当前使用统一事件语义下的非流式兼容路径。
 - Provider Runner 统一负责错误分类、超时、有限重试、`Retry-After` 和用户取消。
 - 原始 `reasoning_content` 不进入终端、NDJSON、审计或会话快照。
@@ -70,8 +71,13 @@ Phase 1 至 Phase 5.1 已完成并保持 **Frozen**。Phase 6 保持 **Release C
 - `@path`、`@"path with spaces"` 和 `@path#L10-L40` 在首次 Provider 请求前解析工作区证据；`@@` 表示字面 `@`。
 - 单轮最多 10 个引用，单文件最多 40 KiB/2000 行，全部正文最多 80 KiB；目录只注入最多 200 项的有界清单。
 - 用户级 `~/.syzzz-code/AGENTS.md` 与从 Git 根到当前目录的分层 `AGENTS.md` 作为 user-level 指令加载；接触嵌套目录后，其祖先指令从下一次 Provider 请求起生效。
-- Skills 从用户和项目的 `.agents/skills`、`.syzzz-code/skills` 中渐进发现；启动时只提供名称与描述，`$skill 参数` 或只读 `ActivateSkill` 才加载完整 `SKILL.md`。
-- `ReadSkillResource` 只能读取 Skill 根内的普通 UTF-8 文件。`allowed-tools`、Skill 脚本和项目指令都不能授予工具、提升权限或绕过模式、Hook、审批及 MCP policy。
+- 新安装的用户 Skill 默认位于 `~/.agents/skills`；用户和项目的 `.syzzz-code/skills` 继续作为 legacy 来源发现，旧安装记录可原地 update/rollback/remove。
+- 启动时只注入允许隐式调用的 Skill catalog；catalog 按模型窗口限制为 2%，自动缩短描述并确定性省略。`$skill 参数` 始终可显式激活，`ActivateSkill` 还受全局与单 Skill `allow_implicit_invocation` 约束。
+- `agents/openai.yaml` 可提供 display name、short description、图标、品牌色、默认 prompt、隐式调用策略和 MCP 依赖诊断。损坏 metadata 不妨碍显式使用，但会关闭隐式调用。
+- 每轮最多激活 8 个 Skill、正文合计 128 KiB。激活块只列出有界的 `scripts/references/assets` 路径；`ReadSkillResource` 仍只读取 Skill 根内 40 KiB 以内的普通 UTF-8 文件。
+- 用户 Skill 目录 symlink 可用；项目 Skill symlink 必须仍指向仓库内。激活和资源读取会复核 canonical target，变化后当前操作 fail-closed。
+- Skill 脚本不会自动运行。code 模式可让 Shell 显式选择已激活 Skill 的工作目录，仍经过现有审批、Hook、取消和审计边界；ask/plan 不暴露 Shell。
+- `allowed-tools`、Skill 脚本和项目指令都不能授予工具、提升权限或绕过模式、Hook、审批及 MCP policy。
 - 显式引用的快照内容会进入会话历史；AGENTS 使用当前磁盘版本重新注入。审计仅记录数量、字节和 outcome，不保存路径或正文。
 
 ### 会话恢复
@@ -114,7 +120,7 @@ Phase 1 至 Phase 5.1 已完成并保持 **Frozen**。Phase 6 保持 **Release C
 
 - Node.js 22 或更高版本（CI 验证 Node 22 与 24）
 - npm
-- 一个 Anthropic 或 OpenAI-compatible API 服务
+- 一个 Anthropic、OpenAI-compatible Chat Completions 或 OpenAI Responses API 服务
 
 ## 安装
 
@@ -220,6 +226,37 @@ syzzz config set apiKey --from-env DEEPSEEK_API_KEY
 }
 ```
 
+Chat Completions 与 Responses 是不同协议。一个 Provider 配置项只对应一种协议；`/model` 只切换该配置项中的同协议模型。需要同时使用两种协议时，应增加独立 Provider，并通过 `/provider` 切换。例如：
+
+```json
+{
+  "opencode-chat": {
+    "name": "OpenCode Chat",
+    "type": "openai-compatible",
+    "model": "deepseek-v4-flash",
+    "models": ["deepseek-v4-flash"],
+    "env": {
+      "BASE_URL": "https://opencode.ai/zen/go/v1",
+      "API_KEY": "",
+      "API_KEY_ENV": "OPENCODE_API_KEY"
+    }
+  },
+  "opencode-luna": {
+    "name": "OpenCode Luna",
+    "type": "openai-responses",
+    "model": "gpt-5.6-luna",
+    "models": ["gpt-5.6-luna"],
+    "env": {
+      "BASE_URL": "https://opencode.ai/zen/go/v1/responses",
+      "API_KEY": "",
+      "API_KEY_ENV": "OPENCODE_API_KEY"
+    }
+  }
+}
+```
+
+`openai-responses` 的 `BASE_URL` 可以填写 API 根路径，也可以填写以 `/responses` 结尾的完整端点；运行时会规范化为 SDK 所需的根路径。协议不会自动猜测或静默回退，避免把已经产生正文或工具调用的请求错误地重放到另一协议。
+
 缺少 `schemaVersion` 的旧配置会先备份，再迁移到 v1。未知未来版本拒绝启动且不会被 repair 覆盖。损坏配置不会自动重置，可使用：
 
 ```bash
@@ -264,7 +301,8 @@ Runtime
 
 Composition
 /context [reload]                      查看或重载 AGENTS 与上下文诊断
-/skills list|inspect|reload            查看、检查或重载 Skills
+/skills list|inspect|reload|doctor     查看、检查、重载或诊断 Skills
+/skills create|validate|test           创建、验证或联网评测 Skill 激活
 /skills enable|disable <name>          启用或禁用 Skill
 /skills install|update|rollback|remove 管理公开 Git Skill
 
@@ -334,6 +372,9 @@ syzzz hooks doctor
 syzzz skills list
 syzzz skills inspect <name>
 syzzz skills doctor
+syzzz skills create <name> --description <text> [--scope user|project] [--body-file <path>]
+syzzz skills validate [name|path] [--json]
+syzzz skills test <name> [--json]
 syzzz skills install <https-url> [--ref <ref>] [--skill <name>] [--scope user|project]
 syzzz skills update|rollback|remove <name> [--yes]
 ```
@@ -353,7 +394,9 @@ description: 使用固定步骤审查 TypeScript 证据
 '@ | Set-Content -LiteralPath .\.agents\skills\phase7-demo\SKILL.md -Encoding UTF8
 ```
 
-无效 Skill 会被单独隔离并由 `/context`、`/skills inspect` 或 `syzzz skills doctor` 报告，不会阻塞其他 Skill。Agent Skills 规范要求 `description` 不超过 1024 个字符；超限 Skill 需要由其作者缩短描述后才能加载。
+无效 Skill 会被单独隔离并由 `/context`、`/skills inspect`、`/skills doctor` 或 `syzzz skills doctor` 报告，不会阻塞其他 Skill。Agent Skills 规范要求 `description` 不超过 1024 个字符；超限 Skill 需要由其作者缩短描述后才能加载。
+
+`skills create` 默认创建用户级、explicit-only 的模板，避免未完成工作流被模型自动激活。`skills validate` 完全离线。`skills test` 会使用当前 Provider/模型读取 `<skill>/evals/activation.yaml`，每个 case 使用全新 ask+safe Engine 且只暴露 `ActivateSkill`；报告不保存 prompt、回答、reasoning 或 transcript。
 
 ### 其他命令
 
@@ -394,9 +437,9 @@ npm audit --omit=dev --audit-level=high
 git diff --check
 ```
 
-自动化套件覆盖路径与权限安全、事件 Runtime、Provider 可靠性、终端交互、代码库上下文、压缩、会话恢复、Trust V2、MCP、Hooks 和只读 Subagent。Phase 6 增加四种离线 Provider Profile 与发布门禁；Phase 7 增加 `@`、分层 AGENTS、Skills、公开 Git 安装及五项任务组合 Eval。
+自动化套件覆盖路径与权限安全、事件 Runtime、Provider 可靠性、终端交互、代码库上下文、压缩、会话恢复、Trust V2、MCP、Hooks 和只读 Subagent。当前包含五种离线 Provider Profile 与发布门禁；Phase 7 增加 `@`、分层 AGENTS、Skills、公开 Git 安装及五项任务组合 Eval。
 
-当前 Phase 7 本地基线为 **295/295** 项测试和离线 Eval **12/12** 通过；综合门槛覆盖率为 Lines **82.32%**、Branches **75.37%**、Functions **86.00%**，均高于 82%/74%/84% 门槛。打包与安全扫描已通过，跨平台 CI 仍待执行。Phase 6 的真实 DeepSeek/OpenCode Live Eval 保持 7/7、功能成功率 100%、安全项通过且无基础设施错误。
+当前 Phase 7.1 本地基线为 **316/316** 项测试和离线 Eval **12/12** 通过；综合门槛覆盖率为 Lines **82.07%**、Branches **75.45%**、Functions **86.41%**，均高于 82%/74%/84% 门槛。打包、安全扫描、生产依赖审计和候选包安装 smoke 已通过，跨平台 CI 仍待执行。Phase 6 的真实 DeepSeek/OpenCode Live Eval 保持 7/7、功能成功率 100%、安全项通过且无基础设施错误；OpenCode `gpt-5.6-luna` 的 Responses 文本流与 function call 往返 smoke 已通过。
 
 Phase 5 冻结验收还完成了 11 项真实终端 dogfood，覆盖未信任边界、Trust V2 复审、MCP 策略与惰性重连、Hook 拒绝与生命周期、取消清理、Subagent 预算、隐私恢复和撤销信任。公开 Streamable HTTP MCP 的真实握手、工具发现及只读天气调用同样通过；该外部服务只用于兼容性验证，不是 Syzzz 的运行依赖。
 
@@ -416,9 +459,10 @@ npm 包使用 allowlist，只包含 `dist`、README、SECURITY、LICENSE、CHANG
 - MCP `readOnlyHint` 是受信 Server 的声明，Syzzz 无法证明远端实现没有副作用。
 - 当前不支持 OAuth、旧 SSE、MCP Resources/Prompts/Sampling、后台 Hooks、写入型或嵌套 Subagent。
 - `@` 只支持工作区内普通 UTF-8 文件和有界目录清单，不支持外部路径、URL、图片、PDF 或多模态附件。
-- Skill 安装只支持公开 HTTPS Git；不支持私有凭证、市场、自动更新、远程代码执行或 `allowed-tools` 授权。
-- 当前没有完整 TUI、并行工具、后台任务、LSP 或持久化语义索引。
+- Skill 安装只支持公开 HTTPS Git；不支持私有凭证、市场、自动更新、安装后自动执行或 `allowed-tools` 授权。
+- 当前没有完整 TUI、多行 Composer、结构化问题弹窗或鼠标交互；双 renderer TUI 统一进入 Phase 8。
+- 当前没有并行工具、后台任务、LSP 或持久化语义索引。
 
 ## 当前阶段
 
-Phase 1 至 Phase 5.1 均保持 **Frozen**，Phase 6 保持 **Release Candidate Accepted**。Phase 7 位于 `codex/phase7-task-composition`，本地实现和新增回归已通过，当前状态为 **Implemented**；完成 Windows/Ubuntu Node 22/24 CI 后才可标记 Validated，完成人工 `@`、AGENTS、Skill 与恶意 Skill dogfood 后才可标记 Frozen。
+Phase 1 至 Phase 5.1 均保持 **Frozen**，Phase 6 保持 **Release Candidate Accepted**。Phase 7.1 位于 `codex/phase7.1-skills`，本地实现、自动门禁以及全局 Skill、Legacy、自动刷新、显式/隐式策略、symlink、资源读取、脚本审批、activation eval、Git 安装生命周期与 `$` 菜单人工 dogfood 均已通过；等待 Windows/Ubuntu Node 22/24 CI 全绿后标记 Frozen。

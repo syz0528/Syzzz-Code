@@ -96,6 +96,28 @@ test('explicit context resolves quoted paths, line ranges, directories, and laye
   });
 });
 
+test('unquoted context references stop at Chinese and ASCII sentence punctuation', async () => {
+  await withCompositionFixture(async ({ workspace, home }) => {
+    await writeFile(join(workspace, 'src', 'evidence.ts'), 'export const phase = "7.1";\n', 'utf8');
+    const runtime = await TaskCompositionRuntime.create({
+      workspaceRoot: workspace,
+      homeDirectory: home
+    });
+
+    for (const message of [
+      '检查 @src/evidence.ts，并报告当前 phase',
+      'Check @src/evidence.ts,then report the phase',
+      '检查（@src/evidence.ts）并报告',
+      '检查 @src/evidence.ts；然后报告'
+    ]) {
+      const composed = await runtime.compose(message, new AbortController().signal);
+      assert.equal(composed.receipts.length, 1);
+      assert.equal(composed.receipts[0].relativePath, 'src/evidence.ts');
+      assert.match(composed.message, /export const phase/);
+    }
+  });
+});
+
 test('composition diagnostics explain Windows PowerShell encoding and enforce Skill metadata limits', async () => {
   await withCompositionFixture(async ({ workspace, home }) => {
     await writeFile(join(workspace, 'AGENTS.md'), Buffer.from([0xbb, 0xd8, 0xb4, 0xf0]));

@@ -1,9 +1,8 @@
 import { createHash } from 'node:crypto';
-import { lstat, open, readFile, readdir, realpath } from 'node:fs/promises';
+import { lstat, open, readFile, readdir, realpath, stat } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { TextDecoder } from 'node:util';
-import { parseDocument } from 'yaml';
 import { z } from 'zod';
 import { loadConfig, saveConfig, type SkillsConfig } from '../config.js';
 import type { AgentEventData } from '../events.js';
@@ -26,6 +25,9 @@ import type {
   SkillSource,
   TaskCompositionRuntimeLike
 } from './types.js';
+import { parseSkillDocument, parseSkillOpenAiMetadata } from './skill-format.js';
+
+export { parseSkillDocument } from './skill-format.js';
 
 const MAX_CONTEXT_REFERENCES = 10;
 const MAX_CONTEXT_FILE_BYTES = 40 * 1024;
@@ -37,20 +39,28 @@ const MAX_DIRECTORY_BYTES = 20 * 1024;
 const MAX_INSTRUCTION_FILE_BYTES = 32 * 1024;
 const MAX_INSTRUCTION_TOTAL_BYTES = 64 * 1024;
 const MAX_SKILL_BODY_BYTES = 64 * 1024;
-const MAX_ACTIVE_SKILLS = 3;
+const MAX_ACTIVE_SKILLS = 8;
+const MAX_ACTIVE_SKILL_BYTES = 128 * 1024;
 const MAX_SKILL_RESOURCE_BYTES = 40 * 1024;
-const SKILL_NAME_PATTERN = /^[a-z0-9][a-z0-9-]{0,63}$/;
-
-export interface ParsedSkillFile {
-  name: string;
-  description: string;
-  unsupportedFields: string[];
-}
+const MAX_SKILL_METADATA_BYTES = 32 * 1024;
+const MAX_SKILL_CANDIDATES = 2_000;
+const MAX_SKILL_RESOURCE_ENTRIES = 200;
+const MAX_SKILL_RESOURCE_MANIFEST_BYTES = 20 * 1024;
+const MAX_SKILL_RESOURCE_DEPTH = 6;
+const DEFAULT_SKILL_CATALOG_CHARACTERS = 8_000;
 
 interface SkillCandidate {
   descriptor: SkillDescriptor;
   priority: number;
   allowedRoot: string;
+}
+
+interface SkillSourceDirectory {
+  path: string;
+  source: SkillSource;
+  priority: number;
+  allowedRoot: string;
+  scope: 'user' | 'project';
 }
 
 interface ResolvedContext {
@@ -67,6 +77,8 @@ interface ExplicitSkillRequest {
 
 const UTF8_ENCODING_HINT =
   'Save the file as UTF-8. Windows PowerShell 5.1 Set-Content uses the active ANSI encoding unless -Encoding UTF8 is specified.';
+const CONTEXT_REFERENCE_PREFIX_CHARACTERS = '([{,:;（【「『《〈〔［｛，；：、';
+const UNQUOTED_CONTEXT_TERMINATOR = /[\s,;!?，。；！？、：)\]}）】」』》〉〕］｝]/u;
 
 function sha256(value: Uint8Array | string): string {
   return createHash('sha256').update(value).digest('hex');
@@ -82,6 +94,14 @@ function isWithin(rootPath: string, candidatePath: string): boolean {
 
 function portablePath(path: string): string {
   return path.replaceAll('\\', '/');
+}
+
+function pathsEqual(left: string, right: string): boolean {
+  const normalizedLeft = resolve(left);
+  const normalizedRight = resolve(right);
+  return process.platform === 'win32'
+    ? normalizedLeft.toLowerCase() === normalizedRight.toLowerCase()
+    : normalizedLeft === normalizedRight;
 }
 
 function decodeUtf8(bytes: Uint8Array, label: string): string {
@@ -133,7 +153,11 @@ function parseContextReferences(message: string): {
       continue;
     }
     const previous = index === 0 ? '' : message[index - 1];
-    if (previous && !/\s|[([{,:;]/.test(previous)) {
+    if (
+      previous &&
+      !/\s/u.test(previous) &&
+      !CONTEXT_REFERENCE_PREFIX_CHARACTERS.includes(previous)
+    ) {
       escapedMessage += '@';
       index += 1;
       continue;
@@ -159,7 +183,7 @@ function parseContextReferences(message: string): {
         index += quotedRange[0].length;
       }
     } else {
-      while (index < message.length && !/\s/.test(message[index])) {
+      while (index < message.length && !UNQUOTED_CONTEXT_TERMINATOR.test(message[index])) {
         path += message[index];
         index += 1;
       }
@@ -310,59 +334,13 @@ async function readBoundedInstruction(
   };
 }
 
-export function parseSkillDocument(content: string, directoryName?: string): ParsedSkillFile {
-  const match = /^---\r?\n([\s\S]*?)\r?\n---(?:\r?\n|$)/.exec(content.replace(/^\uFEFF/, ''));
-  if (!match) {
-    throw new Error('SKILL.md must start with YAML frontmatter');
-  }
-  const document = parseDocument(match[1], { uniqueKeys: true });
-  if (document.errors.length > 0) {
-    throw new Error(`Invalid Skill frontmatter: ${document.errors[0].message}`);
-  }
-  const value = document.toJS() as unknown;
-  if (!value || typeof value !== 'object' || Array.isArray(value)) {
-    throw new Error('Skill frontmatter must be an object');
-  }
-  const record = value as Record<string, unknown>;
-  if (
-    typeof record.name !== 'string' ||
-    !SKILL_NAME_PATTERN.test(record.name) ||
-    record.name.endsWith('-') ||
-    record.name.includes('--')
-  ) {
-    throw new Error(
-      'Skill name must be 1-64 lowercase letters, digits, or hyphens, without leading, trailing, or consecutive hyphens'
-    );
-  }
-  if (directoryName && record.name !== directoryName) {
-    throw new Error(`Skill name ${record.name} must match its directory ${directoryName}`);
-  }
-  if (typeof record.description !== 'string' || !record.description.trim()) {
-    throw new Error('Skill description must be a non-empty string up to 1024 characters');
-  }
-  const description = record.description.trim();
-  const descriptionCharacters = [...description].length;
-  if (descriptionCharacters > 1_024) {
-    throw new Error(
-      `Skill description must be a non-empty string up to 1024 characters (received ${descriptionCharacters})`
-    );
-  }
-  const supported = new Set(['name', 'description', 'license', 'compatibility', 'metadata']);
-  return {
-    name: record.name,
-    description,
-    unsupportedFields: Object.keys(record).filter((key) => !supported.has(key))
-  };
-}
-
 async function scanSkillDirectory(
-  directory: string,
-  source: SkillSource,
-  priority: number,
-  allowedRoot: string,
+  sourceDirectory: SkillSourceDirectory,
   disabled: ReadonlySet<string>,
-  warnings: string[]
+  warnings: string[],
+  candidateBudget: { remaining: number }
 ): Promise<SkillCandidate[]> {
+  const { path: directory, source, priority, allowedRoot, scope } = sourceDirectory;
   let entries;
   try {
     const directoryInfo = await lstat(directory);
@@ -389,30 +367,116 @@ async function scanSkillDirectory(
 
   const candidates: SkillCandidate[] = [];
   for (const entry of entries.sort((left, right) => left.name.localeCompare(right.name))) {
-    if (!entry.isDirectory() || entry.isSymbolicLink()) {
+    if (candidateBudget.remaining <= 0) {
+      warnings.push(`Skill discovery exceeded ${MAX_SKILL_CANDIDATES} candidate directories`);
+      break;
+    }
+    if (!entry.isDirectory() && !entry.isSymbolicLink()) {
       continue;
     }
+    candidateBudget.remaining -= 1;
     const rootPath = join(directory, entry.name);
     const skillFilePath = join(rootPath, 'SKILL.md');
     try {
-      const info = await lstat(skillFilePath);
-      if (!info.isFile() || info.isSymbolicLink() || info.size > MAX_SKILL_BODY_BYTES) {
+      const [rootInfo, canonicalRootPath, canonicalAllowedRoot] = await Promise.all([
+        lstat(rootPath),
+        realpath(rootPath),
+        realpath(allowedRoot)
+      ]);
+      if (!rootInfo.isDirectory() && !rootInfo.isSymbolicLink()) {
+        continue;
+      }
+      if (scope === 'project' && !isWithin(canonicalAllowedRoot, canonicalRootPath)) {
+        throw new Error('project Skill symlink resolves outside the repository');
+      }
+      const [lexicalSkillInfo, canonicalSkillPath] = await Promise.all([
+        lstat(skillFilePath),
+        realpath(skillFilePath)
+      ]);
+      const canonicalSkillInfo = await stat(canonicalSkillPath);
+      if (
+        (!lexicalSkillInfo.isFile() && !lexicalSkillInfo.isSymbolicLink()) ||
+        !canonicalSkillInfo.isFile() ||
+        canonicalSkillInfo.size > MAX_SKILL_BODY_BYTES ||
+        !isWithin(canonicalRootPath, canonicalSkillPath)
+      ) {
         throw new Error('SKILL.md must be a regular file no larger than 64 KiB');
       }
       const content = decodeUtf8(await readFile(skillFilePath), skillFilePath);
       const parsed = parseSkillDocument(content, entry.name);
+      const metadataPath = join(rootPath, 'agents', 'openai.yaml');
+      let metadata;
+      let metadataError: string | undefined;
+      try {
+        const lexicalMetadataInfo = await lstat(metadataPath);
+        const canonicalMetadataPath = await realpath(metadataPath);
+        const canonicalMetadataInfo = await stat(canonicalMetadataPath);
+        if (
+          (!lexicalMetadataInfo.isFile() && !lexicalMetadataInfo.isSymbolicLink()) ||
+          !canonicalMetadataInfo.isFile() ||
+          canonicalMetadataInfo.size > MAX_SKILL_METADATA_BYTES ||
+          !isWithin(canonicalRootPath, canonicalMetadataPath)
+        ) {
+          throw new Error(
+            'agents/openai.yaml must be a regular file inside the Skill root and no larger than 32 KiB'
+          );
+        }
+        metadata = parseSkillOpenAiMetadata(decodeUtf8(await readFile(metadataPath), metadataPath));
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code !== 'ENOENT') {
+          metadataError = error instanceof Error ? error.message : String(error);
+          warnings.push(
+            `Invalid Skill metadata ${portablePath(metadataPath)}: ${metadataError}; implicit activation disabled`
+          );
+        }
+      }
+      const resourceManifest = await buildSkillResourceManifest(canonicalRootPath, warnings);
+      const validationWarnings = [
+        ...parsed.unsupportedFields.map(
+          (field) => `${field} is unsupported and grants no authorization`
+        ),
+        ...(metadataError ? [`OpenAI metadata is invalid: ${metadataError}`] : []),
+        ...(metadata?.dependencies ?? []).map(
+          (dependency) => `MCP dependency ${dependency.raw} is diagnostic only`
+        )
+      ];
       candidates.push({
         priority,
-        allowedRoot,
+        allowedRoot:
+          scope === 'user' && rootInfo.isSymbolicLink() ? canonicalRootPath : allowedRoot,
         descriptor: {
           name: parsed.name,
           description: parsed.description,
           source,
           rootPath,
+          canonicalRootPath,
           skillFilePath,
+          interface: {
+            displayName: metadata?.interface?.displayName ?? parsed.name,
+            shortDescription:
+              metadata?.interface?.shortDescription ??
+              parsed.description.replace(/\s+/g, ' ').trim(),
+            ...(metadata?.interface?.iconSmall ? { iconSmall: metadata.interface.iconSmall } : {}),
+            ...(metadata?.interface?.iconLarge ? { iconLarge: metadata.interface.iconLarge } : {}),
+            ...(metadata?.interface?.brandColor
+              ? { brandColor: metadata.interface.brandColor }
+              : {}),
+            ...(metadata?.interface?.defaultPrompt
+              ? { defaultPrompt: metadata.interface.defaultPrompt }
+              : {})
+          },
+          policy: {
+            allowImplicitInvocation:
+              !metadataError && (metadata?.policy?.allowImplicitInvocation ?? true)
+          },
+          dependencies: metadata?.dependencies ?? [],
+          resourceManifest,
           enabled: !disabled.has(parsed.name),
           shadowed: false,
-          unsupportedFields: parsed.unsupportedFields
+          unsupportedFields: parsed.unsupportedFields,
+          ...(metadata || metadataError ? { metadataPath } : {}),
+          ...(metadataError ? { metadataError } : {}),
+          validationWarnings
         }
       });
     } catch (error) {
@@ -422,10 +486,148 @@ async function scanSkillDirectory(
   return candidates;
 }
 
+async function buildSkillResourceManifest(
+  canonicalRootPath: string,
+  warnings: string[]
+): Promise<SkillDescriptor['resourceManifest']> {
+  const visible: string[] = [];
+  let totalEntries = 0;
+  let byteCount = 0;
+  let truncated = false;
+  const pending = ['scripts', 'references', 'assets'].map((name) => ({
+    path: join(canonicalRootPath, name),
+    relativePath: name,
+    depth: 1
+  }));
+  while (pending.length > 0) {
+    const current = pending.shift();
+    if (!current) {
+      break;
+    }
+    let entries;
+    try {
+      entries = await readdir(current.path, { withFileTypes: true });
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
+        continue;
+      }
+      warnings.push(
+        `Cannot inspect Skill resource directory ${portablePath(current.path)}: ${String(error)}`
+      );
+      continue;
+    }
+    for (const entry of entries.sort((left, right) => left.name.localeCompare(right.name))) {
+      const path = join(current.path, entry.name);
+      const relativePath = portablePath(relative(canonicalRootPath, path));
+      totalEntries += 1;
+      let valid = true;
+      let directory = entry.isDirectory();
+      if (entry.isSymbolicLink()) {
+        try {
+          const resolvedPath = await realpath(path);
+          if (!isWithin(canonicalRootPath, resolvedPath)) {
+            valid = false;
+            warnings.push(`Skill resource symlink escapes its root: ${relativePath}`);
+          } else {
+            directory = (await stat(resolvedPath)).isDirectory();
+          }
+        } catch (error) {
+          valid = false;
+          warnings.push(`Cannot resolve Skill resource symlink ${relativePath}: ${String(error)}`);
+        }
+      }
+      if (!valid) {
+        continue;
+      }
+      const line = directory ? `${relativePath}/` : relativePath;
+      const lineBytes = Buffer.byteLength(`${line}\n`, 'utf8');
+      if (
+        visible.length < MAX_SKILL_RESOURCE_ENTRIES &&
+        byteCount + lineBytes <= MAX_SKILL_RESOURCE_MANIFEST_BYTES
+      ) {
+        visible.push(line);
+        byteCount += lineBytes;
+      } else {
+        truncated = true;
+      }
+      if (directory && !entry.isSymbolicLink() && current.depth < MAX_SKILL_RESOURCE_DEPTH) {
+        pending.push({
+          path,
+          relativePath,
+          depth: current.depth + 1
+        });
+      } else if (directory && current.depth >= MAX_SKILL_RESOURCE_DEPTH) {
+        truncated = true;
+      }
+    }
+  }
+  return {
+    entries: visible,
+    totalEntries,
+    omittedEntries: Math.max(0, totalEntries - visible.length),
+    byteCount,
+    truncated
+  };
+}
+
+async function appendSkillResourceSignature(
+  records: string[],
+  canonicalRootPath: string,
+  signal?: AbortSignal
+): Promise<void> {
+  let visited = 0;
+  const pending = ['scripts', 'references', 'assets'].map((name) => ({
+    path: join(canonicalRootPath, name),
+    depth: 1
+  }));
+  while (pending.length > 0 && visited < MAX_SKILL_RESOURCE_ENTRIES) {
+    if (signal) {
+      throwIfAborted(signal);
+    }
+    const current = pending.shift();
+    if (!current) {
+      break;
+    }
+    try {
+      const entries = await readdir(current.path, { withFileTypes: true });
+      for (const entry of entries.sort((left, right) => left.name.localeCompare(right.name))) {
+        if (visited >= MAX_SKILL_RESOURCE_ENTRIES) {
+          records.push(`resource-limit:${portablePath(canonicalRootPath)}`);
+          break;
+        }
+        visited += 1;
+        const path = join(current.path, entry.name);
+        try {
+          const lexicalInfo = await lstat(path);
+          const canonicalPath = await realpath(path);
+          const canonicalInfo = await stat(canonicalPath);
+          records.push(
+            `${portablePath(path)}|${portablePath(canonicalPath)}|${lexicalInfo.size}|${lexicalInfo.mtimeMs}|${canonicalInfo.size}|${canonicalInfo.mtimeMs}`
+          );
+          if (
+            canonicalInfo.isDirectory() &&
+            !entry.isSymbolicLink() &&
+            current.depth < MAX_SKILL_RESOURCE_DEPTH
+          ) {
+            pending.push({ path, depth: current.depth + 1 });
+          }
+        } catch (error) {
+          records.push(`${portablePath(path)}|${(error as NodeJS.ErrnoException).code ?? 'error'}`);
+        }
+      }
+    } catch (error) {
+      records.push(
+        `${portablePath(current.path)}|${(error as NodeJS.ErrnoException).code ?? 'error'}`
+      );
+    }
+  }
+}
+
 export interface TaskCompositionRuntimeOptions {
   workspaceRoot: string;
   skills?: SkillsConfig;
   homeDirectory?: string;
+  skillAllowlist?: readonly string[];
 }
 
 export class TaskCompositionError extends Error {
@@ -444,22 +646,37 @@ export class TaskCompositionRuntime implements TaskCompositionRuntimeLike {
   private repositoryRoot: string;
   private readonly homeDirectory: string;
   private readonly useConfigSkills: boolean;
+  private readonly skillAllowlist?: ReadonlySet<string>;
   private skillsConfig: SkillsConfig;
   private instructions: LoadedInstruction[] = [];
   private skillDescriptors: SkillDescriptor[] = [];
   private winningSkills = new Map<string, SkillDescriptor>();
   private skillAllowedRoots = new Map<string, string>();
-  private warnings: string[] = [];
+  private instructionWarnings: string[] = [];
+  private skillWarnings: string[] = [];
   private nestedDirectories = new Set<string>();
   private activeSkills = new Map<string, SkillActivation>();
   private activeSkillBytes = 0;
   private lastReceipts: ContextReceipt[] = [];
+  private skillSourceSignature = '';
+  private skillRefreshCheckedAt?: string;
+  private skillReloadedAt?: string;
+  private skillReloadCount = 0;
+  private skillRefreshCheckedThisTurn = false;
+  private catalogStatus = { included: 0, omitted: 0, characters: 0 };
+
+  private get warnings(): string[] {
+    return [...new Set([...this.instructionWarnings, ...this.skillWarnings])];
+  }
 
   private constructor(options: TaskCompositionRuntimeOptions, repositoryRoot: string) {
     this.workspaceRoot = resolve(options.workspaceRoot);
     this.repositoryRoot = repositoryRoot;
     this.homeDirectory = resolve(options.homeDirectory ?? homedir());
     this.useConfigSkills = options.skills === undefined;
+    this.skillAllowlist = options.skillAllowlist
+      ? new Set(options.skillAllowlist.map((name) => name.toLowerCase()))
+      : undefined;
     this.skillsConfig = structuredClone(options.skills ?? loadConfig().skills);
   }
 
@@ -474,11 +691,13 @@ export class TaskCompositionRuntime implements TaskCompositionRuntimeLike {
     this.activeSkills.clear();
     this.activeSkillBytes = 0;
     this.lastReceipts = [];
+    this.skillRefreshCheckedThisTurn = false;
   }
 
   async reload(): Promise<CompositionStatus> {
     this.repositoryRoot = await findRepositoryRoot(this.workspaceRoot);
-    this.warnings = [];
+    this.instructionWarnings = [];
+    this.skillWarnings = [];
     if (this.useConfigSkills) {
       this.skillsConfig = structuredClone(loadConfig().skills);
     }
@@ -507,6 +726,7 @@ export class TaskCompositionRuntime implements TaskCompositionRuntimeLike {
 
   async compose(message: string, signal: AbortSignal): Promise<ComposedTurn> {
     throwIfAborted(signal);
+    await this.ensureSkillsFresh(signal);
     const parsedContext = parseContextReferences(message);
     if (parsedContext.references.length > MAX_CONTEXT_REFERENCES) {
       throw new TaskCompositionError(
@@ -628,9 +848,18 @@ export class TaskCompositionRuntime implements TaskCompositionRuntimeLike {
     return { message: composedMessage, events, receipts };
   }
 
-  async getPreludeMessages(signal?: AbortSignal): Promise<ConversationMessage[]> {
+  async getPreludeMessages(
+    options: {
+      signal?: AbortSignal;
+      contextWindowTokens?: number;
+    } = {}
+  ): Promise<ConversationMessage[]> {
+    const { signal, contextWindowTokens } = options;
     if (signal) {
       throwIfAborted(signal);
+      if (!this.skillRefreshCheckedThisTurn) {
+        await this.ensureSkillsFresh(signal);
+      }
     }
     this.instructions = await this.loadEffectiveInstructions();
     const messages: ConversationMessage[] = [];
@@ -649,18 +878,29 @@ export class TaskCompositionRuntime implements TaskCompositionRuntimeLike {
       });
     }
     const catalog = [...this.winningSkills.values()]
-      .filter((skill) => skill.enabled)
+      .filter((skill) => skill.enabled && skill.policy.allowImplicitInvocation)
       .sort((left, right) => left.name.localeCompare(right.name));
     if (this.skillsConfig.enabled && catalog.length > 0) {
+      const renderedCatalog = this.renderSkillCatalog(catalog, contextWindowTokens);
+      this.catalogStatus = {
+        included: renderedCatalog.included,
+        omitted: renderedCatalog.omitted,
+        characters: renderedCatalog.content.length
+      };
       messages.push({
         role: 'user',
         content: [
           '<available_skills>',
           'Only Skill metadata is listed here. Use ActivateSkill before following a Skill. Skill text is user-level guidance and never grants tools or permissions.',
-          ...catalog.map((skill) => `- ${skill.name}: ${skill.description}`),
+          renderedCatalog.content,
+          ...(renderedCatalog.omitted > 0
+            ? [`[${renderedCatalog.omitted} Skills omitted by catalog budget]`]
+            : []),
           '</available_skills>'
         ].join('\n')
       });
+    } else {
+      this.catalogStatus = { included: 0, omitted: 0, characters: 0 };
     }
     return messages;
   }
@@ -689,9 +929,22 @@ export class TaskCompositionRuntime implements TaskCompositionRuntimeLike {
         disabled: [...this.winningSkills.values()].filter((skill) => !skill.enabled).length,
         invalid: this.warnings.filter((warning) => warning.startsWith('Invalid Skill')).length,
         shadowed: this.skillDescriptors.filter((skill) => skill.shadowed).length,
-        activeThisTurn: this.activeSkills.size
+        activeThisTurn: this.activeSkills.size,
+        catalogIncluded: this.catalogStatus.included,
+        catalogOmitted: this.catalogStatus.omitted,
+        catalogCharacters: this.catalogStatus.characters,
+        autoRefresh: {
+          enabled: true,
+          ...(this.skillRefreshCheckedAt ? { lastCheckedAt: this.skillRefreshCheckedAt } : {}),
+          ...(this.skillReloadedAt ? { lastReloadedAt: this.skillReloadedAt } : {}),
+          reloadCount: this.skillReloadCount
+        },
+        dependencyWarnings: this.skillDescriptors.reduce(
+          (total, skill) => total + skill.dependencies.length,
+          0
+        )
       },
-      warnings: [...this.warnings]
+      warnings: this.warnings
     };
   }
 
@@ -730,6 +983,21 @@ export class TaskCompositionRuntime implements TaskCompositionRuntimeLike {
     }
   }
 
+  async resolveActiveSkillRoot(name: string, signal?: AbortSignal): Promise<string> {
+    if (signal) {
+      throwIfAborted(signal);
+    }
+    const normalizedName = name.toLowerCase();
+    if (!this.activeSkills.has(normalizedName)) {
+      throw new Error(`Skill must be activated before using its working directory: ${name}`);
+    }
+    const descriptor = this.winningSkills.get(normalizedName);
+    if (!descriptor || !descriptor.enabled) {
+      throw new Error(`Skill is unavailable or disabled: ${name}`);
+    }
+    return await this.validateSkillRoot(descriptor);
+  }
+
   getTools(): ToolDefinition[] {
     const activateSkill = defineTool({
       name: 'ActivateSkill',
@@ -740,14 +1008,18 @@ export class TaskCompositionRuntime implements TaskCompositionRuntimeLike {
       approval: 'never',
       modeAccess: 'all-modes',
       execute: async (input, context) => {
-        if (!this.skillsConfig.allowImplicit) {
+        const descriptor = this.winningSkills.get(input.name.toLowerCase());
+        if (!this.skillsConfig.allowImplicit || !descriptor?.policy.allowImplicitInvocation) {
           context.emitEvent?.({
             type: 'skill_failed',
             skill: input.name,
             activation: 'implicit',
             code: 'implicit_activation_disabled'
           });
-          return { content: 'Implicit Skill activation is disabled', isError: true };
+          return {
+            content: 'Implicit Skill activation is disabled for this Skill or session',
+            isError: true
+          };
         }
         try {
           const activated = await this.activateSkill(
@@ -841,7 +1113,9 @@ export class TaskCompositionRuntime implements TaskCompositionRuntimeLike {
     let remainingBytes = MAX_INSTRUCTION_TOTAL_BYTES;
     for (const candidate of candidates) {
       if (remainingBytes <= 0) {
-        this.warnings.push('AGENTS.md total exceeded 64 KiB; later instructions were omitted');
+        this.instructionWarnings.push(
+          'AGENTS.md total exceeded 64 KiB; later instructions were omitted'
+        );
         break;
       }
       try {
@@ -855,65 +1129,64 @@ export class TaskCompositionRuntime implements TaskCompositionRuntimeLike {
           loaded.push(instruction);
           remainingBytes -= instruction.byteCount;
           if (instruction.truncated) {
-            this.warnings.push(`${portablePath(candidate.path)} was truncated`);
+            this.instructionWarnings.push(`${portablePath(candidate.path)} was truncated`);
           }
         }
       } catch (error) {
-        this.warnings.push(`Cannot load ${portablePath(candidate.path)}: ${String(error)}`);
+        this.instructionWarnings.push(
+          `Cannot load ${portablePath(candidate.path)}: ${String(error)}`
+        );
       }
     }
-    this.warnings = [...new Set(this.warnings)];
+    this.instructionWarnings = [...new Set(this.instructionWarnings)];
     return loaded;
   }
 
-  private async reloadSkills(): Promise<void> {
-    const disabled = new Set(this.skillsConfig.disabled.map((name) => name.toLowerCase()));
-    const candidates: SkillCandidate[] = [];
-    const directories: Array<{
-      path: string;
-      source: SkillSource;
-      priority: number;
-      allowedRoot: string;
-    }> = [
-      {
-        path: join(this.homeDirectory, '.agents', 'skills'),
-        source: 'user-shared',
-        priority: 0,
-        allowedRoot: this.homeDirectory
-      },
+  private skillSourceDirectories(): SkillSourceDirectory[] {
+    const directories: SkillSourceDirectory[] = [
       {
         path: join(this.homeDirectory, '.syzzz-code', 'skills'),
         source: 'user-syzzz',
+        priority: 0,
+        allowedRoot: this.homeDirectory,
+        scope: 'user'
+      },
+      {
+        path: join(this.homeDirectory, '.agents', 'skills'),
+        source: 'user-shared',
         priority: 1_000,
-        allowedRoot: this.homeDirectory
+        allowedRoot: this.homeDirectory,
+        scope: 'user'
       }
     ];
     const projectDirectories = directoryChain(this.repositoryRoot, this.workspaceRoot);
     projectDirectories.forEach((directory, index) => {
       directories.push({
+        path: join(directory, '.syzzz-code', 'skills'),
+        source: 'project-syzzz',
+        priority: 2_000 + index * 2,
+        allowedRoot: this.repositoryRoot,
+        scope: 'project'
+      });
+      directories.push({
         path: join(directory, '.agents', 'skills'),
         source: 'project',
-        priority: 2_000 + index,
-        allowedRoot: this.repositoryRoot
+        priority: 2_001 + index * 2,
+        allowedRoot: this.repositoryRoot,
+        scope: 'project'
       });
     });
-    directories.push({
-      path: join(this.workspaceRoot, '.syzzz-code', 'skills'),
-      source: 'project-syzzz',
-      priority: 3_000 + projectDirectories.length,
-      allowedRoot: this.repositoryRoot
-    });
+    return directories;
+  }
 
-    for (const directory of directories) {
+  private async reloadSkills(signature?: string): Promise<void> {
+    const disabled = new Set(this.skillsConfig.disabled.map((name) => name.toLowerCase()));
+    const candidates: SkillCandidate[] = [];
+    const candidateBudget = { remaining: MAX_SKILL_CANDIDATES };
+    this.skillWarnings = [];
+    for (const directory of this.skillSourceDirectories()) {
       candidates.push(
-        ...(await scanSkillDirectory(
-          directory.path,
-          directory.source,
-          directory.priority,
-          directory.allowedRoot,
-          disabled,
-          this.warnings
-        ))
+        ...(await scanSkillDirectory(directory, disabled, this.skillWarnings, candidateBudget))
       );
     }
     candidates.sort((left, right) => left.priority - right.priority);
@@ -926,12 +1199,132 @@ export class TaskCompositionRuntime implements TaskCompositionRuntimeLike {
       winners.set(candidate.descriptor.name, candidate);
     }
     this.skillDescriptors = candidates.map((candidate) => candidate.descriptor);
+    if (this.skillAllowlist) {
+      for (const descriptor of this.skillDescriptors) {
+        descriptor.enabled = descriptor.enabled && this.skillAllowlist.has(descriptor.name);
+      }
+    }
     this.winningSkills = new Map(
       [...winners.entries()].map(([name, candidate]) => [name, candidate.descriptor])
     );
     this.skillAllowedRoots = new Map(
       [...winners.entries()].map(([name, candidate]) => [name, candidate.allowedRoot])
     );
+    this.skillSourceSignature = signature ?? (await this.computeSkillSourceSignature());
+    this.skillReloadedAt = new Date().toISOString();
+    this.skillReloadCount += 1;
+    this.skillWarnings = [...new Set(this.skillWarnings)];
+  }
+
+  private async computeSkillSourceSignature(signal?: AbortSignal): Promise<string> {
+    const records: string[] = [];
+    let candidates = 0;
+    for (const source of this.skillSourceDirectories()) {
+      if (signal) {
+        throwIfAborted(signal);
+      }
+      try {
+        const directoryInfo = await lstat(source.path);
+        records.push(
+          `${portablePath(source.path)}|${directoryInfo.size}|${directoryInfo.mtimeMs}|${directoryInfo.isSymbolicLink()}`
+        );
+        const entries = await readdir(source.path, { withFileTypes: true });
+        for (const entry of entries.sort((left, right) => left.name.localeCompare(right.name))) {
+          if (!entry.isDirectory() && !entry.isSymbolicLink()) {
+            continue;
+          }
+          candidates += 1;
+          if (candidates > MAX_SKILL_CANDIDATES) {
+            records.push(`limit:${MAX_SKILL_CANDIDATES}`);
+            return sha256(records.join('\n'));
+          }
+          const rootPath = join(source.path, entry.name);
+          try {
+            const rootInfo = await lstat(rootPath);
+            const canonicalRoot = await realpath(rootPath);
+            records.push(
+              `${portablePath(rootPath)}|${portablePath(canonicalRoot)}|${rootInfo.size}|${rootInfo.mtimeMs}`
+            );
+            for (const relativePath of ['SKILL.md', join('agents', 'openai.yaml')]) {
+              const path = join(rootPath, relativePath);
+              try {
+                const lexicalInfo = await lstat(path);
+                const canonicalPath = await realpath(path);
+                const canonicalInfo = await stat(canonicalPath);
+                records.push(
+                  `${portablePath(path)}|${portablePath(canonicalPath)}|${lexicalInfo.size}|${lexicalInfo.mtimeMs}|${canonicalInfo.size}|${canonicalInfo.mtimeMs}`
+                );
+              } catch (error) {
+                records.push(
+                  `${portablePath(path)}|${(error as NodeJS.ErrnoException).code ?? 'error'}`
+                );
+              }
+            }
+            await appendSkillResourceSignature(records, canonicalRoot, signal);
+          } catch (error) {
+            records.push(
+              `${portablePath(rootPath)}|${(error as NodeJS.ErrnoException).code ?? 'error'}`
+            );
+          }
+        }
+      } catch (error) {
+        records.push(
+          `${portablePath(source.path)}|${(error as NodeJS.ErrnoException).code ?? 'error'}`
+        );
+      }
+    }
+    return sha256(records.join('\n'));
+  }
+
+  private async ensureSkillsFresh(signal: AbortSignal): Promise<void> {
+    throwIfAborted(signal);
+    const signature = await this.computeSkillSourceSignature(signal);
+    this.skillRefreshCheckedAt = new Date().toISOString();
+    this.skillRefreshCheckedThisTurn = true;
+    if (signature !== this.skillSourceSignature) {
+      await this.reloadSkills(signature);
+    }
+  }
+
+  private renderSkillCatalog(
+    catalog: readonly SkillDescriptor[],
+    contextWindowTokens: number | undefined
+  ): { content: string; included: number; omitted: number } {
+    const budget =
+      contextWindowTokens && contextWindowTokens > 0
+        ? Math.max(0, Math.floor(contextWindowTokens * 0.02 * 4))
+        : DEFAULT_SKILL_CATALOG_CHARACTERS;
+    const descriptionLimits = [Number.POSITIVE_INFINITY, 256, 128, 64];
+    const render = (skill: SkillDescriptor, limit: number): string => {
+      const source = skill.interface.shortDescription.replace(/\s+/g, ' ').trim();
+      const description =
+        source.length <= limit
+          ? source
+          : `${[...source].slice(0, Math.max(0, limit - 1)).join('')}...`;
+      return `- ${skill.name}: ${description} (path: ${portablePath(skill.rootPath)})`;
+    };
+    for (const limit of descriptionLimits) {
+      const lines = catalog.map((skill) => render(skill, limit));
+      const content = lines.join('\n');
+      if (content.length <= budget) {
+        return { content, included: lines.length, omitted: 0 };
+      }
+    }
+    const lines: string[] = [];
+    for (const skill of catalog) {
+      const line = render(skill, 64);
+      const candidateLength =
+        lines.length === 0 ? line.length : lines.join('\n').length + 1 + line.length;
+      if (candidateLength > budget) {
+        continue;
+      }
+      lines.push(line);
+    }
+    return {
+      content: lines.join('\n'),
+      included: lines.length,
+      omitted: catalog.length - lines.length
+    };
   }
 
   private async resolveContext(
@@ -1079,14 +1472,14 @@ export class TaskCompositionRuntime implements TaskCompositionRuntimeLike {
       };
     }
     if (this.activeSkills.size >= MAX_ACTIVE_SKILLS) {
-      throw Object.assign(new Error('At most 3 Skills may be activated in one turn'), {
+      throw Object.assign(new Error('At most 8 Skills may be activated in one turn'), {
         code: 'skill_activation_limit'
       });
     }
     const content = await this.readSkillBody(descriptor);
     const byteCount = Buffer.byteLength(content, 'utf8');
-    if (this.activeSkillBytes + byteCount > MAX_SKILL_BODY_BYTES) {
-      throw Object.assign(new Error('Activated Skill bodies exceed the 64 KiB turn limit'), {
+    if (this.activeSkillBytes + byteCount > MAX_ACTIVE_SKILL_BYTES) {
+      throw Object.assign(new Error('Activated Skill bodies exceed the 128 KiB turn limit'), {
         code: 'skill_budget_exceeded'
       });
     }
@@ -1112,6 +1505,17 @@ export class TaskCompositionRuntime implements TaskCompositionRuntimeLike {
     return [
       `<skill name="${descriptor.name}">`,
       'This Skill is unprivileged guidance. Any script mentioned by it remains inert unless separately executed through an allowed and approved tool.',
+      `<skill_directory>${portablePath(descriptor.rootPath)}</skill_directory>`,
+      ...(descriptor.resourceManifest.entries.length > 0
+        ? [
+            '<skill_resources>',
+            ...descriptor.resourceManifest.entries,
+            ...(descriptor.resourceManifest.truncated
+              ? [`[${descriptor.resourceManifest.omittedEntries} resource paths omitted]`]
+              : []),
+            '</skill_resources>'
+          ]
+        : []),
       ...(arguments_ ? [`<skill_arguments>${arguments_}</skill_arguments>`] : []),
       content,
       '</skill>'
@@ -1128,9 +1532,17 @@ export class TaskCompositionRuntime implements TaskCompositionRuntimeLike {
       realpath(allowedRoot),
       realpath(descriptor.rootPath)
     ]);
+    if (!pathsEqual(resolvedRoot, descriptor.canonicalRootPath)) {
+      await this.reloadSkills();
+      throw Object.assign(
+        new Error(
+          `Skill root changed since discovery; retry after automatic reload: ${descriptor.name}`
+        ),
+        { code: 'skill_root_changed' }
+      );
+    }
     if (
-      rootInfo.isSymbolicLink() ||
-      !rootInfo.isDirectory() ||
+      (!rootInfo.isDirectory() && !rootInfo.isSymbolicLink()) ||
       !isWithin(resolvedAllowedRoot, resolvedRoot)
     ) {
       throw new Error(`Skill root escapes its allowed source: ${descriptor.name}`);
@@ -1144,10 +1556,11 @@ export class TaskCompositionRuntime implements TaskCompositionRuntimeLike {
       lstat(descriptor.skillFilePath),
       realpath(descriptor.skillFilePath)
     ]);
+    const resolvedInfo = await stat(resolvedSkillFile);
     if (
-      info.isSymbolicLink() ||
-      !info.isFile() ||
-      info.size > MAX_SKILL_BODY_BYTES ||
+      (!info.isFile() && !info.isSymbolicLink()) ||
+      !resolvedInfo.isFile() ||
+      resolvedInfo.size > MAX_SKILL_BODY_BYTES ||
       !isWithin(resolvedRoot, resolvedSkillFile)
     ) {
       throw new Error('SKILL.md must remain a regular file inside its Skill root and under 64 KiB');
@@ -1175,14 +1588,16 @@ export class TaskCompositionRuntime implements TaskCompositionRuntimeLike {
     const resolvedRoot = await this.validateSkillRoot(descriptor);
     const candidate = resolve(descriptor.rootPath, resourcePath);
     const lexicalInfo = await lstat(candidate);
-    if (lexicalInfo.isSymbolicLink()) {
-      throw new Error('Skill resource symbolic links are not allowed');
-    }
     const resolvedCandidate = await realpath(candidate);
+    const resolvedInfo = await stat(resolvedCandidate);
     if (!isWithin(resolvedRoot, resolvedCandidate)) {
       throw new Error('Skill resource escapes the Skill directory');
     }
-    if (!lexicalInfo.isFile() || lexicalInfo.size > MAX_SKILL_RESOURCE_BYTES) {
+    if (
+      (!lexicalInfo.isFile() && !lexicalInfo.isSymbolicLink()) ||
+      !resolvedInfo.isFile() ||
+      resolvedInfo.size > MAX_SKILL_RESOURCE_BYTES
+    ) {
       throw new Error('Skill resource must be a regular file no larger than 40 KiB');
     }
     const content = decodeUtf8(await readFile(candidate), resourcePath);
@@ -1202,6 +1617,6 @@ export const compositionLimits = Object.freeze({
   instructionFileBytes: MAX_INSTRUCTION_FILE_BYTES,
   instructionTotalBytes: MAX_INSTRUCTION_TOTAL_BYTES,
   skillActivations: MAX_ACTIVE_SKILLS,
-  skillBodyBytes: MAX_SKILL_BODY_BYTES,
+  skillBodyBytes: MAX_ACTIVE_SKILL_BYTES,
   skillResourceBytes: MAX_SKILL_RESOURCE_BYTES
 });

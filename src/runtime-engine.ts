@@ -783,7 +783,12 @@ export class QueryEngine {
           disabled: 0,
           invalid: 0,
           shadowed: 0,
-          activeThisTurn: 0
+          activeThisTurn: 0,
+          catalogIncluded: 0,
+          catalogOmitted: 0,
+          catalogCharacters: 0,
+          autoRefresh: { enabled: true, reloadCount: 0 },
+          dependencyWarnings: 0
         },
         warnings: []
       },
@@ -1539,7 +1544,12 @@ export class QueryEngine {
       let executedToolCalls = 0;
       let cumulativeUsage: ProviderUsage | undefined;
       let finalFinishReason: string | null | undefined;
-      let currentPrefixMessages = (await this.composition?.getPreludeMessages(signal)) ?? [];
+      const compositionPreludeOptions = {
+        signal,
+        contextWindowTokens: this.contextManager.contextWindowTokens(this.getProviderInfo())
+      };
+      let currentPrefixMessages =
+        (await this.composition?.getPreludeMessages(compositionPreludeOptions)) ?? [];
       let latestMeasurement = this.contextManager.measure(
         [...currentPrefixMessages, ...workingMessages],
         this.getSystemPrompt(),
@@ -1551,7 +1561,8 @@ export class QueryEngine {
       throwIfAborted(signal);
       for (let toolRound = 0; toolRound <= this.maxToolRounds; toolRound++) {
         throwIfAborted(signal);
-        currentPrefixMessages = (await this.composition?.getPreludeMessages(signal)) ?? [];
+        currentPrefixMessages =
+          (await this.composition?.getPreludeMessages(compositionPreludeOptions)) ?? [];
         const budgetFinalizationReason =
           this.finalizeOnToolBudget &&
           toolRound > 0 &&
@@ -2724,12 +2735,19 @@ export class QueryEngine {
       return toolMessage(validationResult.message, true);
     }
 
+    const composition = this.composition;
     const baseContext: ToolContext = {
       toolCallId,
       sessionId: this.sessionId,
       turnId,
       workspaceRoot: this.workspaceRoot,
       workingDirectory: this.workspaceRoot,
+      ...(composition
+        ? {
+            resolveSkillWorkingDirectory: (name: string, activeSignal: AbortSignal) =>
+              composition.resolveActiveSkillRoot(name, activeSignal)
+          }
+        : {}),
       mode: this.mode,
       permissionMode: this.permissionMode,
       signal,

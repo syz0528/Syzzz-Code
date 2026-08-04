@@ -1,12 +1,13 @@
 // Provider Factory - 根据配置创建对应的 Provider
 import type { AIProvider } from './base.js';
 import { OpenAICompatibleProvider } from './openai-compatible.js';
+import { OpenAIResponsesProvider } from './openai-responses.js';
 import { AnthropicProvider } from './anthropic.js';
 import { resolveProviderCredential } from '../config.js';
 
 export interface ProviderConfig {
   name: string;
-  type: 'anthropic' | 'openai-compatible';
+  type: 'anthropic' | 'openai-compatible' | 'openai-responses';
   model: string;
   modelContextWindows?: Record<string, number>;
   env: {
@@ -30,15 +31,16 @@ export function createProvider(
 
   if (type === 'anthropic') {
     return new AnthropicProvider(API_KEY, BASE_URL, model, modelContextWindows);
-  } else {
-    // openai-compatible
-    return new OpenAICompatibleProvider(
-      API_KEY,
-      BASE_URL,
-      model,
-      name,
-      undefined,
-      modelContextWindows
-    );
   }
+  if (type === 'openai-responses') {
+    return new OpenAIResponsesProvider(API_KEY, BASE_URL, model, name, modelContextWindows);
+  }
+  return new OpenAICompatibleProvider(
+    API_KEY,
+    BASE_URL,
+    model,
+    name,
+    undefined,
+    modelContextWindows
+  );
 }

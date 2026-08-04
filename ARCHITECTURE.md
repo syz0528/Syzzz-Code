@@ -33,17 +33,20 @@ CLI / Slash commands / Human renderer / NDJSON
 
 ### Task Composition
 
-- `src/composition/runtime.ts` 在首次 Provider 请求前解析显式 `@` 证据、分层 `AGENTS.md` 与 `$skill`，并在后续请求重新注入当前指令。
+- `src/composition/runtime.ts` 在首次 Provider 请求前解析显式 `@` 证据、分层 `AGENTS.md` 与 `$skill`，按回合签名自动刷新 Skill，并按模型窗口生成有界 catalog。
 - 显式引用内容作为有界 user message 进入历史；AGENTS 与 Skill 目录是按当前磁盘状态生成的瞬时前缀，不提升为 system prompt。
-- `ActivateSkill` 与 `ReadSkillResource` 是只读工具。Skill 的 `allowed-tools` 或脚本不产生任何授权。
-- `src/composition/skill-installer.ts` 以固定 Git argv 安装公开 HTTPS Skill，固定 commit、校验文件类型和大小，并通过原子目录替换维护一个回滚版本。
+- `src/composition/skill-format.ts` 统一解析 Agent Skills frontmatter、`agents/openai.yaml` 和 `evals/activation.yaml`；损坏 metadata 对显式激活保持可用，但隐式调用 fail-closed。
+- `ActivateSkill` 与 `ReadSkillResource` 是只读工具。Skill 的 `allowed-tools` 或脚本不产生任何授权；Shell 的 Skill cwd 必须指向当前回合已激活 Skill 的实时 canonical root。
+- `src/composition/skill-authoring.ts` 和 `skill-eval.ts` 提供本地创建、离线验证与隔离的 Live 激活评测。
+- `src/composition/skill-installer.ts` 以固定 Git argv 安装公开 HTTPS Skill，固定 commit、校验文件类型和大小，并通过原子目录替换维护一个回滚版本。新用户安装写入 `~/.agents/skills`，legacy 安装锁继续原地管理。
 
 ### Provider
 
 - `src/providers/runner.ts` 是 timeout、有限重试、取消和错误分类的唯一所有者。
-- OpenAI-compatible Provider 实现 SSE、工具碎片聚合和 DeepSeek reasoning 恢复。
+- OpenAI-compatible Provider 实现 Chat Completions SSE、工具碎片聚合和 DeepSeek reasoning 恢复。
+- OpenAI Responses Provider 实现语义流事件、function call 聚合与无状态工具续接；受限私有 output items 只存在于当前内存工具链，持久化时继续剥离。
 - Anthropic Provider 保持非流式兼容路径。
-- Provider、URL、模型和凭证只来自用户配置；代码中没有静态 Provider Registry。
+- Provider、协议、URL、模型和凭证只来自用户配置；工厂按 `anthropic | openai-compatible | openai-responses` 显式路由，不自动探测或跨协议回退。
 
 ### 工具与扩展
 
@@ -70,7 +73,7 @@ CLI / Slash commands / Human renderer / NDJSON
 - 审计：`~/.syzzz-code/audit/YYYY/MM/DD/<sessionId>.jsonl`
 - Trust：`~/.syzzz-code/trusted-workspaces.json`
 - 用户扩展：`~/.syzzz-code/mcp.json`、`~/.syzzz-code/hooks.json`
-- 用户指令与 Skills：`~/.syzzz-code/AGENTS.md`、`~/.syzzz-code/skills`、`~/.agents/skills`
+- 用户指令与 Skills：`~/.syzzz-code/AGENTS.md`、`~/.agents/skills`；`~/.syzzz-code/skills` 作为 legacy 来源继续发现
 - Skill 安装记录：`~/.syzzz-code/skill-installs.json`
 
 会话快照包含恢复所需的有界模型上下文，未加密。审计只保存 allowlist 元数据。

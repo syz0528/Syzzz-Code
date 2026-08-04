@@ -189,6 +189,66 @@ test('interactive stream and model commands persist user configuration', () => {
   }
 });
 
+test('interactive provider switching routes between Chat Completions and Responses', () => {
+  const testHome = mkdtempSync(join(tmpdir(), 'syzzz-cli-provider-protocol-'));
+  const configDirectory = join(testHome, '.syzzz-code');
+  const configPath = join(configDirectory, 'config.json');
+
+  try {
+    mkdirSync(configDirectory);
+    writeFileSync(
+      configPath,
+      JSON.stringify({
+        currentProvider: 'chat',
+        providers: {
+          chat: {
+            name: 'OpenCode Chat',
+            type: 'openai-compatible',
+            model: 'deepseek-v4-flash',
+            models: ['deepseek-v4-flash'],
+            env: {
+              BASE_URL: 'https://opencode.example/v1',
+              API_KEY: 'test-key'
+            }
+          },
+          luna: {
+            name: 'OpenCode Luna',
+            type: 'openai-responses',
+            model: 'gpt-5.6-luna',
+            models: ['gpt-5.6-luna'],
+            env: {
+              BASE_URL: 'https://opencode.example/v1/responses',
+              API_KEY: 'test-key'
+            }
+          }
+        },
+        audit: { retentionDays: 0, maxBytes: 4096 },
+        sessions: { autoSave: false }
+      })
+    );
+
+    const result = spawnSync(process.execPath, [cliPath], {
+      cwd: projectDirectory,
+      encoding: 'utf-8',
+      input: '/provider luna\n/status\n/exit\n',
+      timeout: 5_000,
+      env: {
+        ...process.env,
+        HOME: testHome,
+        USERPROFILE: testHome
+      }
+    });
+
+    assert.equal(result.status, 0, result.stderr || result.error?.message);
+    assert.match(result.stdout, /Provider switched to OpenCode Luna \(gpt-5\.6-luna\)/);
+    assert.match(result.stdout, /Provider:\s+OpenCode Luna \(openai-responses\)/);
+    const saved = JSON.parse(readFileSync(configPath, 'utf8'));
+    assert.equal(saved.currentProvider, 'luna');
+  } finally {
+    rmSync(testHome, { recursive: true, force: true });
+  }
+});
+
 test('interactive session processes consecutive messages exactly once', () => {
   const script = `
     import { runInteractiveSession } from './dist/interactive.js';

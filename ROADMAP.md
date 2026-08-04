@@ -1,9 +1,9 @@
 # Syzzz Code 路线图
 
 **制定日期：** 2026-06-16
-**最近更新：** 2026-08-02
+**最近更新：** 2026-08-04
 **适用基线：** `1.0.0` / Phase 7 起始提交 `161391a`
-**当前入口：** Phase 6 保持 **Release Candidate Accepted**；Phase 7 在 `codex/phase7-task-composition` 完成本地实现和最终本地门禁，状态为 **Implemented**，等待跨平台 CI 与人工验收
+**当前入口：** Phase 6 保持 **Release Candidate Accepted**；Phase 7.1 在 `codex/phase7.1-skills` 完成本地门禁与人工验收，等待跨平台 CI 后冻结
 
 > 路线图描述实施顺序和验收边界。当前代码事实以 [`README.md`](README.md) 和 [`CURRENT_STATUS.md`](CURRENT_STATUS.md) 为准。
 
@@ -712,7 +712,7 @@ RepoMap 按需调用，不自动注入每个 prompt。
 
 ### 11.2 Phase 6.1：Provider 契约与 Agent Eval
 
-- [x] 建立 `openai-chat-completions`、`openai-compatible-minimal`、`deepseek-reasoning` 与 `anthropic-messages` 四种离线 Profile；
+- [x] 建立 `openai-chat-completions`、`openai-compatible-minimal`、`openai-responses`、`deepseek-reasoning` 与 `anthropic-messages` 五种离线 Profile；
 - [x] 覆盖 UTF-8、多工具碎片、usage、request ID、流式兼容恢复、错误、Retry-After、timeout、abort、畸形 SSE 和 reasoning 隔离；
 - [x] 建立七项固定 Eval：架构分析、跨文件修复、小功能、类型错误、失败恢复、安全拒绝和上下文压缩；
 - [x] 每项复制到独立临时 Git 仓库，使用 `code + safe`、精确 Shell allowlist、Node 文件权限约束和 Agent 外部语义 grader；
@@ -784,7 +784,7 @@ RepoMap 按需调用，不自动注入每个 prompt。
 - [x] 用户共享、用户 Syzzz、项目根和最近项目目录四级发现；
 - [x] Agent Skills YAML frontmatter，损坏 Skill 单独隔离；
 - [x] 启动只提供名称/描述，`$skill` 或 `ActivateSkill` 才加载正文；
-- [x] 每轮最多 3 个 Skill、正文合计 64 KiB；
+- [x] Phase 7 初版每轮最多 3 个 Skill、正文合计 64 KiB；Phase 7.1 提升为 8 个/128 KiB；
 - [x] `ReadSkillResource` 的 Skill 根、普通 UTF-8、敏感路径和 40 KiB 限制；
 - [x] `allowed-tools`、脚本和指令均不产生授权；
 - [x] `/skills`、`syzzz skills list|inspect|doctor` 与 `@/$` 异步候选。
@@ -804,9 +804,28 @@ RepoMap 按需调用，不自动注入每个 prompt。
 - **Validated**：覆盖率、审计、打包和 Windows/Ubuntu Node 22/24 CI 通过。
 - **Frozen**：真实 `@`、AGENTS、显式/隐式 Skill、Git 安装和恶意 Skill 人工验收通过。
 
-当前状态为 **Implemented**。本阶段不发布 npm、不创建 Tag、不公开仓库，也不改变 Phase 6 Release Candidate 提交。
+当前本地实现与人工验收已通过，等待跨平台 CI 后冻结。本阶段不发布 npm、不创建 Tag、不公开仓库，也不改变 Phase 6 Release Candidate 提交。
 
-## 13. 暂不进入近期范围
+### 12.5 Phase 7.1：Skills 产品化
+
+- [x] 新用户安装默认写入 `~/.agents/skills`，legacy 目录和安装锁继续兼容；
+- [x] `agents/openai.yaml` interface、policy、MCP dependency 与损坏 metadata fail-closed；
+- [x] 每回合来源签名与自动刷新，最多扫描 2000 个候选目录；
+- [x] Skill catalog 按 context window 2% 限制，描述分级压缩并确定性省略；
+- [x] 用户 symlink、仓库内项目 symlink、canonical target 变化复核与资源 symlink 边界；
+- [x] 激活时列出有界 scripts/references/assets manifest，不预读正文；
+- [x] Shell 可显式选择当前回合已激活 Skill 的 canonical cwd，审批展示实际目录；
+- [x] `skills create|validate|test` 与隔离、元数据化的 Live activation eval；
+- [x] `$` 候选单行、来源标签和重复唤起不污染 scrollback；
+- [x] 完整 TUI、多行 Composer 和结构化交互明确留给 Phase 8。
+
+Phase 7.1 本地自动基线为 316/316、coverage 82.07%/75.45%/86.41%、offline Eval 12/12，生产依赖审计、包检查、候选包 smoke 与用户 dogfood 已通过。跨平台 CI 全绿后标记 **Frozen**。
+
+## 13. Phase 8：双 Renderer TUI 与结构化交互
+
+Phase 8 单独规划，不回填 Phase 7.1。目标是在保留现有 inline/非 TTY 兼容路径的同时，为交互终端提供独立 TUI renderer，统一 `/`、`@`、`$` 候选、计划确认、审批和结构化问题。具体技术栈、全屏策略、无障碍、Windows Terminal 兼容和降级边界需在 Phase 7.1 冻结后单独决策。
+
+## 14. 暂不进入近期范围
 
 以下能力可能有长期价值，但在 Tool Runtime、上下文和会话稳定前不进入近期开发：
 
@@ -824,14 +843,14 @@ RepoMap 按需调用，不自动注入每个 prompt。
 
 这些项目只有在出现真实用户需求、并且核心 CLI 能力稳定后才重新评估。
 
-## 14. 建议版本里程碑
+## 15. 建议版本里程碑
 
 版本号表达交付边界，不代表日期承诺：
 
 ### v1.0.0：六阶段可信 CLI 基线
 
 - Phase 1–5.1 的工具、事件、上下文、会话与扩展边界；
-- OpenAI-compatible 流式和 Anthropic 非流式协议；
+- OpenAI-compatible Chat Completions、OpenAI Responses 流式和 Anthropic 非流式协议；
 - 固定 Coding Agent Eval 与跨平台候选包验证；
 - Apache-2.0 公开仓库和公开 npm CLI 包；
 - 人工门控发布，不包含自动更新或遥测。
@@ -839,7 +858,7 @@ RepoMap 按需调用，不自动注入每个 prompt。
 ### v1.x：基于真实需求的小步迭代
 
 - 修复真实用户发现的可靠性、安全和兼容性问题；
-- 根据独立设计评估 Anthropic 流式或 OpenAI Responses API；
+- 根据独立设计评估 Anthropic 真流式；OpenAI Responses API 已作为显式协议适配器实现；
 - 根据需求评估 LSP、MCP OAuth、完整 TUI、私有 Skill 源和更强 Subagent；
 - 不以功能数量为目标，不破坏 v1.0 已冻结的安全边界。
 
@@ -847,7 +866,7 @@ RepoMap 按需调用，不自动注入每个 prompt。
 
 只有出现需要不兼容配置、事件或会话协议变更的真实需求，并且迁移方案、回滚方案和跨平台验证均成熟后，才评估 `v2.0.0`。
 
-## 15. 最近行动清单
+## 16. 最近行动清单
 
 ### 已完成
 
@@ -857,6 +876,8 @@ RepoMap 按需调用，不自动注入每个 prompt。
 - [x] 新增 LICENSE、ARCHITECTURE、TESTING 与 CHANGELOG；
 - [x] 保持 AgentEvent、Provider、工具、会话和配置公共契约不变。
 - [x] 完成 Phase 7 任务组合层与十二项离线 Eval 的本地实现。
+- [x] 完成 Phase 7.1 Skills 产品化与本地自动门禁。
+- [x] 新增 OpenAI Responses Provider、无状态工具续接和显式 Provider 协议路由。
 
 ### Phase 6 待验收
 

@@ -99,16 +99,30 @@ export function createSkillSuggestionProvider(
         .filter((skill) => !skill.shadowed && skill.enabled)
         .filter(
           (skill) =>
-            !query || skill.name.includes(query) || skill.description.toLowerCase().includes(query)
+            !query ||
+            skill.name.includes(query) ||
+            skill.interface.displayName.toLowerCase().includes(query) ||
+            skill.interface.shortDescription.toLowerCase().includes(query)
         )
-        .map((skill) => ({
-          id: `skill:${skill.name}`,
-          label: `$${skill.name}`,
-          description: skill.description,
-          insertText: `$${skill.name} `,
-          replaceStart: 0,
-          replaceEnd: request.query.length + 1
-        }));
+        .map((skill) => {
+          const source =
+            skill.source === 'project'
+              ? 'project'
+              : skill.source === 'user-shared'
+                ? 'user'
+                : 'legacy';
+          return {
+            id: `skill:${skill.name}`,
+            label:
+              `$${skill.name}` +
+              `${skill.interface.displayName === skill.name ? '' : `  ${skill.interface.displayName}`}` +
+              ` [${source}]`,
+            description: skill.interface.shortDescription,
+            insertText: `$${skill.name} `,
+            replaceStart: 0,
+            replaceEnd: request.query.length + 1
+          };
+        });
     }
   };
 }

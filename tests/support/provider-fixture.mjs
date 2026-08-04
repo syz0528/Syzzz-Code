@@ -299,6 +299,215 @@ function handleOpenAI(profile, body, response, requestCount) {
   );
 }
 
+function responsesUserText(body) {
+  const input = Array.isArray(body.input) ? body.input : [];
+  const users = input.filter((item) => item?.role === 'user');
+  const last = users.at(-1);
+  return typeof last?.content === 'string' ? last.content : '';
+}
+
+function responsesUsage() {
+  return {
+    input_tokens: 17,
+    output_tokens: 5,
+    total_tokens: 22,
+    input_tokens_details: { cached_tokens: 0 },
+    output_tokens_details: { reasoning_tokens: 0 }
+  };
+}
+
+function completedResponse(model, output, outputText = '') {
+  return {
+    id: 'resp_contract',
+    object: 'response',
+    created_at: 1,
+    status: 'completed',
+    error: null,
+    incomplete_details: null,
+    instructions: null,
+    metadata: null,
+    model,
+    output,
+    output_text: outputText,
+    parallel_tool_calls: false,
+    temperature: null,
+    tool_choice: 'auto',
+    tools: [],
+    top_p: null,
+    background: false,
+    max_output_tokens: null,
+    previous_response_id: null,
+    prompt: null,
+    reasoning: null,
+    service_tier: 'default',
+    store: false,
+    truncation: 'disabled',
+    usage: responsesUsage(),
+    user: null
+  };
+}
+
+function responseMessage(text) {
+  return {
+    id: 'msg_responses_contract',
+    type: 'message',
+    role: 'assistant',
+    status: 'completed',
+    content: [{ type: 'output_text', text, annotations: [] }]
+  };
+}
+
+function writeResponsesText(response, model, text = '\u54cd\u5e94_OK') {
+  response.writeHead(200, {
+    'content-type': 'text/event-stream; charset=utf-8',
+    'x-request-id': 'request-responses-text'
+  });
+  const deltaEvent = sseEvent({
+    type: 'response.output_text.delta',
+    sequence_number: 1,
+    item_id: 'msg_responses_contract',
+    output_index: 0,
+    content_index: 0,
+    delta: text,
+    logprobs: []
+  });
+  const multibyte = Buffer.from('\u54cd', 'utf8');
+  const byteIndex = deltaEvent.indexOf(multibyte);
+  writeSplitBuffer(response, deltaEvent, byteIndex + 1);
+  response.write(
+    sseEvent({
+      type: 'response.completed',
+      sequence_number: 2,
+      response: completedResponse(model, [responseMessage(text)], text)
+    })
+  );
+  response.end('data: [DONE]\n\n');
+}
+
+function writeResponsesTool(response, model) {
+  const call = {
+    id: 'fc_responses_contract',
+    type: 'function_call',
+    call_id: 'call_responses_contract',
+    name: 'Read',
+    arguments: '{"path":"README.md"}',
+    status: 'completed'
+  };
+  const reasoning = {
+    id: 'rs_responses_contract',
+    type: 'reasoning',
+    summary: [],
+    encrypted_content: 'encrypted-contract-reasoning',
+    status: 'completed'
+  };
+  response.writeHead(200, {
+    'content-type': 'text/event-stream; charset=utf-8',
+    'x-request-id': 'request-responses-tool'
+  });
+  response.write(
+    sseEvent({
+      type: 'response.output_item.added',
+      sequence_number: 1,
+      output_index: 1,
+      item: { ...call, arguments: '', status: 'in_progress' }
+    })
+  );
+  response.write(
+    sseEvent({
+      type: 'response.function_call_arguments.delta',
+      sequence_number: 2,
+      item_id: call.id,
+      output_index: 1,
+      delta: '{"path":"READ'
+    })
+  );
+  response.write(
+    sseEvent({
+      type: 'response.function_call_arguments.delta',
+      sequence_number: 3,
+      item_id: call.id,
+      output_index: 1,
+      delta: 'ME.md"}'
+    })
+  );
+  response.write(
+    sseEvent({
+      type: 'response.function_call_arguments.done',
+      sequence_number: 4,
+      item_id: call.id,
+      output_index: 1,
+      name: call.name,
+      arguments: call.arguments
+    })
+  );
+  response.write(
+    sseEvent({
+      type: 'response.output_item.done',
+      sequence_number: 5,
+      output_index: 1,
+      item: call
+    })
+  );
+  response.write(
+    sseEvent({
+      type: 'response.completed',
+      sequence_number: 6,
+      response: completedResponse(model, [reasoning, call])
+    })
+  );
+  response.end('data: [DONE]\n\n');
+}
+
+function handleResponses(body, response) {
+  const model = typeof body.model === 'string' ? body.model : 'responses-contract-model';
+  const input = Array.isArray(body.input) ? body.input : [];
+  const userText = responsesUserText(body);
+
+  if (!body.stream) {
+    const text = 'RESPONSES_NON_STREAM_OK';
+    json(response, 200, completedResponse(model, [responseMessage(text)], text), {
+      'x-request-id': 'request-responses-non-stream'
+    });
+    return;
+  }
+  if (userText.includes('early-eof')) {
+    response.writeHead(200, { 'content-type': 'text/event-stream; charset=utf-8' });
+    response.end(
+      sseEvent({
+        type: 'response.output_text.delta',
+        sequence_number: 1,
+        item_id: 'msg_partial',
+        output_index: 0,
+        content_index: 0,
+        delta: 'partial',
+        logprobs: []
+      })
+    );
+    return;
+  }
+  if (userText.includes('failed-response')) {
+    const failed = {
+      ...completedResponse(model, []),
+      status: 'failed',
+      error: { code: 'server_error', message: 'fixture failure' },
+      usage: null
+    };
+    response.writeHead(200, { 'content-type': 'text/event-stream; charset=utf-8' });
+    response.write(sseEvent({ type: 'response.failed', sequence_number: 1, response: failed }));
+    response.end('data: [DONE]\n\n');
+    return;
+  }
+  if (input.some((item) => item?.type === 'function_call_output')) {
+    writeResponsesText(response, model, 'TOOL_RESULT_ACCEPTED');
+    return;
+  }
+  if (userText.includes('tool-contract')) {
+    writeResponsesTool(response, model);
+    return;
+  }
+  writeResponsesText(response, model);
+}
+
 function handleAnthropic(body, response) {
   const userText = Array.isArray(body.messages)
     ? body.messages
@@ -363,6 +572,8 @@ export async function startProviderFixture(profile) {
       });
       if (profile === 'anthropic-messages') {
         handleAnthropic(body, response);
+      } else if (profile === 'openai-responses') {
+        handleResponses(body, response);
       } else {
         handleOpenAI(profile, body, response, requests.length);
       }

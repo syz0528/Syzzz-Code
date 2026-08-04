@@ -18,7 +18,7 @@ npm run check
 
 `npm run check` 是本地综合门槛；`smoke:package` 额外安装真实 tarball，耗时更长。Windows 进程、会话锁与 MCP 生命周期可用 `npm run test:stability` 连续执行三轮，任一轮失败都会立即终止。
 
-2026-08-03 的 Phase 7 本地实现基线为：295/295 项测试、覆盖率 Lines 82.32%/Branches 75.37%/Functions 86.00%、离线 Eval 12/12 与真实 tarball smoke 通过。Windows/Ubuntu Node 22/24 CI 仍待执行；Phase 6 发布候选的跨平台 CI 与人工验收结论保持不变。
+2026-08-04 的 Phase 7.1 本地实现基线为：316/316 项测试、覆盖率 Lines 82.07%/Branches 75.45%/Functions 86.41%、离线 Eval 12/12 通过。生产依赖审计、包内容检查、候选包安装 smoke 与人工 dogfood 同样通过。覆盖率进程固定 `--test-concurrency=4`，用于避免 Windows instrumentation 与多个进程型测试争抢资源；测试失败不会自动重跑。Windows/Ubuntu Node 22/24 CI 仍待执行；Phase 6 发布候选的跨平台 CI 与人工验收结论保持不变。
 
 Windows PowerShell 5.1 手工创建包含中文的 `AGENTS.md` 或 `SKILL.md` 时，必须使用 `Set-Content -Encoding UTF8`；默认 `Set-Content` 会使用当前 ANSI 代码页并被 UTF-8 安全校验拒绝。`@@name` 的模型可见结果是字面量 `@name`，并附带“已显式转义”的组合证据，模型不应把它当作缺失路径继续搜索。
 
@@ -37,10 +37,11 @@ Windows PowerShell 5.1 手工创建包含中文的 `AGENTS.md` 或 `SKILL.md` �
 
 - `openai-chat-completions`
 - `openai-compatible-minimal`
+- `openai-responses`
 - `deepseek-reasoning`
 - `anthropic-messages`
 
-契约包含 UTF-8 多字节增量、工具调用碎片、usage、请求元数据、错误映射、有限重试、提前 EOF、畸形 SSE、reasoning 隔离和 Anthropic 非流式工具调用。它证明协议行为，不等于已对所有兼容厂商做真实联网验证。
+契约包含 UTF-8 多字节增量、Chat Completions 与 Responses 工具调用碎片、usage、请求元数据、Responses 私有 output 续接、错误映射、有限重试、提前 EOF、畸形 SSE、reasoning 隔离和 Anthropic 非流式工具调用。它证明协议行为，不等于已对所有兼容厂商做真实联网验证。
 
 ## 固定 Agent Eval
 
@@ -65,7 +66,7 @@ Shell 审批只接受任务清单中完全一致的命令和 cwd。语义 grader
 
 Live Eval 不属于普通 CI。`npm run eval:live` 默认使用当前 Syzzz 配置中的 Provider 和模型，读取凭证后会在执行 Agent Shell 前剥离进程中的凭证类环境变量，报告也不会保存凭证。Phase 6 Live Eval 继续使用原有七项联网任务，要求安全任务 100% 通过、功能任务成功率至少 80%。Phase 7 新增的五项任务组合 Eval 当前为强制离线门槛，避免安装来源与项目指令测试依赖外网。
 
-验证另一个 OpenAI-compatible 或 Anthropic 端点时，可用显式环境变量覆盖当前配置：
+验证另一个 OpenAI-compatible、OpenAI Responses 或 Anthropic 端点时，可用显式环境变量覆盖当前配置：
 
 ```bash
 SYZZZ_EVAL_PROVIDER_TYPE=openai-compatible
@@ -75,9 +76,15 @@ SYZZZ_EVAL_MODEL=model-name
 npm run eval:live
 ```
 
-`SYZZZ_EVAL_PROVIDER_TYPE` 可为 `openai-compatible` 或 `anthropic`。只提供部分显式变量会 fail closed；当前配置也没有可用凭证时结果明确为 `skipped`。Phase 6 人工验收要求当前 DeepSeek/OpenCode 配置通过；官方 OpenAI 与 Anthropic 只有在提供独立凭证时才执行，并在记录中区分“实测”和“协议兼容”。
+`SYZZZ_EVAL_PROVIDER_TYPE` 可为 `openai-compatible`、`openai-responses` 或 `anthropic`。Responses 的 `SYZZZ_EVAL_BASE_URL` 可使用 API 根路径或以 `/responses` 结尾的完整端点。只提供部分显式变量会 fail closed；当前配置也没有可用凭证时结果明确为 `skipped`。Phase 6 人工验收要求当前 DeepSeek/OpenCode 配置通过；官方 OpenAI 与 Anthropic 只有在提供独立凭证时才执行，并在记录中区分“实测”和“协议兼容”。
 
 Provider 在首个任务前发生认证、限流、网络或服务端基础设施错误时，Runner 会终止整套 Live Eval 并把其余任务标为 `skipped`。2026-07-30 的当前 DeepSeek/OpenCode 完整套件一次运行通过：7/7、功能成功率 100%、安全项通过、0 个基础设施错误；报告只保留脱敏指标。
+
+### Skill 激活评测
+
+`syzzz skills test <name>` 读取 `<skill>/evals/activation.yaml`。格式使用 `schemaVersion: 1`，每个 case 包含 `id`、`prompt` 和 `expect: activate|not-activate`。每个 case 最多 4 KiB，单个文件最多 20 个 case。
+
+每个 case 使用新的 ask+safe Engine，只暴露 `ActivateSkill`，不提供文件、Shell、MCP、Hook、Delegate 或持久化会话。默认使用当前 Provider 和模型，单 case 最长 60 秒；Provider/网络错误归类为 infrastructure failure，取消退出码为 130。输出只包含 case id、预期/实际、Provider/model、耗时和 usage。
 
 ## CI
 

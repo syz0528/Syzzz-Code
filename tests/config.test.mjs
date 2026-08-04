@@ -38,7 +38,10 @@ test('rejects an unknown provider protocol type', () => {
   const config = createValidConfig();
   config.providers.local.type = 'custom';
 
-  assert.throws(() => validateConfig(config), /must be "anthropic" or "openai-compatible"/);
+  assert.throws(
+    () => validateConfig(config),
+    /must be "anthropic", "openai-compatible", or "openai-responses"/
+  );
 });
 
 test('rejects a selected model missing from the configured model list', () => {

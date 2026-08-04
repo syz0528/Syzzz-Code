@@ -22,15 +22,60 @@ export type InstructionSource = 'user' | 'workspace' | 'nested';
 
 export type SkillSource = 'user-shared' | 'user-syzzz' | 'project' | 'project-syzzz';
 
+export interface SkillOpenAiMetadata {
+  interface?: {
+    displayName?: string;
+    shortDescription?: string;
+    iconSmall?: string;
+    iconLarge?: string;
+    brandColor?: string;
+    defaultPrompt?: string;
+  };
+  policy?: {
+    allowImplicitInvocation?: boolean;
+  };
+  dependencies: Array<{
+    type: 'mcp';
+    server?: string;
+    tool?: string;
+    raw: string;
+  }>;
+}
+
+export interface SkillResourceManifest {
+  entries: string[];
+  totalEntries: number;
+  omittedEntries: number;
+  byteCount: number;
+  truncated: boolean;
+}
+
 export interface SkillDescriptor {
   name: string;
   description: string;
   source: SkillSource;
   rootPath: string;
+  canonicalRootPath: string;
   skillFilePath: string;
+  interface: {
+    displayName: string;
+    shortDescription: string;
+    iconSmall?: string;
+    iconLarge?: string;
+    brandColor?: string;
+    defaultPrompt?: string;
+  };
+  policy: {
+    allowImplicitInvocation: boolean;
+  };
+  dependencies: SkillOpenAiMetadata['dependencies'];
+  resourceManifest: SkillResourceManifest;
   enabled: boolean;
   shadowed: boolean;
   unsupportedFields: string[];
+  metadataPath?: string;
+  metadataError?: string;
+  validationWarnings: string[];
 }
 
 export interface SkillActivation {
@@ -51,6 +96,15 @@ export interface SkillInstallRecordV1 {
   installedAt: string;
   fileCount: number;
   totalBytes: number;
+}
+
+export interface SkillActivationEvalV1 {
+  schemaVersion: 1;
+  cases: Array<{
+    id: string;
+    prompt: string;
+    expect: 'activate' | 'not-activate';
+  }>;
 }
 
 export interface LoadedInstruction {
@@ -85,6 +139,16 @@ export interface CompositionStatus {
     invalid: number;
     shadowed: number;
     activeThisTurn: number;
+    catalogIncluded: number;
+    catalogOmitted: number;
+    catalogCharacters: number;
+    autoRefresh: {
+      enabled: true;
+      lastCheckedAt?: string;
+      lastReloadedAt?: string;
+      reloadCount: number;
+    };
+    dependencyWarnings: number;
   };
   warnings: string[];
 }
@@ -100,11 +164,15 @@ export interface TaskCompositionRuntimeLike {
   beginTurn(): void;
   reload(): Promise<CompositionStatus>;
   compose(message: string, signal: AbortSignal): Promise<ComposedTurn>;
-  getPreludeMessages(signal?: AbortSignal): Promise<ConversationMessage[]>;
+  getPreludeMessages(options?: {
+    signal?: AbortSignal;
+    contextWindowTokens?: number;
+  }): Promise<ConversationMessage[]>;
   noteTouchedPaths(paths: readonly string[]): Promise<void>;
   getStatus(): CompositionStatus;
   listSkills(): SkillDescriptor[];
   inspectSkill(name: string): SkillDescriptor | undefined;
   setSkillEnabled(name: string, enabled: boolean): void;
+  resolveActiveSkillRoot(name: string, signal?: AbortSignal): Promise<string>;
   getTools(): import('../types.js').ToolDefinition[];
 }

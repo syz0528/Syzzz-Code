@@ -28,6 +28,13 @@ import {
   createSkillSuggestionProvider
 } from './composition/suggestions.js';
 import { SkillInstaller, type SkillInstallPreview } from './composition/skill-installer.js';
+import {
+  createSkill,
+  validateSkillDescriptors,
+  validateSkillPath
+} from './composition/skill-authoring.js';
+import { runSkillActivationEval } from './composition/skill-eval.js';
+import type { AIProvider } from './providers/base.js';
 import type { SessionController } from './session-controller.js';
 import type { ToolApprovalRequest } from './types.js';
 import { isAbortError, OperationAbortedError } from './tools/abort.js';
@@ -84,6 +91,7 @@ export interface InteractiveSessionOptions {
     engine: QueryEngine
   ) => Promise<{ providerId: string; models: readonly string[] }>;
   modelsForProvider?: (providerId: string) => readonly string[];
+  createSkillEvalProvider?: () => AIProvider;
 }
 
 interface InteractiveCommandContext {
@@ -98,6 +106,7 @@ interface InteractiveCommandContext {
   getProviderOptions?: () => readonly InteractiveProviderOption[];
   activateProvider?: InteractiveSessionOptions['activateProvider'];
   modelsForProvider?: (providerId: string) => readonly string[];
+  createSkillEvalProvider?: () => AIProvider;
 }
 
 function requireSession(commandContext: InteractiveCommandContext): SessionController {
@@ -898,7 +907,8 @@ function createCommandRegistry(): CommandRegistry<InteractiveCommandContext> {
     category: 'extensions',
     priority: COMMAND_PRIORITIES.skills,
     description: 'Discover or safely manage Agent Skills.',
-    argumentHint: '[list|inspect|reload|enable|disable|install|update|rollback|remove] [target]',
+    argumentHint:
+      '[list|inspect|reload|doctor|create|validate|test|enable|disable|install|update|rollback|remove] [target]',
     isEnabled: (commandContext) => Boolean(commandContext.engine.getCompositionRuntime?.()),
     choices: (commandContext) => {
       const runtime = commandContext.engine.getCompositionRuntime?.();
@@ -906,9 +916,12 @@ function createCommandRegistry(): CommandRegistry<InteractiveCommandContext> {
       return [
         { value: 'list', description: 'List discovered Skills' },
         { value: 'reload', description: 'Reload Skill metadata' },
+        { value: 'doctor', description: 'Show Skill diagnostics' },
+        { value: 'create', description: 'Create an explicit-only Skill' },
+        { value: 'validate', description: 'Validate discovered Skills' },
         ...skills.map((skill) => ({
           value: `inspect ${skill.name}`,
-          description: skill.description
+          description: skill.interface.shortDescription
         }))
       ];
     },
@@ -933,10 +946,32 @@ function createCommandRegistry(): CommandRegistry<InteractiveCommandContext> {
           return 'continue';
         }
         console.log(chalk.cyan(`\nSkill ${skill.name}\n`));
+        console.log(`  Display:     ${skill.interface.displayName}`);
         console.log(`  Description: ${skill.description}`);
+        console.log(`  Short:       ${skill.interface.shortDescription}`);
         console.log(`  Source:      ${skill.source}`);
         console.log(`  Location:    ${skill.rootPath}`);
+        console.log(`  Canonical:   ${skill.canonicalRootPath}`);
         console.log(`  Enabled:     ${skill.enabled ? 'yes' : 'no'}`);
+        console.log(
+          `  Invocation:  explicit ${skill.policy.allowImplicitInvocation ? '+ implicit' : 'only'}`
+        );
+        console.log(
+          `  Resources:   ${skill.resourceManifest.totalEntries} ` +
+            `(${skill.resourceManifest.omittedEntries} omitted from activation manifest)`
+        );
+        console.log(
+          `  Dependencies: ${skill.dependencies.length > 0 ? skill.dependencies.map((item) => item.raw).join(', ') : 'none'}`
+        );
+        console.log(
+          `  Validation:  ${skill.validationWarnings.length === 0 ? 'valid' : 'warnings'}`
+        );
+        if (skill.shadowed) {
+          console.log(chalk.yellow('  Shadowed:    yes'));
+        }
+        if (skill.metadataError) {
+          console.log(chalk.yellow(`  Metadata:    ${skill.metadataError}`));
+        }
         if (skill.unsupportedFields.length > 0) {
           console.log(
             chalk.yellow(
@@ -945,6 +980,107 @@ function createCommandRegistry(): CommandRegistry<InteractiveCommandContext> {
           );
         }
         console.log('');
+        return 'continue';
+      }
+      if (action === 'doctor') {
+        const status = runtime.getStatus();
+        console.log(chalk.cyan('\nSkills doctor\n'));
+        console.log(
+          `  Catalog: ${status.skills.catalogIncluded} included / ` +
+            `${status.skills.catalogOmitted} omitted / ${status.skills.catalogCharacters} chars`
+        );
+        console.log(
+          `  Auto refresh: ${status.skills.autoRefresh.reloadCount} reload(s)` +
+            `${status.skills.autoRefresh.lastCheckedAt ? `; checked ${status.skills.autoRefresh.lastCheckedAt}` : ''}`
+        );
+        console.log(`  Dependency warnings: ${status.skills.dependencyWarnings}`);
+        for (const warning of status.warnings) {
+          console.log(chalk.yellow(`  Warning: ${warning}`));
+        }
+        console.log('');
+        return 'continue';
+      }
+      if (action === 'create') {
+        const skillName = rest[0]?.toLowerCase();
+        if (!skillName) {
+          console.log(chalk.red('\nUse: /skills create <name> [--scope user|project]\n'));
+          return 'continue';
+        }
+        const scopeIndex = rest.indexOf('--scope');
+        const scopeValue = scopeIndex >= 0 ? rest[scopeIndex + 1] : 'user';
+        if (scopeValue !== 'user' && scopeValue !== 'project') {
+          throw new Error('Skill scope must be user or project');
+        }
+        const descriptionIndex = rest.indexOf('--description');
+        let description = descriptionIndex >= 0 ? rest[descriptionIndex + 1] : undefined;
+        if (!description) {
+          const answer = await commandContext.terminal.readLine({
+            prompt: chalk.yellow('Skill description: '),
+            signal
+          });
+          if (answer.type === 'interrupt') {
+            throw new OperationAbortedError('Skill creation cancelled');
+          }
+          description = answer.type === 'line' ? answer.value : '';
+        }
+        const bodyIndex = rest.indexOf('--body-file');
+        const bodyFile = bodyIndex >= 0 ? rest[bodyIndex + 1] : undefined;
+        const result = await createSkill({
+          name: skillName,
+          description,
+          scope: scopeValue,
+          ...(bodyFile ? { bodyFile } : {}),
+          workspaceRoot: runtime.workspaceRoot
+        });
+        await runtime.reload();
+        console.log(chalk.green(`\nCreated explicit-only Skill ${result.name}.`));
+        console.log(chalk.gray(`${result.rootPath}\n`));
+        return 'continue';
+      }
+      if (action === 'validate') {
+        const target = rest[0];
+        const descriptor = target ? runtime.inspectSkill(target) : undefined;
+        const results = target
+          ? [await validateSkillPath(descriptor?.rootPath ?? target)]
+          : await validateSkillDescriptors(runtime.listSkills());
+        console.log(chalk.cyan('\nSkill validation\n'));
+        for (const result of results) {
+          console.log(
+            `${result.ok ? '  OK' : '  ERROR'} ${result.name ?? '(unknown)'} ${result.path}`
+          );
+          result.warnings.forEach((warning) => console.log(chalk.yellow(`    WARN: ${warning}`)));
+          result.errors.forEach((error) => console.log(chalk.red(`    ERROR: ${error}`)));
+        }
+        console.log('');
+        return 'continue';
+      }
+      if (action === 'test') {
+        const target = rest[0]?.toLowerCase();
+        const descriptor = target ? runtime.inspectSkill(target) : undefined;
+        if (!descriptor) {
+          throw new Error(`Unknown Skill: ${target || '(missing)'}`);
+        }
+        if (!commandContext.createSkillEvalProvider) {
+          throw new Error('Live Skill activation evaluation is unavailable');
+        }
+        const report = await runSkillActivationEval({
+          descriptor,
+          workspaceRoot: runtime.workspaceRoot,
+          providerFactory: commandContext.createSkillEvalProvider,
+          signal
+        });
+        console.log(chalk.cyan(`\nSkill activation eval: ${descriptor.name}\n`));
+        for (const result of report.cases) {
+          console.log(
+            `  ${result.passed ? 'PASS' : 'FAIL'} ${result.id}: ` +
+              `${result.expected} -> ${result.actual} (${result.durationMs}ms)` +
+              `${result.infrastructureError ? ` [${result.infrastructureError}]` : ''}`
+          );
+        }
+        console.log(
+          `\n  ${report.passed} passed, ${report.failed} failed, ` +
+            `${report.infrastructureFailures} infrastructure failures\n`
+        );
         return 'continue';
       }
       if (action === 'enable' || action === 'disable') {
@@ -1024,8 +1160,9 @@ function createCommandRegistry(): CommandRegistry<InteractiveCommandContext> {
       }
       for (const skill of skills) {
         console.log(
-          `  ${skill.name.padEnd(24)} ${skill.enabled ? 'enabled ' : 'disabled'} ` +
-            `[${skill.source}]${skill.shadowed ? ' [shadowed]' : ''}`
+          `  ${skill.interface.displayName.padEnd(24)} ${skill.enabled ? 'enabled ' : 'disabled'} ` +
+            `[${skill.source}] ${skill.policy.allowImplicitInvocation ? 'implicit' : 'explicit-only'}` +
+            `${skill.shadowed ? ' [shadowed]' : ''}`
         );
       }
       console.log('');
@@ -1567,7 +1704,8 @@ export async function runInteractiveSession(
     session: options.session,
     getProviderOptions: options.getProviderOptions,
     activateProvider: options.activateProvider,
-    modelsForProvider: options.modelsForProvider
+    modelsForProvider: options.modelsForProvider,
+    createSkillEvalProvider: options.createSkillEvalProvider
   };
   const commandRegistry = createCommandRegistry();
   const slashSuggestions = createSlashSuggestionProvider(commandRegistry, () => commandContext);

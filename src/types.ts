@@ -41,6 +41,7 @@ export interface ToolContext {
   turnId: string;
   workspaceRoot: string;
   workingDirectory: string;
+  resolveSkillWorkingDirectory?: (name: string, signal: AbortSignal) => Promise<string>;
   mode: AgentMode;
   permissionMode: PermissionMode;
   signal: AbortSignal;

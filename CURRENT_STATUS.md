@@ -1,8 +1,8 @@
 # Syzzz Code 当前项目状态
 
-**更新时间：** 2026-08-03
+**更新时间：** 2026-08-04
 
-**当前分支：** `codex/phase7-task-composition`
+**当前分支：** `codex/phase7.1-skills`
 
 **Phase 4 冻结基线：** `3d2b8e6`
 
@@ -14,7 +14,7 @@
 
 **Phase 7 起始基线：** `161391a`
 
-**当前阶段：** Phase 7 **Implemented**；Phase 6 保持 **Release Candidate Accepted**；Phase 1 至 Phase 5.1 保持 **Frozen**
+**当前阶段：** Phase 7.1 本地门禁与人工验收通过，等待跨平台 CI 后冻结；Phase 6 保持 **Release Candidate Accepted**；Phase 1 至 Phase 5.1 保持 **Frozen**
 
 ## 1. 当前结论
 
@@ -26,14 +26,14 @@ Phase 5.0 Core 已完成“可信扩展运行时、MCP Broker 与受限委派”
 
 Phase 5.1 在此基础上补齐扩展配置复审、MCP 本地收紧策略与断线生命周期、统一扩展状态、压缩/委派 Hook，以及 Subagent 软硬预算和停止语义。
 
-当前完整自动化测试为 **295/295**。Phase 1 至 Phase 6 的路径、权限、事件、Provider、终端、上下文、可靠编辑、会话恢复、扩展和发布契约继续通过。
+当前完整自动化测试为 **316/316**。Phase 1 至 Phase 7 的路径、权限、事件、Provider、终端、上下文、可靠编辑、会话恢复、扩展、任务组合和发布契约继续通过。
 
 11 项真实终端 dogfood 已全部通过，覆盖项目 trust 复审、MCP 策略与断线重连、Hook、Subagent 预算、取消清理、隐私恢复和撤销信任。公开 Streamable HTTP MCP 的真实握手、工具发现与只读天气调用也已通过，Phase 5 的扩展信任和传输闭环达到冻结条件。
 
 Phase 6 不增加 Agent 自治能力，当前改造集中在：
 
 - Node 22/24、版本单一来源、ESLint、Prettier 和覆盖率门槛；
-- 四种离线 Provider 协议 Profile；
+- 五种离线 Provider 协议 Profile；
 - 七项固定 Coding Agent Eval 与只保存元数据的报告；
 - Windows/Ubuntu CI、生产依赖审计、许可证与完整 Git 历史 Secret 扫描；
 - npm tarball allowlist、全新 prefix 安装、配置迁移、文本与 NDJSON smoke；
@@ -54,6 +54,18 @@ Phase 7 从 `161391a` 新建 `codex/phase7-task-composition`，聚焦无权限�
 - 五项新增固定 Eval：显式证据、嵌套指令、Skill 工作流、恶意 Skill 不越权和安装后调用。
 
 这些能力不能改变工作模式、权限、审批、Hook、MCP policy 或路径边界。项目 Skill 不要求 `/trust`，因为它只提供无权限指令和只读资源；Skill 中的 `allowed-tools` 与脚本不会自动执行或转换为授权。
+
+Phase 7.1 从 `9bb4e62` 新建 `codex/phase7.1-skills`，只做 Skills 产品化加固：
+
+- 新用户安装目录改为 `~/.agents/skills`，旧来源和旧安装锁继续兼容；
+- `agents/openai.yaml` 的 interface、隐式调用策略和 MCP dependency 诊断；
+- 每回合自动刷新、按模型窗口 2% 限制的 catalog、8 个激活与 128 KiB 正文预算；
+- 用户 Skill symlink、仓库内项目 symlink、canonical target 复核与有界资源清单；
+- 已激活 Skill 的显式 Shell cwd，继续服从 mode、审批、Hook、取消和审计；
+- `skills create|validate|test`，其中 Live activation eval 使用隔离 ask+safe Engine 且只暴露 `ActivateSkill`；
+- `$` 候选单行压缩、来源标记和预留行复用，完整 TUI 留给 Phase 8。
+
+本地自动门禁为 316/316、coverage 82.07%/75.45%/86.41%、offline Eval 12/12；生产依赖审计、包内容检查与候选包安装 smoke 全部通过。用户 dogfood 已覆盖全局与 Legacy Skill、自动刷新、显式/隐式激活、资源读取、Skill cwd 脚本审批、activation eval、Git 安装生命周期、供应链拒绝、`$` 菜单和 Windows junction 边界。当前仅等待跨平台 CI，不提前标记 Frozen。
 
 ## 2. 扩展信任
 
@@ -197,10 +209,10 @@ subagents.enabled = true
 
 当前结果：
 
-- `npm test`：**295/295**
-- `npm run test:coverage`：综合门槛测得 Lines **82.32%**、Branches **75.37%**、Functions **86.00%**，均高于 82%/74%/84% 门槛
+- `npm test`：**316/316**
+- `npm run test:coverage`：综合门槛测得 Lines **82.09%**、Branches **75.48%**、Functions **86.41%**，均高于 82%/74%/84% 门槛
 - `npm run eval:offline`：十二项固定任务 **12/12**
-- `npm run test:providers`：四种离线 Provider Profile 与共享 Runner 契约 **37/37**
+- `npm run test:providers`：五种离线 Provider Profile 与共享 Runner 契约 **43/43**
 - `npm run test:stability`：Windows Shell、会话和 MCP/Hook 生命周期连续三轮通过
 - 官方 MCP v2 stdio：legacy 与 modern 均完成真实握手
 - Streamable HTTP：真实 loopback 握手、显式认证头和不跟随重定向
@@ -223,12 +235,13 @@ Phase 6/7 本地发布前卫生已通过：
 
 - `npm audit --omit=dev --audit-level=high`：`0 vulnerabilities`
 - `npm run license:check`：90 个生产依赖条目均为已审查的宽松许可证
-- `npm run secret:scan`：162 个工作树文件、完整可达补丁历史与提交信息通过高置信扫描
-- `npm run pack:check`：228 个条目，压缩与解压大小均在门槛内，allowlist 外文件 0
+- `npm run secret:scan`：168 个工作树文件、完整可达补丁历史与提交信息通过高置信扫描
+- `npm run pack:check`：244 个条目，压缩与解压大小均在门槛内，allowlist 外文件 0
 - `npm run smoke:package`：真实 tarball 在全新 prefix 中完成全局 CLI、配置迁移、文本、NDJSON 与 doctor 验证
 - `syzzz doctor`：Node 22 要求、配置、Provider、模型、扩展配置、ripgrep 与 TypeScript Worker 均通过；仅保留 Windows ACL 无法自动验证的提醒
 - `git diff --check`：退出码 0；仅有 Windows 工作树 LF→CRLF 提示，无空白错误
 - 当前 DeepSeek/OpenCode Live Eval：**7/7**，功能成功率 100%，安全项通过，0 个基础设施错误；完整套件一次运行通过
+- OpenCode `gpt-5.6-luna` Responses 真实 smoke：文本流以 `response.completed` 正常结束；function call、私有 output items 续接与最终回答往返通过
 - GitHub Actions：提交 `014e182` 的完整流水线 **10/10 jobs** 通过，包括 Windows/Ubuntu × Node 22/24、quality、Provider contracts、offline Eval、双平台 package smoke 与 security
 - Phase 6 候选包人工验收：真实 tarball 隔离安装、Node 22/24、doctor、会话恢复、取消、NDJSON、MCP、Hook 与只读 Subagent 均通过；上游 Provider 的瞬时 503 按有限重试和结构化失败规则处理，后续请求恢复成功
 
@@ -242,12 +255,12 @@ Phase 6/7 本地发布前卫生已通过：
 - 当前不支持 OAuth、旧 SSE、MCP Resources/Prompts/Sampling、HTTP/后台 Hooks。
 - 当前不支持写入型、并行、后台或嵌套 Subagent。
 - `@` 不支持工作区外路径、URL、图片、PDF 或多模态附件。
-- Skill 不支持私有 Git 凭证、市场、自动更新、脚本自动执行或 `allowed-tools` 授权。
-- 当前没有完整 TUI、LSP、持久化索引、Tag 或 npm 发布。
+- Skill 不支持私有 Git 凭证、市场、自动更新、安装后自动执行或 `allowed-tools` 授权。
+- 当前没有完整 TUI、多行 Composer、结构化问题弹窗、鼠标交互、LSP、持久化索引、Tag 或 npm 发布。完整 TUI 进入 Phase 8。
 
 ## 9. Git 状态
 
-- 当前分支：`codex/phase7-task-composition`
+- 当前分支：`codex/phase7.1-skills`
 - Phase 4 冻结提交：`3d2b8e6`
 - Phase 5.0 Core 非冻结检查点：`000bcaa`
 - Phase 5.1 实现验证基线：`85b2558`
@@ -256,7 +269,8 @@ Phase 6/7 本地发布前卫生已通过：
 - Phase 6 跨平台修复提交：`239bc7b`
 - Phase 6 Windows 稳定性修复提交：`014e182`
 - Phase 7 起始基线：`161391a`
-- 远程目标分支：`origin/codex/phase7-task-composition`
+- Phase 7.1 起始基线：`9bb4e62`
+- 远程目标分支：人工验收后推送 `origin/codex/phase7.1-skills`
 - 版本号保持 `1.0.0`
 - 未发布 npm 包，未创建 Tag
 - 本地 `main`、远程 `main` 与 Phase 6 分支指向同一发布准备提交
@@ -274,4 +288,4 @@ Phase 6 使用四级状态：
 3. 用户完成人工 dogfood：**Release Candidate Accepted**。
 4. npm、annotated `v1.0.0` Tag、GitHub Release 和 registry 安装验证完成：**Frozen**。
 
-Phase 6 继续停留在 **Release Candidate Accepted**，不越过公开发布门槛。Phase 7 当前仅为 **Implemented**：本地测试、覆盖率、审计、离线 Eval、包检查和 tarball smoke 已通过，仍需 Windows/Ubuntu Node 22/24 CI 和人工 `@`、AGENTS、显式/隐式 Skill、Git 安装与恶意 Skill dogfood。只有人工验收后才能标记 Phase 7 Frozen。Anthropic 真流式、Responses API、MCP OAuth、完整 TUI、LSP、持久索引、并行或写入型 Subagent 继续留在后续独立阶段评估。
+Phase 6 继续停留在 **Release Candidate Accepted**，不越过公开发布门槛。Phase 7.1 的本地测试、覆盖率、审计、离线 Eval、包检查、tarball smoke 与用户 dogfood 已通过；推送分支并等待 Windows/Ubuntu Node 22/24 CI，全绿后标记 Frozen。OpenAI Responses 协议与显式 Provider 路由已经实现，并通过离线契约及 OpenCode Luna 真实文本与 function call smoke。Anthropic 真流式、MCP OAuth、完整 TUI、LSP、持久索引、并行或写入型 Subagent 继续留在后续独立阶段评估。
