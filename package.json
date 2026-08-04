@@ -40,7 +40,7 @@
   },
   "scripts": {
     "build": "node scripts/build.mjs",
-    "lint": "eslint src tests scripts eslint.config.js prettier.config.mjs",
+    "lint": "eslint src tests scripts spikes eslint.config.js prettier.config.mjs",
     "format": "prettier --write --ignore-unknown .",
     "format:check": "prettier --check --ignore-unknown .",
     "test": "npm run build && node --test tests/*.test.mjs",
@@ -55,6 +55,9 @@
     "pack:check": "npm run build && node scripts/package-check.mjs",
     "smoke:package": "npm run build && node scripts/package-smoke.mjs",
     "smoke:context": "npm run build && node scripts/context-smoke.mjs",
+    "spike:tui": "node spikes/phase8-tui/run.mjs",
+    "spike:tui:probe": "node spikes/phase8-tui/probe.mjs",
+    "spike:tui:test": "node --test spikes/phase8-tui/*.test.mjs",
     "check": "npm run format:check && npm run lint && npm test && npm run test:coverage && npm run eval:offline && npm run license:check && npm run secret:scan && npm run pack:check",
     "release:verify": "npm run check && npm run smoke:package && node scripts/release-verify.mjs",
     "start": "node dist/index.js",
@@ -82,9 +85,13 @@
     "@modelcontextprotocol/server": "2.0.0",
     "@types/node": "^22.20.1",
     "@types/picomatch": "^4.0.3",
+    "@types/react": "^19.2.14",
     "eslint": "^10.8.0",
     "globals": "^17.8.0",
+    "ink": "^7.1.1",
+    "ink-testing-library": "^4.0.0",
     "prettier": "^3.9.6",
+    "react": "^19.2.8",
     "tsx": "^4.7.0",
     "typescript-eslint": "^8.65.0"
   }
