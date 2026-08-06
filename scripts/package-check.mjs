@@ -9,7 +9,7 @@ const projectRoot = dirname(dirname(fileURLToPath(import.meta.url)));
 const packagePath = join(projectRoot, 'package.json');
 
 export const PACKAGE_LIMITS = Object.freeze({
-  files: 260,
+  files: 320,
   packedBytes: 2 * 1024 * 1024,
   unpackedBytes: 8 * 1024 * 1024
 });

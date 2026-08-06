@@ -275,6 +275,10 @@ export class ContextManager {
     return this.options.maxSummaryAttempts;
   }
 
+  setDefaultWindowTokens(tokens: number): void {
+    this.options.defaultWindowTokens = positiveInteger(tokens, 65_536);
+  }
+
   get compactions(): number {
     return this.compactionCount;
   }

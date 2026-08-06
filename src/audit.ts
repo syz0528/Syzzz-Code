@@ -283,6 +283,21 @@ export function toAuditRecord(event: AgentEvent, workspaceId: string): AuditEnve
         choice: event.choice,
         resolution: event.resolution
       };
+    case 'user_input_requested':
+      return {
+        ...base,
+        requestId: event.requestId,
+        questionCount: event.questionCount,
+        questionKinds: event.questionKinds
+      };
+    case 'user_input_resolved':
+      return {
+        ...base,
+        requestId: event.requestId,
+        questionCount: event.questionCount,
+        durationMs: event.durationMs,
+        outcome: event.outcome
+      };
     case 'tool_completed':
       return {
         ...base,

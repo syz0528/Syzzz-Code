@@ -19,7 +19,9 @@ import {
   resolveProviderCredential,
   saveConfig,
   type Config,
-  type ProviderConfigItem
+  type ProviderConfigItem,
+  type UiLanguage,
+  type UiMode
 } from './config.js';
 import { TaskCompositionRuntime } from './composition/runtime.js';
 import { SkillInstaller, type SkillInstallPreview } from './composition/skill-installer.js';
@@ -35,6 +37,7 @@ import { ExtensionRuntime } from './extensions/runtime.js';
 import { manageHooks, manageMcp } from './extensions/management.js';
 import { runInteractiveSession, type InteractiveProviderOption } from './interactive.js';
 import { parseAgentMode, type AgentMode } from './modes.js';
+import { PermissionGrantStore } from './permissions/grant-store.js';
 import { createProvider } from './providers/factory.js';
 import { readHiddenInput } from './secret-input.js';
 import {
@@ -45,6 +48,7 @@ import {
 import { PACKAGE_VERSION } from './version.js';
 import { SessionStore } from './session-store.js';
 import { isAbortError, OperationAbortedError } from './tools/abort.js';
+import { detectUiCapabilities, resolveUiMode } from './ui-mode.js';
 
 const program = new Command();
 
@@ -55,6 +59,7 @@ interface InteractiveStartupOptions {
   continue?: boolean;
   resume?: string;
   streamOutput?: boolean;
+  ui?: UiMode;
 }
 
 function collectOption(value: string, previous: string[]): string[] {
@@ -99,6 +104,13 @@ function parseMode(value: string): AgentMode {
     throw new Error('mode must be "ask", "plan", or "code"');
   }
   return mode;
+}
+
+function parseUiMode(value: string): UiMode {
+  if (value === 'auto' || value === 'tui' || value === 'inline') {
+    return value;
+  }
+  throw new Error('UI mode must be "auto", "tui", or "inline"');
 }
 
 function providerWithModel(provider: ProviderConfigItem, model: string): ProviderConfigItem {
@@ -227,6 +239,9 @@ function createInteractiveOptions(controller: SessionController, streamOutput?: 
   const provider = config.providers[controller.providerId];
   return {
     streamOutput: streamOutput ?? config.ui.streamOutput,
+    persistentHistory: config.ui.persistentHistory,
+    uiLanguage: config.ui.language,
+    contextWindowTokens: config.context.defaultWindowTokens,
     availableModels: provider?.models ?? [controller.engine.getProviderInfo().model],
     session: controller,
     persistStreamOutput(enabled: boolean) {
@@ -237,6 +252,21 @@ function createInteractiveOptions(controller: SessionController, streamOutput?: 
     persistSubagentsEnabled(enabled: boolean) {
       const latest = loadConfig();
       latest.subagents.enabled = enabled;
+      saveConfig(latest);
+    },
+    persistHistoryEnabled(enabled: boolean) {
+      const latest = loadConfig();
+      latest.ui.persistentHistory = enabled;
+      saveConfig(latest);
+    },
+    persistContextWindow(tokens: number) {
+      const latest = loadConfig();
+      latest.context.defaultWindowTokens = tokens;
+      saveConfig(latest);
+    },
+    persistUiLanguage(language: UiLanguage) {
+      const latest = loadConfig();
+      latest.ui.language = language;
       saveConfig(latest);
     },
     persistModel(model: string, providerId: string) {
@@ -304,23 +334,67 @@ async function startInteractive(options: InteractiveStartupOptions = {}): Promis
     engine: initial.engine,
     providerId: initial.providerId,
     autoSave: config.sessions.autoSave,
-    engineFactory: createConfiguredEngine
+    engineFactory: createConfiguredEngine,
+    permissionGrants: new PermissionGrantStore()
   });
 
   try {
+    const requestedUi = options.ui ?? config.ui.mode;
+    const selectedUi = resolveUiMode(requestedUi, detectUiCapabilities());
     let resumed;
     if (options.resume) {
       resumed = await controller.resume(options.resume);
     } else if (options.continue) {
       resumed = await controller.continueLatest();
+    } else if (config.sessions.startup === 'continue') {
+      const latest = (await controller.list()).find((session) => session.available);
+      if (latest) resumed = await controller.resume(latest.sessionId);
     }
     if (resumed?.warning) {
       console.warn(chalk.yellow(resumed.warning));
     }
-    await runInteractiveSession(
-      controller.engine,
-      createInteractiveOptions(controller, options.streamOutput)
-    );
+    const interactiveOptions = createInteractiveOptions(controller, options.streamOutput);
+    if (selectedUi === 'tui') {
+      let runTuiSession: typeof import('./tui/runner.js').runTuiSession;
+      try {
+        ({ runTuiSession } = await import('./tui/runner.js'));
+      } catch (error) {
+        if (requestedUi !== 'auto') {
+          throw error;
+        }
+        console.warn(
+          chalk.yellow(
+            `TUI initialization is unavailable; falling back to inline mode: ${error instanceof Error ? error.message : String(error)}`
+          )
+        );
+        await runInteractiveSession(controller.engine, interactiveOptions);
+        return;
+      }
+      let summary;
+      try {
+        summary = await runTuiSession(controller.engine, {
+          ...interactiveOptions,
+          persistentHistory: config.ui.persistentHistory,
+          promptSessionStartup:
+            !options.resume && !options.continue && config.sessions.startup === 'ask' && !resumed
+        });
+      } catch (error) {
+        const sessionId = controller.getStatus().sessionId;
+        console.error(
+          chalk.red(
+            `TUI exited unexpectedly. Terminal state was restored; resume with: syzzz --resume ${sessionId}`
+          )
+        );
+        throw error;
+      }
+      console.log(
+        chalk.gray(
+          `Session ${summary.sessionId.slice(0, 8)} | persistence ${summary.persistence} | exit ${summary.reason}`
+        )
+      );
+      return;
+    }
+    await runInteractiveSession(controller.engine, interactiveOptions);
   } catch (error) {
     await controller.close();
     throw error;
@@ -430,9 +504,14 @@ program
   .version(PACKAGE_VERSION)
   .option('-c, --continue', 'Resume the latest session in this workspace')
   .option('-r, --resume <id>', 'Resume a session by ID or unique prefix')
+  .option('--ui <mode>', 'Interactive UI: auto, tui, or inline')
   .action(async (options) => {
     try {
-      await startInteractive(options);
+      await startInteractive({
+        continue: options.continue,
+        resume: options.resume,
+        ...(options.ui ? { ui: parseUiMode(options.ui) } : {})
+      });
     } catch (error) {
       const reason = error instanceof Error ? error.message : String(error);
       console.error(chalk.red('\nFailed to initialize:'), `${reason}\n`);
@@ -1085,8 +1164,13 @@ program
   .option('--mode <mode>', 'Work mode: ask, plan, or code', 'code')
   .option('-c, --continue', 'Resume the latest interactive session')
   .option('-r, --resume <id>', 'Resume an interactive session by ID or prefix')
-  .action(async (options) => {
+  .option('--ui <mode>', 'Interactive UI: auto, tui, or inline')
+  .action(async (options, command) => {
     try {
+      const parentOptions = command.parent?.opts() ?? {};
+      const requestedUi = options.ui ?? parentOptions.ui;
+      const continueSession = options.continue ?? parentOptions.continue;
+      const resumeSession = options.resume ?? parentOptions.resume;
       const outputFormat = parseOutputFormat(options.outputFormat);
       if (outputFormat === 'stream-json' && options.stream !== undefined) {
         throw new Error('--stream cannot be used with --output-format stream-json');
@@ -1097,7 +1181,10 @@ program
           ? config.ui.streamOutput
           : parseStreamDisplayMode(options.stream) === 'on';
       if (options.message) {
-        if (options.continue || options.resume) {
+        if (requestedUi !== undefined) {
+          throw new Error('--ui is available only for interactive sessions without --message');
+        }
+        if (continueSession || resumeSession) {
           throw new Error('--continue and --resume are available only for interactive sessions');
         }
         const created = await createConfiguredEngine({
@@ -1116,9 +1203,10 @@ program
         throw new Error('--output-format stream-json requires --message');
       }
       await startInteractive({
-        continue: options.continue,
-        resume: options.resume,
-        streamOutput
+        continue: continueSession,
+        resume: resumeSession,
+        streamOutput,
+        ...(requestedUi ? { ui: parseUiMode(requestedUi) } : {})
       });
     } catch (error) {
       const reason = error instanceof Error ? error.message : String(error);

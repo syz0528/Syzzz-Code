@@ -211,6 +211,7 @@ export class HumanEventRenderer {
         this.startSpinner('Retrying...');
         break;
       case 'approval_requested':
+      case 'user_input_requested':
         this.stopForStatus();
         break;
       case 'tool_started':

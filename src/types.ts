@@ -35,6 +35,36 @@ export type ToolApprovalHandler = (
   signal: AbortSignal
 ) => Promise<ToolApprovalChoice>;
 
+export type UserQuestionKind = 'single' | 'multi' | 'text';
+
+export interface UserQuestionOption {
+  value: string;
+  label: string;
+  description?: string;
+}
+
+export interface UserQuestion {
+  id: string;
+  header: string;
+  prompt: string;
+  kind: UserQuestionKind;
+  options?: UserQuestionOption[];
+  /** @deprecated The interactive client always permits a bounded custom answer. */
+  allowCustom?: boolean;
+}
+
+export interface UserInputRequest {
+  requestId: string;
+  questions: UserQuestion[];
+}
+
+export type UserInputAnswers = Record<string, string | string[]>;
+
+export type UserInputHandler = (
+  request: UserInputRequest,
+  signal: AbortSignal
+) => Promise<UserInputAnswers>;
+
 export interface ToolContext {
   toolCallId: string;
   sessionId: string;
@@ -45,6 +75,7 @@ export interface ToolContext {
   mode: AgentMode;
   permissionMode: PermissionMode;
   signal: AbortSignal;
+  requestUserInput?: UserInputHandler;
   approvalData?: unknown;
   emitEvent?: (event: AgentEventData) => void;
 }

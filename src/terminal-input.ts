@@ -179,6 +179,10 @@ export class TerminalInputController {
     return this.enhanced;
   }
 
+  replaceHistory(entries: readonly string[]): void {
+    this.history.splice(0, this.history.length, ...entries.slice(-MAX_HISTORY_ENTRIES));
+  }
+
   async readLine(options: TerminalReadOptions): Promise<TerminalReadResult> {
     if (options.signal?.aborted) {
       throw new OperationAbortedError();

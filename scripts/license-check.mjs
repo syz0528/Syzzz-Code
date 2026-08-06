@@ -4,7 +4,14 @@ import { fileURLToPath } from 'node:url';
 
 const projectRoot = dirname(dirname(fileURLToPath(import.meta.url)));
 const lock = JSON.parse(await readFile(join(projectRoot, 'package-lock.json'), 'utf8'));
-const allowedLicenses = new Set(['Apache-2.0', 'BSD-2-Clause', 'BSD-3-Clause', 'ISC', 'MIT']);
+const allowedLicenses = new Set([
+  '(MIT OR CC0-1.0)',
+  'Apache-2.0',
+  'BSD-2-Clause',
+  'BSD-3-Clause',
+  'ISC',
+  'MIT'
+]);
 const packages = [];
 const failures = [];
 

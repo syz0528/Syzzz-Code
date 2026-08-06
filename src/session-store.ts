@@ -62,10 +62,18 @@ const fileChangeReceiptSchema = z
   })
   .strict();
 
+const conversationDisplayMessageSchema = z
+  .object({
+    role: z.enum(['user', 'assistant']),
+    content: z.string()
+  })
+  .strict();
+
 const engineStateSchema = z
   .object({
     schemaVersion: z.literal(1),
     messages: z.array(conversationMessageSchema),
+    displayMessages: z.array(conversationDisplayMessageSchema).optional(),
     pendingFileChangeReceipts: z.array(fileChangeReceiptSchema),
     compactionCount: z.number().int().nonnegative(),
     totalUsage: usageSchema,

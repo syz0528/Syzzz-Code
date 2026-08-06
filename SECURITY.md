@@ -108,6 +108,12 @@ Subagent 使用当前 Provider 和 model 的隔离 fork，因此委派任务和�
 
 会话快照未加密，可能包含用户提示、代码、工具结果、MCP 返回和 Subagent 报告。审计仅保存 allowlist 元数据，不保存 prompt、URL、认证头、工具输入输出、Hook payload 或 Subagent transcript。
 
+工作区输入历史保存在 `~/.syzzz-code/history/<workspaceHash>.json`，只记录用户从 Composer 主动提交的消息和 Slash 命令。它不记录审批答案、确认 token、`AskUser` 回答、隐藏输入或未提交草稿，但仍可能包含敏感提示，且当前不加密；可使用 `/history off` 停止后续记录，或 `/history clear` 清理当前工作区。
+
+持久化编辑授权保存在 `~/.syzzz-code/permission-grants.json`。它只允许记录 `acceptEdits`，并按已保存会话 ID 或规范化工作区哈希生效；`fullAccess`、Shell 单次批准、确认输入和审批正文永不持久化。`/permissions safe` 会撤销当前会话和工作区的编辑授权。该文件不等于 OS sandbox，拥有本地账户文件权限的程序仍可修改它。
+
+`AskUser` 问题和答案正文不进入审计事件，事件只记录类型、数量、耗时和 outcome。预设选项之外的自定义答案遵循同一边界。答案为了让 Agent 继续工作，会作为普通 ToolResult 发送给当前 Provider，并可进入本地会话快照。fullscreen TUI 的 Markdown renderer 会清除 ANSI 控制序列并把原始 HTML 作为文本处理；它仍只是显示与输入层，不会增强隔离、改变审批语义或隐藏工具副作用。
+
 敏感工作区建议：
 
 - 使用 `sessions.autoSave=false`；
@@ -116,13 +122,15 @@ Subagent 使用当前 Provider 和 model 的隔离 fork，因此委派任务和�
 - 不对来源不明的项目执行 `/trust`；
 - 在 `safe` 或只读模式下先完成检查。
 
+`/terminal-setup install` 是显式的本地配置操作。执行前会显示目标路径并要求精确确认，已有文件先生成备份；它只增加 `Shift+Enter -> ESC+CR` 键位，不覆盖冲突绑定，也不读取或传递 Provider 凭证。
+
 ## 已知限制
 
 - Shell、MCP stdio 和 Hooks 都不是 OS sandbox。
 - Trust V2 不会对被配置引用的脚本或 executable 做内容锁定。
 - Windows ACL 当前只能提示未自动验证，不能证明本地文件仅当前用户可读。
 - 文件最终 hash 复核到原子 rename 之间仍有极小 TOCTOU 窗口。
-- 当前不支持 OAuth、Keychain、磁盘加密、云端审计、旧 SSE、后台 Hook、写入型 Subagent、私有 Git Skill 凭证、Skill 市场或自动更新。
+- 当前不支持 OAuth、Keychain、磁盘加密、云端审计、旧 SSE、后台 Hook、写入型 Subagent、私有 Git Skill 凭证、Skill 市场、自动更新或通用 TUI 鼠标控件；鼠标仅用于滚轮、滚动条、正文选区和 sticky 问题导航。正文复制通过有界 OSC 52 发送到当前终端剪贴板，不写入审计或会话。
 
 ## 供应链与发布
 

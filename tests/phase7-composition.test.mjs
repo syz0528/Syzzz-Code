@@ -280,6 +280,9 @@ test('Skill discovery is deterministic and activation remains unprivileged', asy
     );
     assert.match(composed.message, /PROJECT WORKFLOW/);
     assert.match(composed.message, /<skill_arguments>focus on safety<\/skill_arguments>/);
+    assert.match(composed.message, /already active for the current turn/);
+    assert.match(composed.message, /use AskUser instead of printing a pseudo-menu/);
+    assert.match(composed.message, /prefer a single-select AskUser question with 2-6 options/);
     assert.ok(composed.events.some((event) => event.type === 'skill_activated'));
 
     const tools = new Map(runtime.getTools().map((tool) => [tool.name, tool]));
@@ -293,6 +296,15 @@ test('Skill discovery is deterministic and activation remains unprivileged', asy
       permissionMode: 'safe',
       signal: new AbortController().signal
     };
+    const repeatedEvents = [];
+    const repeated = await tools
+      .get('ActivateSkill')
+      .execute(
+        { name: 'review-code' },
+        { ...context, emitEvent: (event) => repeatedEvents.push(event) }
+      );
+    assert.match(repeated.content, /already active/);
+    assert.deepEqual(repeatedEvents, []);
     const resource = await tools
       .get('ReadSkillResource')
       .execute({ skill: 'review-code', path: 'guide.txt' }, context);

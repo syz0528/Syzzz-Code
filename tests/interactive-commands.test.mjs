@@ -106,6 +106,27 @@ test('slash suggestions expose commands and dynamic current choices', async () =
   assert.match(updated[1].label, /^\* off$/);
 });
 
+test('slash suggestions localize command categories and descriptions without changing commands', async () => {
+  const registry = new CommandRegistry();
+  registry.register(
+    command('permissions', {
+      category: 'runtime',
+      description: 'Change permissions'
+    })
+  );
+  const provider = createSlashSuggestionProvider(
+    registry,
+    () => ({}),
+    () => 'zh-CN'
+  );
+  const request = provider.match('/perm', 5);
+  assert.ok(request);
+  const [suggestion] = await provider.suggest(request, new AbortController().signal);
+
+  assert.equal(suggestion.insertText, '/permissions');
+  assert.match(suggestion.description, /^运行设置 · 查看或修改权限模式及其持久化范围。$/u);
+});
+
 test('disabled commands are hidden and typo candidates stay bounded', () => {
   const registry = new CommandRegistry();
   registry.register(command('permissions', { priority: 50 }));

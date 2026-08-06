@@ -28,6 +28,50 @@ test('CLI help exposes the interactive switch command', () => {
   assert.equal(chatHelp.status, 0, chatHelp.stderr);
   assert.match(chatHelp.stdout, /--stream <mode>/);
   assert.match(chatHelp.stdout, /--mode <mode>/);
+  assert.match(chatHelp.stdout, /--ui <mode>/);
+});
+
+test('TUI flags are restricted to capable interactive sessions', () => {
+  const testHome = mkdtempSync(join(tmpdir(), 'syzzz-cli-ui-'));
+  const configDirectory = join(testHome, '.syzzz-code');
+  try {
+    mkdirSync(configDirectory);
+    writeFileSync(
+      join(configDirectory, 'config.json'),
+      JSON.stringify({
+        schemaVersion: 1,
+        currentProvider: 'local',
+        providers: {
+          local: {
+            name: 'Local',
+            type: 'openai-compatible',
+            model: 'model',
+            models: ['model'],
+            env: { BASE_URL: 'https://example.invalid/v1', API_KEY: 'test-key' }
+          }
+        }
+      })
+    );
+    const environment = { ...process.env, HOME: testHome, USERPROFILE: testHome };
+    const oneShot = spawnSync(
+      process.execPath,
+      [cliPath, 'chat', '--message', 'hello', '--ui', 'tui'],
+      { cwd: projectDirectory, encoding: 'utf8', env: environment }
+    );
+    assert.equal(oneShot.status, 1);
+    assert.match(oneShot.stderr, /--ui is available only for interactive sessions/);
+
+    const nonTty = spawnSync(process.execPath, [cliPath, '--ui', 'tui'], {
+      cwd: projectDirectory,
+      encoding: 'utf8',
+      input: '/exit\n',
+      env: environment
+    });
+    assert.equal(nonTty.status, 1);
+    assert.match(nonTty.stderr, /TUI mode requires interactive stdin\/stdout/);
+  } finally {
+    rmSync(testHome, { recursive: true, force: true });
+  }
 });
 
 test('interactive work-mode commands stay local and can submit a message', () => {

@@ -1,8 +1,8 @@
 # Syzzz Code
 
-Syzzz Code 是一个使用 TypeScript 构建的实验性命令行 AI 编程 Agent。它提供统一的 Provider 接口、事件化 Agent Runtime、受约束的代码库工具、可靠编辑、上下文压缩、可恢复的本地会话，以及受信任边界约束的 MCP、Hooks、只读 Subagent、显式上下文和开放 Skills。
+Syzzz Code 是一个使用 TypeScript 构建的实验性命令行 AI 编程 Agent。它提供统一的 Provider 接口、事件化 Agent Runtime、受约束的代码库工具、可靠编辑、上下文压缩、可恢复的本地会话，以及受信任边界约束的 MCP、Hooks、只读 Subagent、显式上下文、开放 Skills 和全屏终端界面。
 
-Phase 1 至 Phase 5.1、Phase 7 与 Phase 7.1 已完成并保持 **Frozen**。Phase 6 继续保持 **Release Candidate Accepted**，其 npm、Tag、GitHub Release 与 registry 安装复验仍需单独完成。
+Phase 1 至 Phase 5.1、Phase 7 与 Phase 7.1 已完成并保持 **Frozen**。Phase 8 正处于 fullscreen TUI 的 dogfood 修正与复验阶段；Phase 6 继续保持 **Release Candidate Accepted**，其 npm、Tag、GitHub Release 与 registry 安装复验仍需单独完成。
 
 > [!WARNING]
 > Syzzz Code 仍处于实验阶段。文件工具受工作区边界、敏感路径和并发 hash 校验保护，但 Shell 不是 OS sandbox。获批或在 `fullAccess` 下自动执行的命令仍可产生工作区外副作用。
@@ -33,10 +33,10 @@ Phase 1 至 Phase 5.1、Phase 7 与 Phase 7.1 已完成并保持 **Frozen**。Ph
 权限模式决定 code 模式中的审批方式：
 
 - `safe`：Write/Edit/Patch 与 Shell 均需要审批。
-- `acceptEdits`：本会话自动允许编辑，Shell 仍逐次审批。
-- `fullAccess`：本会话跳过普通审批，但不能绕过 ask/plan 的只读边界。
+- `acceptEdits`：可选择跟随当前已保存对话或规范化工作区持久化文件编辑授权，Shell 仍逐次审批。
+- `fullAccess`：仅当前进程跳过普通审批，永不持久化，也不能绕过 ask/plan 的只读边界。
 
-新会话默认使用 `code + safe`。从 plan 进入执行必须显式输入 `/code`。
+新会话默认使用 `code + safe`。从 plan 进入执行必须显式输入 `/code`。`/permissions safe` 会同时撤销当前对话和工作区的持久化编辑授权。
 
 ### 代码库上下文与编辑
 
@@ -60,6 +60,7 @@ Phase 1 至 Phase 5.1、Phase 7 与 Phase 7.1 已完成并保持 **Frozen**。Ph
 ### 上下文管理
 
 - 根据模型 context window、系统提示、工具 schema 和消息估算输入预算。
+- `/context 64k|128k|200k` 可修改没有模型专属覆盖时使用的 fallback context window；Provider 的明确模型窗口仍优先。
 - 默认在 `min(window * 85%, window - 8192)` 触发自动压缩，目标降到窗口的 50%。
 - Assistant tool call 与对应 Tool Result 作为不可拆分原子组。
 - `/compact` 可手动压缩；失败、取消、空历史或无可压缩内容不会修改会话历史。
@@ -82,12 +83,12 @@ Phase 1 至 Phase 5.1、Phase 7 与 Phase 7.1 已完成并保持 **Frozen**。Ph
 
 ### 会话恢复
 
-- 交互模式默认自动保存，新启动默认创建新会话。
+- 交互模式默认自动保存；同一工作区存在历史时，TUI 默认先选择“继续最近对话”或“新建对话”。
 - `syzzz --continue` 恢复当前工作区最近会话。
 - `syzzz --resume <id>` 按完整 ID 或唯一前缀恢复。
 - `/new` 创建新会话；`/clear` 是其别名，旧会话不会删除。
 - `/resume`、`/rename`、`/save` 和 `/compact` 管理当前会话。
-- 恢复时保留工作模式，权限始终重置为 `safe`。
+- 恢复时保留工作模式；显式保存到该对话或工作区的 `acceptEdits` 可恢复，其他权限重置为 `safe`，`fullAccess` 永不恢复。
 - 保存的 Provider 或模型不可用时，回退到当前可用配置并明确警告。
 - 单个 `state.json` 硬上限为 64 MiB，使用原子替换和进程锁。
 - 会话默认永久保留，只能通过显式 `sessions delete|prune` 删除。
@@ -102,6 +103,24 @@ Phase 1 至 Phase 5.1、Phase 7 与 Phase 7.1 已完成并保持 **Frozen**。Ph
 ```
 
 `state.json` 是恢复真相源；`meta.json` 仅用于快速列表，并可从 state 重建。
+编辑授权单独保存在 `~/.syzzz-code/permission-grants.json`，只记录 `acceptEdits` 的会话 ID 或工作区哈希；它不保存 `fullAccess`、审批答案、Shell 授权或文件内容。
+
+### 全屏终端界面
+
+- 交互式 TTY 默认使用 Ink fullscreen TUI；非 TTY、CI、`TERM=dumb`、`INK_SCREEN_READER=true` 或 `--ui inline` 使用滚动式 inline 界面。
+- Header、Transcript、Activity、结构化交互面板、Composer 和 Footer 消费同一个 `InteractionController`；Agent Runtime 不依赖 React。
+- Composer 支持中文、Emoji、组合字符、多行编辑、bracketed paste、工作区历史，以及 `/`、`@`、`$` 的统一固定候选区域。
+- Composer 使用简洁的 `>` 前缀，并通过 Ink 实际布局坐标定位真实终端光标；Windows 终端预留最后一个物理行，使 Ink 使用 changed-line 增量提交而不是每帧清屏。
+- Transcript 使用 `ConversationBlock` 保存用户问题、Markdown 回答、工具组与 notice；用户问题采用全宽背景带，回答使用 `·` 前缀，并支持标题、强调、代码、列表、引用、链接与简单表格。
+- 流式回答使用 source-backed stable/mutable 分区和有界队列。首个正文 delta 立即可见，稳定行平滑提交，积压时自动追平；Provider 只返回完整块时不会伪造打字动画。
+- Transcript 支持鼠标滚轮、PageUp/PageDown、Home/End 和右侧滚动条有界回看；离开底部后冻结视口并提示新输出，当前回答对应的问题会在离开可视区后置顶。
+- `/model`、`/provider`、`/permissions`、`/resume`、审批和确认在 TUI 中使用结构化面板。确认 token 会先显示在输入区域，按 Enter 后才提交。
+- Agent 可在交互回合中使用 `AskUser` 提出单选、多选或短文本问题；单选和多选始终提供“输入自己的想法”，也可按 `C` 直接进入自定义回答。该能力由客户端保证，不能被模型关闭。问题和答案不会进入输入历史或审计正文，但答案会作为普通 ToolResult 进入模型上下文和会话快照。
+- 鼠标追踪启用时，滚轮和支持按住拖动的右侧滚动条负责历史导航；Transcript 正文可直接按住左键拖选，松开后通过终端剪贴板协议复制，无需切换复制模式。
+- 固定活动栏展示当前 phase、动态状态、有效工作耗时和等待输入状态；回合结束后在回答尾部显示耗时、token、工具和重试摘要。
+- 流式开关由当前交互上下文实时驱动；Skill 显式或隐式激活的成功与失败会投影到 Transcript，存在 `AskUser` 时改变执行路径的选项必须进入结构化提问面板。
+- TUI 只保存有界显示投影，不改变 Engine 历史；恢复会话最多显示最后 100 条、512 KiB 的普通用户和 Assistant 文本。
+- `chat -m` 与 `stream-json` 永不加载 TUI。fullscreen 不是新的权限边界，也不是 OS sandbox。
 
 ### 可信扩展
 
@@ -206,14 +225,18 @@ syzzz config set apiKey --from-env DEEPSEEK_API_KEY
     "maxBytes": 20971520
   },
   "ui": {
-    "streamOutput": true
+    "streamOutput": true,
+    "mode": "auto",
+    "persistentHistory": true,
+    "language": "auto"
   },
   "context": {
     "autoCompact": true,
     "defaultWindowTokens": 65536
   },
   "sessions": {
-    "autoSave": true
+    "autoSave": true,
+    "startup": "ask"
   },
   "subagents": {
     "enabled": true
@@ -272,9 +295,13 @@ syzzz doctor --repair-config
 
 ```bash
 syzzz
+syzzz --ui tui
+syzzz --ui inline
 syzzz --continue
 syzzz --resume <id-or-prefix>
 ```
+
+`--ui auto` 是默认值。显式 `--ui tui` 在终端能力不足时 fail closed；`auto` 仅在初始化失败时警告并回退 inline，运行中的 TUI 异常不会复用不确定状态。
 
 输入 `/` 可浏览当前命令。主要 Slash 命令：
 
@@ -292,15 +319,19 @@ Session
 /rename <title>                        重命名当前会话
 /save                                  立即保存
 /compact                               手动压缩上下文
+/history status|on|off|clear           管理当前工作区输入历史
 
 Runtime
-/permissions [mode]                    查看或切换权限
+/permissions safe|acceptEdits|workspace|fullAccess
+                                        查看或切换权限与编辑授权范围
 /model [model]                         切换当前 Provider 的配置模型
 /provider [provider]                   切换本地已配置 Provider
 /stream on|off                         控制正文是否逐段显示
+/language auto|zh-CN|en                切换本地候选和命令描述语言
+/terminal-setup status|install         检查或安装 Shift+Enter 终端映射
 
 Composition
-/context [reload]                      查看或重载 AGENTS 与上下文诊断
+/context reload|64k|128k|200k          查看、重载或选择 fallback context window
 /skills list|inspect|reload|doctor     查看、检查、重载或诊断 Skills
 /skills create|validate|test           创建、验证或联网评测 Skill 激活
 /skills enable|disable <name>          启用或禁用 Skill
@@ -320,6 +351,10 @@ General
 ```
 
 裸 `/` 按稳定优先级展示常用命令，输入命令片段后按匹配度过滤；`@` 和 `$` 分别提供工作区路径与 Skill 候选。`/?`、`/quit` 是别名，`//`、`@@`、`$$` 分别发送字面 Slash、`@` 和 `$`。
+
+TUI Composer 中 `Enter` 提交。启动时会在 fullscreen 首帧前探测 Kitty Keyboard Protocol；终端明确支持时，`Shift+Enter` 换行。旧版 Windows Terminal 或 IDE 内嵌终端可能把 `Shift+Enter` 编码成与 Enter 完全相同的字节，此时使用 `Ctrl+J` 稳定换行，或运行 `/terminal-setup install`，经确认后备份终端设置并安装 `Shift+Enter -> ESC+CR` 映射。Syzzz 不覆盖已有冲突键位，也不在渲染期间强行写入未知键盘协议。鼠标滚轮、拖动右侧滚动条或 `PageUp/PageDown` 滚动 Transcript，左键拖选正文会在松开后复制，`Ctrl+O` 展开或收起最近一项工具详情，`Esc` 关闭候选、详情或正文选区。`Ctrl+C` 依次关闭面板、清空非空 Composer、取消当前操作；空闲且输入为空时两秒内按两次退出。
+
+`/language` 只本地化 Syzzz 自带的 Slash 分类、命令说明和 `@` 上下文说明。Skill 作者提供的名称与描述保持原文，避免无依据翻译改变 Skill 语义。
 
 显式任务组合示例：
 
@@ -428,6 +463,7 @@ npm run build
 npm test
 npm run lint
 npm run format:check
+npm run test:tui
 npm run test:coverage
 npm run test:providers
 npm run eval:offline
@@ -437,9 +473,9 @@ npm audit --omit=dev --audit-level=high
 git diff --check
 ```
 
-自动化套件覆盖路径与权限安全、事件 Runtime、Provider 可靠性、终端交互、代码库上下文、压缩、会话恢复、Trust V2、MCP、Hooks 和只读 Subagent。当前包含五种离线 Provider Profile 与发布门禁；Phase 7 增加 `@`、分层 AGENTS、Skills、公开 Git 安装及五项任务组合 Eval。
+自动化套件覆盖路径与权限安全、事件 Runtime、Provider 可靠性、双 Renderer、Composer、结构化交互、代码库上下文、压缩、会话恢复、Trust V2、MCP、Hooks 和只读 Subagent。当前包含五种离线 Provider Profile 与发布门禁；Phase 7 增加 `@`、分层 AGENTS、Skills、公开 Git 安装及五项任务组合 Eval。
 
-当前 Phase 7.1 冻结基线为 **319/319** 项测试和离线 Eval **12/12** 通过；综合门槛覆盖率为 Lines **82.34%**、Branches **75.91%**、Functions **86.41%**，均高于 82%/74%/84% 门槛。打包、安全扫描、生产依赖审计、候选包安装 smoke 以及 Windows/Ubuntu × Node 22/24 CI 均已通过。Phase 6 的真实 DeepSeek/OpenCode Live Eval 保持 7/7、功能成功率 100%、安全项通过且无基础设施错误；OpenCode `gpt-5.6-luna` 的 Responses 文本流与 function call 往返 smoke 已通过。
+Phase 8.1 当前本地基线为 **362/362** 项测试、TUI 专项 **38/38** 和离线 Eval **12/12** 通过；综合门槛覆盖率为 Lines **82.03%**、Branches **75.73%**、Functions **85.40%**，均高于 82%/74%/84% 门槛。真实 VT/ANSI 屏幕回放还验证了普通按键、spinner、正文 delta 和增强键盘探测不触发重复全屏清除；终端映射安装在隔离配置中验证了备份、幂等和冲突拒绝。当前状态为 **Implemented**；跨平台 CI 与 Windows Terminal、Codex 内嵌终端的人工复验尚未完成，因此不能标记为 Validated 或 Frozen。Phase 6 的真实 DeepSeek/OpenCode Live Eval 保持 7/7；OpenCode `gpt-5.6-luna` 的 Responses 文本流与 function call 往返 smoke 已通过。
 
 Phase 5 冻结验收还完成了 11 项真实终端 dogfood，覆盖未信任边界、Trust V2 复审、MCP 策略与惰性重连、Hook 拒绝与生命周期、取消清理、Subagent 预算、隐私恢复和撤销信任。公开 Streamable HTTP MCP 的真实握手、工具发现及只读天气调用同样通过；该外部服务只用于兼容性验证，不是 Syzzz 的运行依赖。
 
@@ -460,9 +496,9 @@ npm 包使用 allowlist，只包含 `dist`、README、SECURITY、LICENSE、CHANG
 - 当前不支持 OAuth、旧 SSE、MCP Resources/Prompts/Sampling、后台 Hooks、写入型或嵌套 Subagent。
 - `@` 只支持工作区内普通 UTF-8 文件和有界目录清单，不支持外部路径、URL、图片、PDF 或多模态附件。
 - Skill 安装只支持公开 HTTPS Git；不支持私有凭证、市场、自动更新、安装后自动执行或 `allowed-tools` 授权。
-- 当前没有完整 TUI、多行 Composer、结构化问题弹窗或鼠标交互；双 renderer TUI 统一进入 Phase 8。
+- TUI 当前提供滚轮、可拖动滚动条、正文拖选复制和 sticky 问题等有限鼠标交互，不支持通用点击控件、主题/插件系统、内嵌编辑器、交互式 Shell 或后台任务；inline 与 NDJSON 不会被移除。
 - 当前没有并行工具、后台任务、LSP 或持久化语义索引。
 
 ## 当前阶段
 
-Phase 1 至 Phase 5.1、Phase 7 与 Phase 7.1 均保持 **Frozen**，Phase 6 保持 **Release Candidate Accepted**。`codex/phase7-task-composition` 与 `codex/phase7.1-skills` 已合并到同一提交历史；本地门禁、全局 Skill、Legacy、自动刷新、显式/隐式策略、symlink、资源读取、脚本审批、activation eval、Git 安装生命周期、`$` 菜单人工 dogfood 及 Windows/Ubuntu Node 22/24 CI 全部通过。
+Phase 1 至 Phase 5.1、Phase 7 与 Phase 7.1 均保持 **Frozen**，Phase 6 保持 **Release Candidate Accepted**。Phase 8.1 位于 `codex/phase8-tui`，当前为 **Implemented / Validation Pending**；稳定帧、真实流式、语义 Transcript、Markdown、活动栏、滚动锚点和结构化 Skill 提问已完成本地自动验收，仍需跨平台 CI 与真实终端 dogfood 后才能进入 Validated 和 Frozen。

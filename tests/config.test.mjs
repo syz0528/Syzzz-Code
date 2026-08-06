@@ -96,15 +96,38 @@ test('audit configuration defaults safely for existing config files', () => {
 
 test('UI streaming defaults safely and validates explicit configuration', () => {
   const legacyConfig = validateConfig(createValidConfig());
-  assert.deepEqual(legacyConfig.ui, { streamOutput: true });
+  assert.deepEqual(legacyConfig.ui, {
+    streamOutput: true,
+    mode: 'auto',
+    persistentHistory: true,
+    language: 'auto'
+  });
 
   const buffered = createValidConfig();
   buffered.ui = { streamOutput: false };
-  assert.deepEqual(validateConfig(buffered).ui, { streamOutput: false });
+  assert.deepEqual(validateConfig(buffered).ui, {
+    streamOutput: false,
+    mode: 'auto',
+    persistentHistory: true,
+    language: 'auto'
+  });
+
+  const explicit = createValidConfig();
+  explicit.ui = {
+    streamOutput: true,
+    mode: 'inline',
+    persistentHistory: false,
+    language: 'zh-CN'
+  };
+  assert.deepEqual(validateConfig(explicit).ui, explicit.ui);
 
   const invalid = createValidConfig();
   invalid.ui = { streamOutput: 'sometimes' };
   assert.throws(() => validateConfig(invalid), /ui.streamOutput must be a boolean/);
+
+  const invalidMode = createValidConfig();
+  invalidMode.ui = { streamOutput: true, mode: 'windowed' };
+  assert.throws(() => validateConfig(invalidMode), /ui.mode/);
 });
 
 test('context configuration defaults safely and validates model overrides', () => {
@@ -183,7 +206,7 @@ test('rejects Provider URLs that could expose embedded credentials', () => {
 test('configuration v1 adds session and subagent defaults and rejects future schemas', () => {
   const legacy = validateConfig(createValidConfig());
   assert.equal(legacy.schemaVersion, 1);
-  assert.deepEqual(legacy.sessions, { autoSave: true });
+  assert.deepEqual(legacy.sessions, { autoSave: true, startup: 'ask' });
   assert.deepEqual(legacy.subagents, { enabled: true });
 
   const disabled = createValidConfig();
@@ -191,7 +214,7 @@ test('configuration v1 adds session and subagent defaults and rejects future sch
   disabled.sessions = { autoSave: false };
   disabled.subagents = { enabled: false };
   const validatedDisabled = validateConfig(disabled);
-  assert.deepEqual(validatedDisabled.sessions, { autoSave: false });
+  assert.deepEqual(validatedDisabled.sessions, { autoSave: false, startup: 'ask' });
   assert.deepEqual(validatedDisabled.subagents, { enabled: false });
 
   const invalidSubagents = createValidConfig();

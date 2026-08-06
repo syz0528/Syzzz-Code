@@ -2,6 +2,8 @@ export { QueryEngine } from './runtime-engine.js';
 export type {
   ChatOptions,
   CompactContextResult,
+  ConversationDisplayMessage,
+  ConversationDisplaySnapshot,
   EngineCheckpointHandler,
   EngineCheckpointReason,
   EnginePersistenceStatus,

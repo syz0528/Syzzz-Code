@@ -1,4 +1,9 @@
 import type { SuggestionItem, SuggestionProvider, SuggestionRequest } from './terminal-input.js';
+import {
+  localizeCommandCategory,
+  localizeCommandDescription,
+  type ResolvedUiLanguage
+} from './ui-language.js';
 
 export interface CommandChoice {
   value: string;
@@ -7,7 +12,29 @@ export interface CommandChoice {
   current?: boolean;
 }
 
-export type CommandExecutionResult = 'continue' | 'exit' | { submitMessage: string };
+export interface CommandResultNotice {
+  tone: 'info' | 'success' | 'warning' | 'error' | 'muted';
+  text: string;
+}
+
+export type CommandExecutionResult =
+  | { type: 'continue'; notice?: CommandResultNotice }
+  | { type: 'exit'; notice?: CommandResultNotice }
+  | { type: 'submit'; message: string; notice?: CommandResultNotice };
+
+export type CommandHandlerResult = 'continue' | 'exit' | { submitMessage: string };
+
+export function normalizeCommandExecutionResult(
+  result: CommandHandlerResult
+): CommandExecutionResult {
+  if (result === 'continue') {
+    return { type: 'continue' };
+  }
+  if (result === 'exit') {
+    return { type: 'exit' };
+  }
+  return { type: 'submit', message: result.submitMessage };
+}
 
 export const COMMAND_CATEGORIES = ['work', 'session', 'runtime', 'extensions', 'general'] as const;
 
@@ -35,7 +62,7 @@ export interface CommandDefinition<Context> {
     argument: string | undefined,
     context: Context,
     signal: AbortSignal
-  ): Promise<CommandExecutionResult> | CommandExecutionResult;
+  ): Promise<CommandHandlerResult> | CommandHandlerResult;
 }
 
 export interface ParsedSlashCommand {
@@ -181,7 +208,8 @@ export function parseSlashCommand(value: string): ParsedSlashCommand | null {
 
 export function createSlashSuggestionProvider<Context>(
   registry: CommandRegistry<Context>,
-  getContext: () => Context
+  getContext: () => Context,
+  getLanguage: () => ResolvedUiLanguage = () => 'en'
 ): SuggestionProvider {
   return {
     trigger: '/',
@@ -193,6 +221,7 @@ export function createSlashSuggestionProvider<Context>(
     },
     suggest(request: SuggestionRequest): readonly SuggestionItem[] {
       const context = getContext();
+      const language = getLanguage();
       const firstSpace = request.query.search(/\s/);
       if (firstSpace === -1) {
         return registry.search(request.query, context).map((command) => {
@@ -200,7 +229,7 @@ export function createSlashSuggestionProvider<Context>(
           return {
             id: `command:${command.name}`,
             label: `/${command.name}${command.argumentHint ? ` ${command.argumentHint}` : ''}`,
-            description: `${COMMAND_CATEGORY_LABELS[command.category]} · ${command.description}`,
+            description: `${localizeCommandCategory(command.category, COMMAND_CATEGORY_LABELS[command.category], language)} · ${localizeCommandDescription(command.name, command.description, language)}`,
             insertText: `/${command.name}${hasChoices ? ' ' : ''}`,
             replaceStart: 0,
             replaceEnd: request.query.length + 1,

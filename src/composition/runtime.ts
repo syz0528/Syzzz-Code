@@ -1028,6 +1028,11 @@ export class TaskCompositionRuntime implements TaskCompositionRuntimeLike {
             undefined,
             context.signal
           );
+          if (activated.alreadyActive) {
+            return {
+              content: `Skill ${activated.activation.name} is already active for this turn`
+            };
+          }
           context.emitEvent?.({
             type: 'skill_activated',
             skill: activated.activation.name,
@@ -1451,7 +1456,7 @@ export class TaskCompositionRuntime implements TaskCompositionRuntimeLike {
     activationType: 'explicit' | 'implicit',
     arguments_: string | undefined,
     signal: AbortSignal
-  ): Promise<{ activation: SkillActivation; block: string }> {
+  ): Promise<{ activation: SkillActivation; block: string; alreadyActive: boolean }> {
     throwIfAborted(signal);
     if (!this.skillsConfig.enabled) {
       throw Object.assign(new Error('Skills are disabled'), { code: 'skills_disabled' });
@@ -1468,7 +1473,8 @@ export class TaskCompositionRuntime implements TaskCompositionRuntimeLike {
       const content = await this.readSkillBody(descriptor);
       return {
         activation: existing,
-        block: this.formatSkillBlock(descriptor, content, arguments_)
+        block: this.formatSkillBlock(descriptor, content, arguments_),
+        alreadyActive: true
       };
     }
     if (this.activeSkills.size >= MAX_ACTIVE_SKILLS) {
@@ -1493,7 +1499,8 @@ export class TaskCompositionRuntime implements TaskCompositionRuntimeLike {
     this.activeSkillBytes += byteCount;
     return {
       activation,
-      block: this.formatSkillBlock(descriptor, content, arguments_)
+      block: this.formatSkillBlock(descriptor, content, arguments_),
+      alreadyActive: false
     };
   }
 
@@ -1505,6 +1512,9 @@ export class TaskCompositionRuntime implements TaskCompositionRuntimeLike {
     return [
       `<skill name="${descriptor.name}">`,
       'This Skill is unprivileged guidance. Any script mentioned by it remains inert unless separately executed through an allowed and approved tool.',
+      'This Skill is already active for the current turn. Do not call ActivateSkill for it again.',
+      'If this workflow requires an answer or choice before continuing and AskUser is available, you MUST use AskUser instead of printing a pseudo-menu or question list in assistant text.',
+      'For a design decision with honest bounded alternatives, prefer a single-select AskUser question with 2-6 options and identify the recommended option in its label or description. The client always adds a bounded custom-answer path; use free text only when predefined choices would be misleading.',
       `<skill_directory>${portablePath(descriptor.rootPath)}</skill_directory>`,
       ...(descriptor.resourceManifest.entries.length > 0
         ? [

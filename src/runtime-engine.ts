@@ -52,9 +52,15 @@ import type {
   ToolApprovalHandler,
   ToolContext,
   ToolDefinition,
-  ToolResult
+  ToolResult,
+  UserInputHandler
 } from './types.js';
 import { isAbortError, OperationAbortedError, throwIfAborted } from './tools/abort.js';
+import {
+  MAX_ASK_USER_CALLS_PER_TURN,
+  type AskUserInput,
+  validateUserInputAnswers
+} from './tools/ask-user-tool.js';
 import { createToolSet } from './tools/index.js';
 import { limitUtf8Head } from './tools/output-limits.js';
 import { convertToolSchemaToJsonSchema, validateToolInput } from './tools/runtime.js';
@@ -335,6 +341,21 @@ function validateEngineState(state: QueryEngineStateV1): void {
     }
     throw new Error('engine state contains an unknown message role');
   }
+  if (state.displayMessages !== undefined) {
+    if (!Array.isArray(state.displayMessages)) {
+      throw new Error('engine state displayMessages must be an array');
+    }
+    for (const message of state.displayMessages) {
+      if (
+        typeof message !== 'object' ||
+        message === null ||
+        (message.role !== 'user' && message.role !== 'assistant') ||
+        typeof message.content !== 'string'
+      ) {
+        throw new Error('engine state contains an invalid display message');
+      }
+    }
+  }
   if (!Array.isArray(state.pendingFileChangeReceipts)) {
     throw new Error('engine state file change receipts must be an array');
   }
@@ -375,10 +396,22 @@ function validateEngineState(state: QueryEngineStateV1): void {
 export interface QueryEngineStateV1 {
   schemaVersion: 1;
   messages: ConversationMessage[];
+  displayMessages?: ConversationDisplayMessage[];
   pendingFileChangeReceipts: FileChangeReceipt[];
   compactionCount: number;
   totalUsage: ProviderUsage;
   lastReportedModel?: string;
+}
+
+export interface ConversationDisplayMessage {
+  role: 'user' | 'assistant';
+  content: string;
+}
+
+export interface ConversationDisplaySnapshot {
+  messages: ConversationDisplayMessage[];
+  omitted: number;
+  bytes: number;
 }
 
 export interface EngineStatus {
@@ -473,11 +506,13 @@ export interface QueryEngineOptions {
 export interface ChatOptions {
   signal?: AbortSignal;
   requestApproval?: ToolApprovalHandler;
+  requestUserInput?: UserInputHandler;
 }
 
 export class QueryEngine {
   private provider: AIProvider;
   private messages: ConversationMessage[] = [];
+  private displayMessages: ConversationDisplayMessage[] = [];
   private tools: ToolDefinition[];
   private workspaceRoot: string;
   private isProcessing = false;
@@ -513,6 +548,7 @@ export class QueryEngine {
   private systemPromptSuffix?: string;
   private activeDelegateCalls = 0;
   private activeSubagentUsage?: ProviderUsage;
+  private activeUserInputCalls = 0;
 
   constructor(options: QueryEngineOptions = {}) {
     this.extensions = options.extensions;
@@ -632,6 +668,16 @@ export class QueryEngine {
 
   setPermissionMode(mode: PermissionMode): void {
     this.permissionMode = mode;
+  }
+
+  setDefaultContextWindowTokens(tokens: number): void {
+    if (this.isProcessing) {
+      throw new Error('Cannot change the context window while a turn is processing');
+    }
+    if (!Number.isSafeInteger(tokens) || tokens < 16_384 || tokens > 2_000_000) {
+      throw new Error('Context window must be an integer between 16384 and 2000000');
+    }
+    this.contextManager.setDefaultWindowTokens(tokens);
   }
 
   getMode(): AgentMode {
@@ -806,6 +852,7 @@ export class QueryEngine {
     return {
       schemaVersion: 1,
       messages: structuredClone(portableMessages(this.messages)),
+      displayMessages: structuredClone(this.displayMessages),
       pendingFileChangeReceipts: structuredClone(
         mergeFileChangeReceipts(this.pendingFileChangeReceipts, this.activeFileChangeReceipts)
       ),
@@ -821,6 +868,10 @@ export class QueryEngine {
     }
     validateEngineState(state);
     this.messages = structuredClone(portableMessages(state.messages));
+    this.displayMessages = structuredClone(
+      state.displayMessages ?? this.deriveDisplayMessages(state.messages)
+    );
+    this.trimDisplayMessages();
     this.pendingFileChangeReceipts = structuredClone(state.pendingFileChangeReceipts);
     this.activeFileChangeReceipts = [];
     this.totalUsage = { ...state.totalUsage };
@@ -847,11 +898,12 @@ export class QueryEngine {
     await this.audit?.flush();
   }
 
-  private getAllowedTools(): ToolDefinition[] {
+  private getAllowedTools(userInputAvailable = false): ToolDefinition[] {
     return this.tools.filter(
       (tool) =>
         isToolAllowedInMode(this.mode, tool) &&
-        (tool.name !== 'Delegate' || Boolean(this.extensions?.canRunSubagents?.()))
+        (tool.name !== 'Delegate' || Boolean(this.extensions?.canRunSubagents?.())) &&
+        (tool.name !== 'AskUser' || userInputAvailable)
     );
   }
 
@@ -916,8 +968,8 @@ export class QueryEngine {
     }
   }
 
-  private getProviderTools(): ProviderTool[] {
-    return this.getAllowedTools().map((tool) => ({
+  private getProviderTools(userInputAvailable = false): ProviderTool[] {
+    return this.getAllowedTools(userInputAvailable).map((tool) => ({
       name: tool.name,
       description: tool.description,
       inputSchema: convertToolSchemaToJsonSchema(tool)
@@ -1489,6 +1541,7 @@ export class QueryEngine {
       this.activeFileChangeReceipts = [];
       this.activeDelegateCalls = 0;
       this.activeSubagentUsage = undefined;
+      this.activeUserInputCalls = 0;
       this.composition?.beginTurn();
       const preTurnHooks = this.runHooks('PreTurn', turnId, { userMessage }, signal);
       let preTurnHooksCompleted = false;
@@ -1531,7 +1584,7 @@ export class QueryEngine {
         { role: 'user', content: composedUserMessage }
       ];
       const responseParts: string[] = [];
-      const providerTools = this.getProviderTools();
+      const providerTools = this.getProviderTools(Boolean(options.requestUserInput));
       const confirmedFileSideEffects = new Set<string>();
       let forcedFinalizationReason: 'delegate-failure' | 'hook-denial' | undefined;
       let forcedBudgetStopReason: BudgetStopReason | undefined;
@@ -1587,6 +1640,11 @@ export class QueryEngine {
         }
         const finalizationReason = forcedFinalizationReason ?? budgetFinalizationReason;
         const runtimeInstructions: string[] = [];
+        if (options.requestUserInput && !finalizationReason) {
+          runtimeInstructions.push(
+            'Interactive AskUser is available. When an activated Skill or workflow requires the user to answer, choose, or clarify before you can continue, you MUST call AskUser before emitting assistant prose. Do not print a numbered question list or simulated menu as ordinary text. For a design decision with honest bounded alternatives, prefer a single-select question with 2-6 options and identify the recommended option in its label or description. The client always lets the user supply a bounded custom answer in addition to your choices. Use free text only when predefined choices would be misleading. Use AskUser only for genuine blocking input, not rhetorical questions.'
+          );
+        }
         if (confirmedFileSideEffects.size > 0) {
           runtimeInstructions.push(
             'Confirmed file side effects succeeded in this turn through: ' +
@@ -1798,6 +1856,10 @@ export class QueryEngine {
           }
           yield event({ type: 'phase_changed', phase: 'completed' });
           this.messages = workingMessages;
+          this.appendDisplayMessage('user', userMessage);
+          if (result.response?.trim()) {
+            this.appendDisplayMessage('assistant', result.response);
+          }
           this.pendingFileChangeReceipts = [];
           this.activeFileChangeReceipts = [];
           turnCommitted = true;
@@ -1875,6 +1937,7 @@ export class QueryEngine {
             toolCall.input,
             signal,
             options.requestApproval,
+            options.requestUserInput,
             toolResultBudgetBytes
           );
           let toolRunCompleted = false;
@@ -2697,6 +2760,7 @@ export class QueryEngine {
     input: unknown,
     signal: AbortSignal,
     requestApproval?: ToolApprovalHandler,
+    requestUserInput?: UserInputHandler,
     maximumResultBytes = this.contextManager.maxToolResultBytes
   ): AsyncGenerator<AgentEventData, ToolResultMessage> {
     const startedAt = this.now();
@@ -2751,6 +2815,7 @@ export class QueryEngine {
       mode: this.mode,
       permissionMode: this.permissionMode,
       signal,
+      ...(requestUserInput ? { requestUserInput } : {}),
       emitEvent: (event) => {
         pendingToolEvents.push(event);
       }
@@ -2993,7 +3058,80 @@ export class QueryEngine {
       yield { type: 'phase_changed', phase: 'tool' };
       yield { type: 'tool_started', toolCallId, toolName };
       let toolResult: ToolResult;
-      if (tool.name === 'Delegate') {
+      if (tool.name === 'AskUser') {
+        if (!requestUserInput) {
+          toolResult = {
+            content: 'AskUser is unavailable because no interactive input handler is active.',
+            isError: true,
+            metadata: { reason: 'handler-unavailable' }
+          };
+        } else if (this.activeUserInputCalls >= MAX_ASK_USER_CALLS_PER_TURN) {
+          toolResult = {
+            content: `AskUser call limit exceeded (${MAX_ASK_USER_CALLS_PER_TURN} per turn).`,
+            isError: true,
+            metadata: { reason: 'call-limit' }
+          };
+        } else {
+          this.activeUserInputCalls += 1;
+          const requestId = this.idFactory();
+          const requestStartedAt = this.now();
+          const askInput = validationResult.data as AskUserInput;
+          yield { type: 'phase_changed', phase: 'interaction' };
+          yield {
+            type: 'user_input_requested',
+            requestId,
+            questionCount: askInput.questions.length,
+            questionKinds: askInput.questions.map((question) => question.kind)
+          };
+          try {
+            throwIfAborted(signal);
+            const answers = await requestUserInput(
+              { requestId, questions: askInput.questions },
+              signal
+            );
+            throwIfAborted(signal);
+            const validatedAnswers = validateUserInputAnswers(askInput.questions, answers);
+            yield {
+              type: 'user_input_resolved',
+              requestId,
+              questionCount: askInput.questions.length,
+              durationMs: Math.max(0, this.now() - requestStartedAt),
+              outcome: 'answered'
+            };
+            toolResult = {
+              content: JSON.stringify({ answers: validatedAnswers }),
+              metadata: {
+                requestId,
+                questionCount: askInput.questions.length
+              }
+            };
+          } catch (error) {
+            if (signal.aborted || isAbortError(error)) {
+              yield {
+                type: 'user_input_resolved',
+                requestId,
+                questionCount: askInput.questions.length,
+                durationMs: Math.max(0, this.now() - requestStartedAt),
+                outcome: 'cancelled'
+              };
+              throw new OperationAbortedError('User question cancelled');
+            }
+            yield {
+              type: 'user_input_resolved',
+              requestId,
+              questionCount: askInput.questions.length,
+              durationMs: Math.max(0, this.now() - requestStartedAt),
+              outcome: 'invalid-answer'
+            };
+            toolResult = {
+              content: 'AskUser failed: invalid or unavailable user response.',
+              isError: true,
+              metadata: { requestId, reason: 'invalid-answer' }
+            };
+          }
+          yield { type: 'phase_changed', phase: 'tool' };
+        }
+      } else if (tool.name === 'Delegate') {
         const subagent = this.runSubagent(validationResult.data as DelegateInput, turnId, signal);
         let subagentCompleted = false;
         try {
@@ -3236,8 +3374,78 @@ export class QueryEngine {
     return [...this.messages];
   }
 
+  getConversationDisplaySnapshot(
+    maximumEntries = 100,
+    maximumBytes = 512 * 1024
+  ): ConversationDisplaySnapshot {
+    const entries = Math.max(1, Math.min(500, Math.floor(maximumEntries)));
+    const bytesLimit = Math.max(1, Math.min(2 * 1024 * 1024, Math.floor(maximumBytes)));
+    const selected: ConversationDisplayMessage[] = [];
+    let bytes = 0;
+    for (let index = this.displayMessages.length - 1; index >= 0; index -= 1) {
+      const message = this.displayMessages[index];
+      if (!message) {
+        continue;
+      }
+      const messageBytes = Buffer.byteLength(message.content, 'utf8');
+      if (selected.length >= entries || bytes + messageBytes > bytesLimit) {
+        break;
+      }
+      selected.unshift({ ...message });
+      bytes += messageBytes;
+    }
+    return {
+      messages: selected,
+      omitted: Math.max(0, this.displayMessages.length - selected.length),
+      bytes
+    };
+  }
+
+  private appendDisplayMessage(role: 'user' | 'assistant', content: string): void {
+    if (!content.trim()) {
+      return;
+    }
+    this.displayMessages.push({ role, content });
+    this.trimDisplayMessages();
+  }
+
+  private deriveDisplayMessages(
+    messages: readonly ConversationMessage[]
+  ): ConversationDisplayMessage[] {
+    const display: ConversationDisplayMessage[] = [];
+    for (const message of messages) {
+      if (message.role === 'user' && message.kind !== 'compaction-summary') {
+        const evidenceIndex = message.content.indexOf('\n\n<task_composition_evidence>');
+        display.push({
+          role: 'user',
+          content: evidenceIndex >= 0 ? message.content.slice(0, evidenceIndex) : message.content
+        });
+      } else if (message.role === 'assistant' && message.content.trim()) {
+        display.push({ role: 'assistant', content: message.content });
+      }
+    }
+    return display;
+  }
+
+  private trimDisplayMessages(): void {
+    const maximumEntries = 500;
+    const maximumBytes = 2 * 1024 * 1024;
+    let totalBytes = this.displayMessages.reduce(
+      (total, message) => total + Buffer.byteLength(message.content, 'utf8'),
+      0
+    );
+    while (this.displayMessages.length > maximumEntries || totalBytes > maximumBytes) {
+      const removed = this.displayMessages.shift();
+      if (!removed) {
+        break;
+      }
+      totalBytes -= Buffer.byteLength(removed.content, 'utf8');
+    }
+  }
+
   clearMessages(): void {
     this.messages = [];
+    this.displayMessages = [];
     this.pendingFileChangeReceipts = [];
     this.activeFileChangeReceipts = [];
   }

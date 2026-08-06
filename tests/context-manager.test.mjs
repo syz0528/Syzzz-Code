@@ -9,6 +9,15 @@ import {
   formatMessagesForCompactionBounded
 } from '../dist/context-manager.js';
 
+test('fallback context window can be changed at runtime without overriding Provider metadata', () => {
+  const manager = new ContextManager({ defaultWindowTokens: 65_536 });
+  assert.equal(manager.contextWindowTokens({}), 65_536);
+
+  manager.setDefaultWindowTokens(200_000);
+  assert.equal(manager.contextWindowTokens({}), 200_000);
+  assert.equal(manager.contextWindowTokens({ contextWindowTokens: 128_000 }), 128_000);
+});
+
 const providerInfo = {
   name: 'Test',
   type: 'openai-compatible',

@@ -39,7 +39,13 @@ export interface AuditConfig {
 
 export interface UiConfig {
   streamOutput: boolean;
+  mode: UiMode;
+  persistentHistory: boolean;
+  language: UiLanguage;
 }
+
+export type UiMode = 'auto' | 'tui' | 'inline';
+export type UiLanguage = 'auto' | 'zh-CN' | 'en';
 
 export interface ContextConfig {
   autoCompact: boolean;
@@ -48,7 +54,10 @@ export interface ContextConfig {
 
 export interface SessionsConfig {
   autoSave: boolean;
+  startup: SessionStartupBehavior;
 }
+
+export type SessionStartupBehavior = 'ask' | 'new' | 'continue';
 
 export interface SubagentsConfig {
   enabled: boolean;
@@ -101,7 +110,10 @@ export const DEFAULT_AUDIT_CONFIG: Readonly<AuditConfig> = Object.freeze({
 });
 
 export const DEFAULT_UI_CONFIG: Readonly<UiConfig> = Object.freeze({
-  streamOutput: true
+  streamOutput: true,
+  mode: 'auto',
+  persistentHistory: true,
+  language: 'auto'
 });
 
 export const DEFAULT_CONTEXT_CONFIG: Readonly<ContextConfig> = Object.freeze({
@@ -110,7 +122,8 @@ export const DEFAULT_CONTEXT_CONFIG: Readonly<ContextConfig> = Object.freeze({
 });
 
 export const DEFAULT_SESSIONS_CONFIG: Readonly<SessionsConfig> = Object.freeze({
-  autoSave: true
+  autoSave: true,
+  startup: 'ask'
 });
 
 export const DEFAULT_SUBAGENTS_CONFIG: Readonly<SubagentsConfig> = Object.freeze({
@@ -218,7 +231,19 @@ function validateUiConfig(value: unknown): UiConfig {
   if (typeof value.streamOutput !== 'boolean') {
     throw new Error('ui.streamOutput must be a boolean');
   }
-  return { streamOutput: value.streamOutput };
+  const mode = value.mode ?? DEFAULT_UI_CONFIG.mode;
+  if (mode !== 'auto' && mode !== 'tui' && mode !== 'inline') {
+    throw new Error('ui.mode must be "auto", "tui", or "inline"');
+  }
+  const persistentHistory = value.persistentHistory ?? DEFAULT_UI_CONFIG.persistentHistory;
+  if (typeof persistentHistory !== 'boolean') {
+    throw new Error('ui.persistentHistory must be a boolean');
+  }
+  const language = value.language ?? DEFAULT_UI_CONFIG.language;
+  if (language !== 'auto' && language !== 'zh-CN' && language !== 'en') {
+    throw new Error('ui.language must be "auto", "zh-CN", or "en"');
+  }
+  return { streamOutput: value.streamOutput, mode, persistentHistory, language };
 }
 
 function validateContextConfig(value: unknown): ContextConfig {
@@ -254,7 +279,11 @@ function validateSessionsConfig(value: unknown): SessionsConfig {
   if (typeof value.autoSave !== 'boolean') {
     throw new Error('sessions.autoSave must be a boolean');
   }
-  return { autoSave: value.autoSave };
+  const startup = value.startup ?? DEFAULT_SESSIONS_CONFIG.startup;
+  if (startup !== 'ask' && startup !== 'new' && startup !== 'continue') {
+    throw new Error('sessions.startup must be "ask", "new", or "continue"');
+  }
+  return { autoSave: value.autoSave, startup };
 }
 
 function validateSubagentsConfig(value: unknown): SubagentsConfig {

@@ -2,6 +2,8 @@ import { randomUUID } from 'node:crypto';
 import type { AgentMode } from './modes.js';
 import type { QueryEngine, QueryEngineStateV1 } from './engine.js';
 import type { TurnResult } from './events.js';
+import { PermissionGrantStore, type PermissionGrantScope } from './permissions/grant-store.js';
+import type { PermissionMode } from './permissions/mode.js';
 import {
   SessionLease,
   SessionStore,
@@ -38,6 +40,7 @@ export interface SessionControllerOptions {
   now?: () => number;
   idFactory?: () => string;
   warn?: (message: string) => void;
+  permissionGrants?: PermissionGrantStore;
 }
 
 export interface SessionRuntimeStatus {
@@ -48,6 +51,7 @@ export interface SessionRuntimeStatus {
   dirty: boolean;
   persistence: 'disabled' | 'healthy' | 'degraded';
   lastSavedAt?: string;
+  permissionScope: PermissionGrantScope;
 }
 
 export interface SessionSwitchResult {
@@ -94,6 +98,8 @@ export class SessionController {
   private readonly now: () => number;
   private readonly idFactory: () => string;
   private readonly warn: (message: string) => void;
+  private readonly permissionGrants?: PermissionGrantStore;
+  private permissionScope: PermissionGrantScope = 'none';
 
   private constructor(options: SessionControllerOptions) {
     this.store = options.store;
@@ -105,6 +111,7 @@ export class SessionController {
     this.now = options.now ?? Date.now;
     this.idFactory = options.idFactory ?? randomUUID;
     this.warn = options.warn ?? ((message) => process.stderr.write(`${message}\n`));
+    this.permissionGrants = options.permissionGrants;
     const now = new Date(this.now()).toISOString();
     this.createdAt = now;
     this.updatedAt = now;
@@ -113,6 +120,7 @@ export class SessionController {
   static async create(options: SessionControllerOptions): Promise<SessionController> {
     const controller = new SessionController(options);
     controller.lease = await options.store.acquire(options.engine.getSessionId());
+    controller.applyStoredPermission();
     controller.attachCheckpointHandler();
     return controller;
   }
@@ -137,6 +145,7 @@ export class SessionController {
       autoSave: this.autoSave,
       dirty: this.dirty,
       persistence: this.autoSave ? (this.degraded ? 'degraded' : 'healthy') : 'disabled',
+      permissionScope: this.permissionScope,
       ...(this.lastSavedAt ? { lastSavedAt: this.lastSavedAt } : {})
     };
   }
@@ -151,6 +160,12 @@ export class SessionController {
       this.title = deriveTitle(message);
     }
     this.turns += 1;
+    if (
+      this.currentEngine.getPermissionMode() === 'acceptEdits' &&
+      this.permissionScope === 'none'
+    ) {
+      this.persistAcceptEdits('session');
+    }
     this.markDirty();
     await this.tryAutoSave();
   }
@@ -194,7 +209,7 @@ export class SessionController {
     this.assertOpen();
     const sessionId = await this.store.resolveSessionId(idOrPrefix);
     if (sessionId === this.currentEngine.getSessionId()) {
-      this.currentEngine.setPermissionMode('safe');
+      this.applyStoredPermission();
       return {
         sessionId,
         title: this.title,
@@ -254,6 +269,7 @@ export class SessionController {
     this.degraded = false;
     this.hasWarned = false;
     this.lastSavedAt = snapshot.updatedAt;
+    this.applyStoredPermission();
     this.attachCheckpointHandler();
     if (typeof oldEngine.close === 'function') {
       await oldEngine.close().catch(() => undefined);
@@ -307,6 +323,7 @@ export class SessionController {
     this.degraded = false;
     this.hasWarned = false;
     this.lastSavedAt = undefined;
+    this.applyStoredPermission();
     this.attachCheckpointHandler();
     if (typeof oldEngine.close === 'function') {
       await oldEngine.close().catch(() => undefined);
@@ -324,6 +341,29 @@ export class SessionController {
     this.currentProviderId = providerId;
     this.markDirty();
     await this.tryAutoSave();
+  }
+
+  async setPermissionMode(
+    mode: PermissionMode,
+    scope: Exclude<PermissionGrantScope, 'none'> = 'session'
+  ): Promise<void> {
+    this.assertOpen();
+    if (mode === 'fullAccess') {
+      this.currentEngine.setPermissionMode(mode);
+      return;
+    }
+    if (mode === 'safe') {
+      this.permissionScope = 'none';
+      this.currentEngine.setPermissionMode('safe');
+      try {
+        this.permissionGrants?.clear(this.store.workspaceId, this.currentEngine.getSessionId());
+      } catch (error) {
+        this.warn(`Permission grant could not be cleared from disk: ${messageForError(error)}`);
+      }
+      return;
+    }
+    this.currentEngine.setPermissionMode('acceptEdits');
+    this.persistAcceptEdits(scope);
   }
 
   async close(): Promise<void> {
@@ -444,6 +484,37 @@ export class SessionController {
     }
     this.hasWarned = true;
     this.warn(`Session autosave failed: ${messageForError(error)}`);
+  }
+
+  private applyStoredPermission(): void {
+    this.currentEngine.setPermissionMode('safe');
+    this.permissionScope = 'none';
+    if (!this.permissionGrants) return;
+    try {
+      const grant = this.permissionGrants.resolve(
+        this.store.workspaceId,
+        this.currentEngine.getSessionId()
+      );
+      this.permissionScope = grant.scope;
+      this.currentEngine.setPermissionMode(grant.mode);
+    } catch (error) {
+      this.warn(`Permission grants ignored: ${messageForError(error)}`);
+    }
+  }
+
+  private persistAcceptEdits(scope: Exclude<PermissionGrantScope, 'none'>): void {
+    if (!this.permissionGrants) return;
+    try {
+      this.permissionGrants.setAcceptEdits(
+        this.store.workspaceId,
+        this.currentEngine.getSessionId(),
+        scope
+      );
+      this.permissionScope = scope;
+    } catch (error) {
+      this.permissionScope = 'none';
+      this.warn(`Permission grant was not persisted: ${messageForError(error)}`);
+    }
   }
 
   private assertOpen(): void {

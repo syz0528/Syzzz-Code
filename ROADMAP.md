@@ -3,7 +3,7 @@
 **制定日期：** 2026-06-16
 **最近更新：** 2026-08-04
 **适用基线：** `1.0.0` / Phase 7 起始提交 `161391a`
-**当前入口：** Phase 6 保持 **Release Candidate Accepted**；Phase 7 与 Phase 7.1 已完成跨平台 CI 与人工验收并标记 **Frozen**，下一阶段进入 Phase 8 规划
+**当前入口：** Phase 6 保持 **Release Candidate Accepted**；Phase 7 与 Phase 7.1 已标记 **Frozen**；Phase 8.1 已完成本地实现并等待跨平台 CI 与真实终端复验
 
 > 路线图描述实施顺序和验收边界。当前代码事实以 [`README.md`](README.md) 和 [`CURRENT_STATUS.md`](CURRENT_STATUS.md) 为准。
 
@@ -151,6 +151,9 @@ Phase 6  持续评测、发布与工程治理
    |
    v
 Phase 7  显式上下文、开放 Skills 与项目指令
+   |
+   v
+Phase 8  全屏 TUI、结构化交互与终端产品化
 ```
 
 后续阶段可以提前研究，但不能绕过前置阶段直接进入生产路径。
@@ -823,7 +826,33 @@ Phase 7.1 冻结基线为 319/319、coverage 82.34%/75.91%/86.41%、offline Eval
 
 ## 13. Phase 8：双 Renderer TUI 与结构化交互
 
-Phase 8 单独规划，不回填 Phase 7.1。目标是在保留现有 inline/非 TTY 兼容路径的同时，为交互终端提供独立 TUI renderer，统一 `/`、`@`、`$` 候选、计划确认、审批和结构化问题。具体技术栈、全屏策略、无障碍、Windows Terminal 兼容和降级边界需在 Phase 7.1 冻结后单独决策。
+**基线：** Phase 7/7.1 Frozen `465f0bf`，TUI Spike `64ecaf2`。
+
+**当前状态：** **Implemented / Validation Pending**；Phase 8.1 本地自动门槛已通过，跨平台 CI 和真实终端 dogfood 尚未完成。
+
+- [x] 使用 Ink 7 + React 19 建立 fullscreen Renderer，并长期保留 inline 与 NDJSON；
+- [x] `auto|tui|inline` 能力路由，非 TTY、CI、dumb terminal 与 screen reader 确定性降级；
+- [x] 无 React 依赖的 InteractionController/InteractionPort 与唯一阻塞交互状态机；
+- [x] 有界 Transcript、30 FPS 流式合并、紧凑工具时间线和恢复显示快照；
+- [x] grapheme 多行 Composer、bracketed paste、工作区历史和 `/ @ $` 统一候选；
+- [x] Provider、模型、权限、会话、Trust 与工具审批的结构化面板；
+- [x] `AskUser` 单选、多选、短文本和自定义答案，以及事件、取消、Hook 和审计隐私边界；
+- [x] alternate screen、raw mode、cursor、resize、SIGINT/SIGTERM 与异常恢复基础设施；
+- [x] 修正真实光标坐标、Windows 候选残影、动态流式开关和 Skill 激活状态；
+- [x] Phase 8.1 语义 ConversationBlock、source-backed 流式 Presenter、Markdown 和紧凑工具组；
+- [x] Windows changed-line 增量帧、活动计时、sticky 问题、鼠标滚轮、可拖动滚动条和语义滚动锚点；
+- [x] SGR 鼠标事件批量解析与文本隔离、AskUser 控制码防泄漏，以及首帧前 Kitty 能力探测、`ESC+CR` 显式终端映射和 `Ctrl+J` 后备；
+- [x] 工作区启动续聊选择、会话/工作区级 `acceptEdits` 持久化以及不可持久化的 `fullAccess`；
+- [x] 64K/128K/200K fallback context 预设、`used/window` Footer 与本地中英文候选描述；
+- [x] 可见且需 Enter 提交的确认输入，以及无需模式切换的 Transcript 左键拖选复制；
+- [x] 强化 Skill 的结构化 `AskUser`，单选、多选和文本答案复用安全交互生命周期；
+- [x] 本地 362/362、TUI 38/38；coverage、Eval、audit、pack 与 tarball smoke 等完整门槛等待本轮最终复验；
+- [ ] 用户重新验收无闪烁、真实流式、Markdown、滚动和 `$skill` 问答；
+- [ ] Windows/Ubuntu Node 22/24 CI；
+- [ ] Windows Terminal 中文 IME、长流式、全部选择器、MCP/Hook/Subagent 和异常退出 dogfood；
+- [ ] 用户确认后标记 Frozen。
+
+本阶段不实现通用鼠标控件、主题/插件系统、交互式 Shell、后台任务、LSP、持久索引、并行或可写 Subagent。
 
 ## 14. 暂不进入近期范围
 
@@ -859,7 +888,7 @@ Phase 8 单独规划，不回填 Phase 7.1。目标是在保留现有 inline/非
 
 - 修复真实用户发现的可靠性、安全和兼容性问题；
 - 根据独立设计评估 Anthropic 真流式；OpenAI Responses API 已作为显式协议适配器实现；
-- 根据需求评估 LSP、MCP OAuth、完整 TUI、私有 Skill 源和更强 Subagent；
+- 根据需求评估 LSP、MCP OAuth、TUI 鼠标/主题、私有 Skill 源和更强 Subagent；
 - 不以功能数量为目标，不破坏 v1.0 已冻结的安全边界。
 
 ### v2.0.0 候选方向
@@ -898,7 +927,7 @@ Phase 8 单独规划，不回填 Phase 7.1。目标是在保留现有 inline/非
 
 ### 当前入口
 
-Phase 6 继续保持 **Release Candidate Accepted**，完整 Phase 2–6 历史已 fast-forward 到 `main`。Phase 7 与 Phase 7.1 已在独立分支完成冻结，下一步正式规划 Phase 8；不会借后续阶段绕过 Phase 6 的公开发布条件。
+Phase 6 继续保持 **Release Candidate Accepted**，完整 Phase 2–6 历史已 fast-forward 到 `main`。Phase 7 与 Phase 7.1 已冻结；Phase 8 正等待 Windows Terminal 修复复验，不会借后续阶段绕过 Phase 6 的公开发布条件。
 
 ## 16. 路线图完成标准
 

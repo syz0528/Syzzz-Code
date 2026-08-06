@@ -1,8 +1,8 @@
 # Syzzz Code 当前项目状态
 
-**更新时间：** 2026-08-04
+**更新时间：** 2026-08-05
 
-**当前分支：** `codex/phase7.1-skills`
+**当前分支：** `codex/phase8-tui`
 
 **Phase 4 冻结基线：** `3d2b8e6`
 
@@ -14,7 +14,11 @@
 
 **Phase 7 起始基线：** `161391a`
 
-**当前阶段：** Phase 7 与 Phase 7.1 已 **Frozen**；Phase 6 保持 **Release Candidate Accepted**；Phase 1 至 Phase 5.1 保持 **Frozen**
+**Phase 7/7.1 冻结基线：** `465f0bf`
+
+**Phase 8 TUI Spike：** `64ecaf2`
+
+**当前阶段：** Phase 8.1 为 **Implemented / Validation Pending**；Phase 7 与 Phase 7.1 已 **Frozen**；Phase 6 保持 **Release Candidate Accepted**
 
 ## 1. 当前结论
 
@@ -26,7 +30,9 @@ Phase 5.0 Core 已完成“可信扩展运行时、MCP Broker 与受限委派”
 
 Phase 5.1 在此基础上补齐扩展配置复审、MCP 本地收紧策略与断线生命周期、统一扩展状态、压缩/委派 Hook，以及 Subagent 软硬预算和停止语义。
 
-当前完整自动化测试为 **319/319**。Phase 1 至 Phase 7.1 的路径、权限、事件、Provider、终端、上下文、可靠编辑、会话恢复、扩展、任务组合和发布契约继续通过。
+Phase 8 在 319 项冻结回归上新增 fullscreen TUI、InteractionController、多行 Composer、结构化审批与选择、`AskUser` 和工作区输入历史。Phase 8.1 针对真实终端暴露的问题，将扁平 Transcript 改为语义 `ConversationBlock`，启用 Windows 可用的 changed-line 增量提交，加入 source-backed stable/mutable 流式展示、Markdown、活动耗时、语义滚动锚点、sticky 问题和结构化 Skill 提问。本轮继续补齐启动续聊选择、会话/工作区级编辑授权、64K/128K/200K fallback context、本地中英文描述、显式确认输入、客户端强制的 AskUser 自定义答案、直接拖选复制和可拖动滚动条；终端输入层现在会分离同批到达的 SGR 鼠标事件与真实文字，AskUser 不再被点击或滚轮控制码污染。增强键盘改为 fullscreen 首帧前探测，只有终端明确响应才启用 Kitty 协议；旧 Windows Terminal 与 IDE 内嵌终端可通过 `/terminal-setup install` 安装有备份、冲突拒绝的 `ESC+CR` 映射，未设置时使用 `Ctrl+J`。Header 展示工作区与会话 ID，Footer 集中展示 Provider/model、模式/权限、`used/window` context 和工具数。实现和本地自动门槛已通过；跨平台 CI 与用户复验仍未完成，因此当前不标记 Validated 或 Frozen。
+
+当前本地完整回归为 **362/362**、TUI 专项 **38/38**、离线 Eval **12/12**；覆盖率为 Lines **82.03%**、Branches **75.73%**、Functions **85.40%**。生产依赖审计为 0 vulnerability，候选包 312 个 allowlist 文件并通过全新 prefix 安装 smoke。
 
 11 项真实终端 dogfood 已全部通过，覆盖项目 trust 复审、MCP 策略与断线重连、Hook、Subagent 预算、取消清理、隐私恢复和撤销信任。公开 Streamable HTTP MCP 的真实握手、工具发现与只读天气调用也已通过，Phase 5 的扩展信任和传输闭环达到冻结条件。
 
@@ -66,6 +72,25 @@ Phase 7.1 从 `9bb4e62` 新建 `codex/phase7.1-skills`，只做 Skills 产品化
 - `$` 候选单行压缩、来源标记和预留行复用，完整 TUI 留给 Phase 8。
 
 冻结门禁为 319/319、coverage 82.34%/75.91%/86.41%、offline Eval 12/12；生产依赖审计、包内容检查、候选包安装 smoke 与 Windows/Ubuntu Node 22/24 CI 全部通过。用户 dogfood 已覆盖全局与 Legacy Skill、自动刷新、显式/隐式激活、资源读取、Skill cwd 脚本审批、activation eval、Git 安装生命周期、供应链拒绝、`$` 菜单和 Windows junction 边界。Phase 7 与 Phase 7.1 已达到冻结条件。
+
+Phase 8 从 `64ecaf2` 的 Ink Spike 建立 `codex/phase8-tui`：
+
+- TTY 默认 fullscreen，能力不足、CI、screen reader 或 `--ui inline` 确定性使用 inline；
+- `InteractionController` 与 `InteractionPort` 统一命令、notice、选择、确认、审批、Agent 提问和取消；
+- Ink TUI 提供 Header、Transcript、Activity、Interaction、Composer 与 Footer，并对窄终端降级；
+- Composer 按 grapheme 支持中文、Emoji、多行、粘贴、历史和 `/ @ $` 固定候选；
+- Composer 使用 `>` 前缀和真实 Ink 布局坐标定位光标，候选和底栏保持稳定高度；
+- Windows 预留最后一个物理行并启用 incremental rendering，普通输入、spinner 和 text delta 不再触发每帧全屏清除；
+- Transcript 使用语义块、Markdown 与 stable/mutable 流式 Presenter，支持鼠标滚轮、分页、sticky 问题、新输出提示和 resize 后源文本重排；
+- 同一工作区存在历史时默认结构化选择继续最近会话或新建会话；显式启动参数仍可直接恢复；
+- `acceptEdits` 可跟随已保存对话或工作区，Shell 仍逐次审批；`fullAccess` 永不持久化，`safe` 可撤销已有编辑授权；
+- `/context` 提供 64K/128K/200K fallback 预设，Footer 显示实际 `used/window`；`/language` 本地化内置命令与上下文候选描述；
+- `/stream` 立即更新 TUI 流式策略，首个正文 delta 直接可见，长回复按 40ms 稳定行节奏展示并在积压时有界追平；
+- 活动栏展示 phase、spinner、等待状态和有效工作耗时，回答尾部保留最终 token、工具、重试与耗时摘要；
+- `AskUser` 支持单选、多选、短文本和预设外自定义答案；激活 Skill 需要用户作答时明确要求使用结构化面板，答案不进入审计正文或 Composer 历史；
+- 确认与审批先在交互输入区显示 token，按 Enter 后提交；Transcript 支持直接左键拖选并在松开时复制，右侧滚动条支持点击和按住拖动；
+- 输入历史按工作区原子保存，可通过 `/history` 控制；
+- inline 与 NDJSON 保持长期兼容，React 不进入 Agent Runtime。
 
 ## 2. 扩展信任
 
@@ -209,8 +234,9 @@ subagents.enabled = true
 
 当前结果：
 
-- `npm test`：**319/319**
-- `npm run test:coverage`：综合门槛测得 Lines **82.34%**、Branches **75.91%**、Functions **86.41%**，均高于 82%/74%/84% 门槛
+- `npm test`：**362/362**
+- `npm run test:tui`：**38/38**，覆盖语义 Transcript、Markdown、真实 ANSI 屏幕回放、增量帧、流式 Presenter、Composer、启动续聊、可见确认、直接拖选复制、滚动条拖动、批量鼠标事件过滤、增强键盘探测、终端映射备份与冲突拒绝、中文界面、`grill-me` 与结构化交互
+- `npm run test:coverage`：综合门槛测得 Lines **82.03%**、Branches **75.73%**、Functions **85.40%**，均高于 82%/74%/84% 门槛
 - `npm run eval:offline`：十二项固定任务 **12/12**
 - `npm run test:providers`：五种离线 Provider Profile 与共享 Runner 契约 **46/46**
 - `npm run test:stability`：Windows Shell、会话和 MCP/Hook 生命周期连续三轮通过
@@ -234,9 +260,9 @@ subagents.enabled = true
 Phase 6/7 本地发布前卫生已通过：
 
 - `npm audit --omit=dev --audit-level=high`：`0 vulnerabilities`
-- `npm run license:check`：90 个生产依赖条目均为已审查的宽松许可证
-- `npm run secret:scan`：168 个工作树文件、完整可达补丁历史与提交信息通过高置信扫描
-- `npm run pack:check`：244 个条目，压缩与解压大小均在门槛内，allowlist 外文件 0
+- `npm run license:check`：127 个生产依赖条目均为已审查的宽松许可证
+- `npm run secret:scan`：189 个工作树文件、完整可达补丁历史与提交信息通过高置信扫描
+- `npm run pack:check`：312 个条目，allowlist 外文件 0，packed/unpacked size 均低于发布门槛
 - `npm run smoke:package`：真实 tarball 在全新 prefix 中完成全局 CLI、配置迁移、文本、NDJSON 与 doctor 验证
 - `syzzz doctor`：Node 22 要求、配置、Provider、模型、扩展配置、ripgrep 与 TypeScript Worker 均通过；仅保留 Windows ACL 无法自动验证的提醒
 - `git diff --check`：退出码 0；仅有 Windows 工作树 LF→CRLF 提示，无空白错误
@@ -257,11 +283,11 @@ Phase 6/7 本地发布前卫生已通过：
 - 当前不支持写入型、并行、后台或嵌套 Subagent。
 - `@` 不支持工作区外路径、URL、图片、PDF 或多模态附件。
 - Skill 不支持私有 Git 凭证、市场、自动更新、安装后自动执行或 `allowed-tools` 授权。
-- 当前没有完整 TUI、多行 Composer、结构化问题弹窗、鼠标交互、LSP、持久化索引、Tag 或 npm 发布。完整 TUI 进入 Phase 8。
+- 当前 TUI 的鼠标交互覆盖滚轮、可拖动滚动条、正文拖选复制和 sticky 问题，不支持通用点击控件、主题/插件系统、交互式 Shell、后台任务、LSP 或持久化索引；Tag 与 npm 发布仍未进行。
 
 ## 9. Git 状态
 
-- 当前分支：`codex/phase7.1-skills`
+- 当前分支：`codex/phase8-tui`
 - Phase 4 冻结提交：`3d2b8e6`
 - Phase 5.0 Core 非冻结检查点：`000bcaa`
 - Phase 5.1 实现验证基线：`85b2558`
@@ -272,6 +298,8 @@ Phase 6/7 本地发布前卫生已通过：
 - Phase 7 起始基线：`161391a`
 - Phase 7.1 起始基线：`9bb4e62`
 - Phase 7/7.1 跨平台验证提交：`75c3967`
+- Phase 7/7.1 冻结提交：`465f0bf`
+- Phase 8 TUI Spike：`64ecaf2`
 - 远程 `codex/phase7-task-composition` 与 `codex/phase7.1-skills` 已同步到同一历史
 - 版本号保持 `1.0.0`
 - 未发布 npm 包，未创建 Tag

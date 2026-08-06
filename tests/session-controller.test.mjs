@@ -5,6 +5,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { z } from 'zod';
 import { QueryEngine } from '../dist/engine.js';
+import { PermissionGrantStore } from '../dist/permissions/grant-store.js';
 import { SessionController } from '../dist/session-controller.js';
 import { SessionStore } from '../dist/session-store.js';
 
@@ -39,7 +40,10 @@ function provider(response = 'done') {
   };
 }
 
-async function withController(callback, { autoSave = true } = {}) {
+async function withController(
+  callback,
+  { autoSave = true, permissionGrants = false, onWarning } = {}
+) {
   const directory = await mkdtemp(join(tmpdir(), 'syzzz-controller-'));
   const workspace = join(directory, 'workspace');
   await mkdir(workspace);
@@ -66,7 +70,16 @@ async function withController(callback, { autoSave = true } = {}) {
     providerId: 'test',
     autoSave,
     engineFactory: makeEngine,
-    idFactory: () => SESSION_B
+    idFactory: () => SESSION_B,
+    ...(onWarning ? { warn: onWarning } : {}),
+    ...(permissionGrants
+      ? {
+          permissionGrants:
+            permissionGrants === true
+              ? new PermissionGrantStore(join(directory, 'config'))
+              : permissionGrants
+        }
+      : {})
   });
   try {
     await callback({ controller, store, directory });
@@ -75,6 +88,61 @@ async function withController(callback, { autoSave = true } = {}) {
     await rm(directory, { recursive: true, force: true });
   }
 }
+
+test('edit grants can follow a saved conversation or workspace but full access never persists', async () => {
+  await withController(
+    async ({ controller, store, directory }) => {
+      await controller.setPermissionMode('acceptEdits', 'session');
+      await controller.save();
+      await controller.newSession();
+      assert.equal(controller.engine.getPermissionMode(), 'safe');
+      await controller.resume(SESSION_A);
+      assert.equal(controller.engine.getPermissionMode(), 'acceptEdits');
+      assert.equal(controller.getStatus().permissionScope, 'session');
+
+      await controller.setPermissionMode('acceptEdits', 'workspace');
+      await controller.newSession();
+      assert.equal(controller.engine.getPermissionMode(), 'acceptEdits');
+      assert.equal(controller.getStatus().permissionScope, 'workspace');
+
+      await controller.setPermissionMode('acceptEdits', 'session');
+      assert.equal(controller.getStatus().permissionScope, 'session');
+      const grants = new PermissionGrantStore(join(directory, 'config'));
+      assert.equal(grants.resolve(store.workspaceId, 'another-session').scope, 'none');
+
+      await controller.setPermissionMode('fullAccess');
+      assert.equal(controller.engine.getPermissionMode(), 'fullAccess');
+      await controller.setPermissionMode('safe');
+      await controller.resume(SESSION_A);
+      assert.equal(controller.engine.getPermissionMode(), 'safe');
+      assert.equal(controller.getStatus().permissionScope, 'none');
+    },
+    { permissionGrants: true }
+  );
+});
+
+test('switching to safe fails closed even when persisted grant cleanup fails', async () => {
+  const warnings = [];
+  const grants = {
+    resolve() {
+      return { mode: 'safe', scope: 'none' };
+    },
+    setAcceptEdits() {},
+    clear() {
+      throw new Error('permission store unavailable');
+    }
+  };
+  await withController(
+    async ({ controller }) => {
+      controller.engine.setPermissionMode('fullAccess');
+      await controller.setPermissionMode('safe');
+      assert.equal(controller.engine.getPermissionMode(), 'safe');
+      assert.equal(controller.getStatus().permissionScope, 'none');
+      assert.match(warnings.join('\n'), /could not be cleared/u);
+    },
+    { permissionGrants: grants, onWarning: (warning) => warnings.push(warning) }
+  );
+});
 
 test('session controller autosaves portable state and restores mode with safe permissions', async () => {
   await withController(async ({ controller, store }) => {

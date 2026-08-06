@@ -1,5 +1,7 @@
 import chalk from 'chalk';
 import ora from 'ora';
+import { AsyncLocalStorage } from 'node:async_hooks';
+import { format } from 'node:util';
 import type { QueryEngine, ChatOptions } from './engine.js';
 import type { AgentEvent, TurnResult } from './events.js';
 import { consumeAgentTurn, HumanEventRenderer } from './cli-renderer.js';
@@ -8,10 +10,12 @@ import {
   COMMAND_CATEGORY_LABELS,
   CommandRegistry,
   createSlashSuggestionProvider,
+  normalizeCommandExecutionResult,
   parseSlashCommand,
   type CommandChoice,
   type CommandDefinition,
-  type CommandExecutionResult
+  type CommandExecutionResult as StructuredCommandExecutionResult,
+  type CommandHandlerResult as CommandExecutionResult
 } from './interactive-commands.js';
 import { AGENT_MODES, DEFAULT_AGENT_MODE, agentModeDescription, type AgentMode } from './modes.js';
 import {
@@ -22,7 +26,10 @@ import {
   permissionModeTitle,
   type PermissionMode
 } from './permissions/mode.js';
-import { TerminalInputController } from './terminal-input.js';
+import { TerminalInputController, type SuggestionProvider } from './terminal-input.js';
+import { InlineInteractionPort } from './interaction/inline-port.js';
+import type { InteractionPort } from './interaction/types.js';
+import { WorkspaceInputHistory } from './interaction/history.js';
 import {
   createContextSuggestionProvider,
   createSkillSuggestionProvider
@@ -34,13 +41,18 @@ import {
   validateSkillPath
 } from './composition/skill-authoring.js';
 import { runSkillActivationEval } from './composition/skill-eval.js';
+import type { UiLanguage } from './config.js';
 import type { AIProvider } from './providers/base.js';
 import type { SessionController } from './session-controller.js';
-import type { ToolApprovalRequest } from './types.js';
 import { isAbortError, OperationAbortedError } from './tools/abort.js';
+import {
+  localizeCommandDescription,
+  localizeSuggestionDescription,
+  resolveUiLanguage
+} from './ui-language.js';
+import { inspectTerminalKeyboard, installTerminalShiftEnter } from './tui/terminal-keyboard.js';
 
 const DOUBLE_INTERRUPT_WINDOW_MS = 2_000;
-const MAX_APPROVAL_PREVIEW_CHARACTERS = 20_000;
 const COMMAND_PRIORITIES = {
   ask: 10,
   plan: 20,
@@ -52,6 +64,7 @@ const COMMAND_PRIORITIES = {
   stream: 80,
   context: 81,
   skills: 82,
+  language: 83,
   extensions: 84,
   mcp: 85,
   hooks: 86,
@@ -63,11 +76,35 @@ const COMMAND_PRIORITIES = {
   save: 110,
   compact: 120,
   rename: 130,
+  history: 135,
+  terminalSetup: 137,
   help: 140,
   exit: 150
 } as const;
 
 export type StreamDisplayMode = 'on' | 'off';
+
+const CONTEXT_WINDOW_PRESETS = [65_536, 131_072, 200_000] as const;
+
+function parseContextWindowPreset(value: string): number | undefined {
+  const normalized = value.trim().toLowerCase().replace(/\s+/gu, '');
+  const aliases: Record<string, number> = {
+    '64k': 65_536,
+    '65536': 65_536,
+    '128k': 131_072,
+    '131072': 131_072,
+    '200k': 200_000,
+    '200000': 200_000
+  };
+  return aliases[normalized];
+}
+
+function formatTokenWindow(tokens: number): string {
+  if (tokens === 65_536) return '64K';
+  if (tokens === 131_072) return '128K';
+  if (tokens === 200_000) return '200K';
+  return `${Math.round(tokens / 1000)}K`;
+}
 
 export interface InteractiveProviderOption {
   id: string;
@@ -92,11 +129,25 @@ export interface InteractiveSessionOptions {
   ) => Promise<{ providerId: string; models: readonly string[] }>;
   modelsForProvider?: (providerId: string) => readonly string[];
   createSkillEvalProvider?: () => AIProvider;
+  persistentHistory?: boolean;
+  persistHistoryEnabled?: (enabled: boolean) => void | Promise<void>;
+  contextWindowTokens?: number;
+  persistContextWindow?: (tokens: number) => void | Promise<void>;
+  uiLanguage?: UiLanguage;
+  persistUiLanguage?: (language: UiLanguage) => void | Promise<void>;
 }
 
-interface InteractiveCommandContext {
+export interface InteractiveTerminalReader {
+  readLine(
+    options: Parameters<TerminalInputController['readLine']>[0]
+  ): ReturnType<TerminalInputController['readLine']>;
+}
+
+export interface InteractiveCommandContext {
   engine: QueryEngine;
-  terminal: TerminalInputController;
+  terminal: InteractiveTerminalReader;
+  interaction: InteractionPort;
+  structuredSelections: boolean;
   streamOutput: boolean;
   availableModels: readonly string[];
   persistStreamOutput?: (enabled: boolean) => void | Promise<void>;
@@ -107,7 +158,48 @@ interface InteractiveCommandContext {
   activateProvider?: InteractiveSessionOptions['activateProvider'];
   modelsForProvider?: (providerId: string) => readonly string[];
   createSkillEvalProvider?: () => AIProvider;
+  persistHistoryEnabled?: (enabled: boolean) => void | Promise<void>;
+  contextWindowTokens: number;
+  persistContextWindow?: (tokens: number) => void | Promise<void>;
+  uiLanguage: UiLanguage;
+  persistUiLanguage?: (language: UiLanguage) => void | Promise<void>;
 }
+
+export interface InteractiveCommandRuntime {
+  readonly context: InteractiveCommandContext;
+  readonly registry: CommandRegistry<InteractiveCommandContext>;
+  readonly suggestionProviders: readonly SuggestionProvider[];
+  execute(input: string, signal: AbortSignal): Promise<StructuredCommandExecutionResult>;
+}
+
+const nativeConsole = globalThis.console;
+const activeInteraction = new AsyncLocalStorage<InteractionPort>();
+const console = {
+  log(...values: unknown[]): void {
+    const interaction = activeInteraction.getStore();
+    if (interaction) {
+      interaction.notice({ tone: 'info', text: format(...values) });
+      return;
+    }
+    nativeConsole.log(...values);
+  },
+  error(...values: unknown[]): void {
+    const interaction = activeInteraction.getStore();
+    if (interaction) {
+      interaction.notice({ tone: 'error', text: format(...values) });
+      return;
+    }
+    nativeConsole.error(...values);
+  },
+  warn(...values: unknown[]): void {
+    const interaction = activeInteraction.getStore();
+    if (interaction) {
+      interaction.notice({ tone: 'warning', text: format(...values) });
+      return;
+    }
+    nativeConsole.warn(...values);
+  }
+};
 
 function requireSession(commandContext: InteractiveCommandContext): SessionController {
   const session = commandContext.session;
@@ -115,21 +207,6 @@ function requireSession(commandContext: InteractiveCommandContext): SessionContr
     throw new Error('Session commands are unavailable in the current process');
   }
   return session;
-}
-
-function formatApprovalRequest(request: ToolApprovalRequest): string {
-  const lines = [
-    chalk.yellow(`\nApproval required: ${request.toolName} (${request.risk})`),
-    request.description
-  ];
-  if (request.preview) {
-    const preview =
-      request.preview.length <= MAX_APPROVAL_PREVIEW_CHARACTERS
-        ? request.preview
-        : `${request.preview.slice(0, MAX_APPROVAL_PREVIEW_CHARACTERS)}\n[Preview truncated]`;
-    lines.push('', preview);
-  }
-  return lines.join('\n');
 }
 
 function getEnginePermissionMode(engine: QueryEngine): PermissionMode {
@@ -216,35 +293,88 @@ function setEngineMode(engine: QueryEngine, mode: AgentMode): void {
   engine.setMode(mode);
 }
 
-function permissionChoices(engine: QueryEngine): readonly CommandChoice[] {
-  const currentMode = getEnginePermissionMode(engine);
-  return (['safe', 'acceptEdits', 'fullAccess'] as const).map((mode) => ({
-    value: mode,
-    label: permissionModeTitle(mode),
-    description: permissionModeDescription(mode),
-    current: mode === currentMode
-  }));
+function localText(context: InteractiveCommandContext, english: string, chinese: string): string {
+  return resolveUiLanguage(context.uiLanguage) === 'zh-CN' ? chinese : english;
+}
+
+function permissionChoices(context: InteractiveCommandContext): readonly CommandChoice[] {
+  const currentMode = getEnginePermissionMode(context.engine);
+  const scope = context.session?.getStatus().permissionScope ?? 'none';
+  return [
+    {
+      value: 'safe',
+      label: localText(context, 'Safe', '安全模式'),
+      description: localText(
+        context,
+        'Require approval and clear persisted edit grants for this workspace',
+        '恢复逐次审批，并清除当前会话和工作区的编辑授权'
+      ),
+      current: currentMode === 'safe'
+    },
+    {
+      value: 'acceptEdits',
+      label: localText(context, 'Allow edits for this conversation', '本会话允许编辑'),
+      description: localText(
+        context,
+        'Persist file edit approval only for this saved session; Shell still asks',
+        '仅随当前已保存会话持久化；Shell 仍逐次审批'
+      ),
+      current: currentMode === 'acceptEdits' && scope === 'session'
+    },
+    {
+      value: 'workspace',
+      label: localText(context, 'Allow edits for this workspace', '本工作区允许编辑'),
+      description: localText(
+        context,
+        'Persist file edit approval for sessions in this folder; Shell still asks',
+        '对当前文件夹中的会话持久化；Shell 仍逐次审批'
+      ),
+      current: currentMode === 'acceptEdits' && scope === 'workspace'
+    },
+    {
+      value: 'fullAccess',
+      label: localText(context, permissionModeTitle('fullAccess'), '完全访问'),
+      description: localText(
+        context,
+        `${permissionModeDescription('fullAccess')} Never persisted.`,
+        '取消本会话审批提示；风险较高且永不持久化'
+      ),
+      current: currentMode === 'fullAccess'
+    }
+  ];
 }
 
 async function handlePermissionsCommand(
-  engine: QueryEngine,
+  context: InteractiveCommandContext,
   argument: string | undefined,
-  terminal: TerminalInputController,
   signal: AbortSignal
 ): Promise<void> {
+  const engine = context.engine;
   const currentMode = getEnginePermissionMode(engine);
   if (!argument) {
     console.log(chalk.cyan(`\n${formatPermissionModesHelp(currentMode)}\n`));
+    console.log(
+      chalk.gray(
+        '  workspace    Allow file edits across sessions in this folder; Shell still asks\n'
+      )
+    );
     return;
   }
 
-  const nextMode = parsePermissionMode(argument);
+  const normalizedArgument = argument.trim().toLowerCase();
+  const nextMode =
+    normalizedArgument === 'workspace' ? 'acceptEdits' : parsePermissionMode(argument);
+  const persistenceScope = normalizedArgument === 'workspace' ? 'workspace' : 'session';
   if (!nextMode) {
     console.log(chalk.red(`\nUnknown permission mode: ${argument}`));
-    console.log(chalk.gray('Use: /permissions safe | acceptEdits | fullAccess\n'));
+    console.log(chalk.gray('Use: /permissions safe | acceptEdits | workspace | fullAccess\n'));
     return;
   }
-  if (nextMode === currentMode) {
+  const currentScope = context.session?.getStatus().permissionScope ?? 'none';
+  if (
+    nextMode === currentMode &&
+    (nextMode !== 'acceptEdits' || currentScope === persistenceScope)
+  ) {
     console.log(
       chalk.green(`\nPermission mode is already ${permissionModeTitle(nextMode)} (${nextMode}).\n`)
     );
@@ -259,28 +389,49 @@ async function handlePermissionsCommand(
       )
     );
     console.log(chalk.yellow('Type y to confirm. Any other input cancels.'));
-    const confirmation = await terminal.readLine({
-      prompt: chalk.red('Enable Full Access for this session? [y/N]: '),
-      signal
-    });
-    if (confirmation.type === 'interrupt') {
-      console.log(chalk.yellow('\nCancelling the current operation...'));
-      throw new OperationAbortedError('Permission command cancelled');
+    let confirmed: boolean;
+    try {
+      confirmed = await context.interaction.confirm(
+        {
+          title: 'Enable Full Access for this session?',
+          message:
+            'Full Access disables approval prompts for this session. File tools remain workspace-bound, but Shell can still affect the whole account.',
+          confirmToken: 'y'
+        },
+        signal
+      );
+    } catch (error) {
+      if (isAbortError(error)) {
+        throw new OperationAbortedError('Permission command cancelled');
+      }
+      throw error;
     }
-    if (confirmation.type !== 'line' || confirmation.value.trim().toLowerCase() !== 'y') {
+    if (!confirmed) {
       console.log(chalk.yellow('\nFull Access not enabled. Permission mode unchanged.\n'));
       return;
     }
   }
 
-  setEnginePermissionMode(engine, nextMode);
+  if (context.session) {
+    await context.session.setPermissionMode(nextMode, persistenceScope);
+  } else {
+    setEnginePermissionMode(engine, nextMode);
+  }
   console.log(
     chalk.green(`\nPermission mode set to ${permissionModeTitle(nextMode)} (${nextMode}).`)
   );
-  console.log(chalk.gray('This setting applies only to the current process session.\n'));
+  console.log(
+    chalk.gray(
+      nextMode === 'fullAccess'
+        ? 'Full Access applies only to this process and is never persisted.\n'
+        : nextMode === 'safe'
+          ? 'Persisted edit grants for this conversation and workspace were cleared.\n'
+          : `Edit approval follows this ${persistenceScope === 'workspace' ? 'workspace' : 'conversation'}; Shell still requires approval.\n`
+    )
+  );
 }
 
-async function consumeInteractiveTurn(
+export async function consumeInteractiveTurn(
   engine: QueryEngine,
   message: string,
   options: ChatOptions,
@@ -302,14 +453,22 @@ function streamChoices(context: InteractiveCommandContext): readonly CommandChoi
   return [
     {
       value: 'on',
-      label: 'On',
-      description: 'Show assistant text as it arrives.',
+      label: localText(context, 'On', '开启'),
+      description: localText(
+        context,
+        'Show assistant text as it arrives.',
+        '逐步显示到达的回答正文。'
+      ),
       current: context.streamOutput
     },
     {
       value: 'off',
-      label: 'Off',
-      description: 'Buffer assistant text until the turn completes.',
+      label: localText(context, 'Off', '关闭'),
+      description: localText(
+        context,
+        'Buffer assistant text until the turn completes.',
+        '等待当前回合完成后一次显示正文。'
+      ),
       current: !context.streamOutput
     }
   ];
@@ -319,7 +478,8 @@ function modelChoices(context: InteractiveCommandContext): readonly CommandChoic
   const currentModel = getProviderInfo(context.engine)?.model;
   return context.availableModels.map((model) => ({
     value: model,
-    description: model === currentModel ? 'Current model' : undefined,
+    description:
+      model === currentModel ? localText(context, 'Current model', '当前模型') : undefined,
     current: model === currentModel
   }));
 }
@@ -346,7 +506,8 @@ function formatStatus(context: InteractiveCommandContext): string {
     `  Model:        ${status.provider.model}`,
     ...(status.lastReportedModel ? [`  Reported:     ${status.lastReportedModel}`] : []),
     `  Work mode:    ${status.mode}`,
-    `  Permissions:  ${status.permissionMode}`,
+    `  Permissions:  ${status.permissionMode}` +
+      `${sessionStatus ? ` (${sessionStatus.permissionScope})` : ''}`,
     `  Context:      ${status.context.estimatedInputTokens} / ` +
       `${status.context.contextWindowTokens} tokens (${contextPercent}%)`,
     `  Compactions:  ${status.context.compactions}`,
@@ -492,14 +653,14 @@ async function confirmDiscardIfNeeded(
   ) {
     return true;
   }
-  const answer = await context.terminal.readLine({
-    prompt: chalk.yellow('Current session has unsaved changes. Discard them? [y/N]: '),
+  return context.interaction.confirm(
+    {
+      title: 'Discard unsaved session changes?',
+      message: 'The current session has unsaved changes.',
+      confirmToken: 'y'
+    },
     signal
-  });
-  if (answer.type === 'interrupt') {
-    throw new OperationAbortedError('Session switch cancelled');
-  }
-  return answer.type === 'line' && answer.value.trim().toLowerCase() === 'y';
+  );
 }
 
 function findConfiguredModel(models: readonly string[], requested: string): string | undefined {
@@ -513,8 +674,9 @@ function providerChoices(context: InteractiveCommandContext): readonly CommandCh
     value: provider.id,
     label: provider.name,
     description: provider.available
-      ? `${provider.model}${provider.id === currentProviderId ? ' (current)' : ''}`
-      : (provider.unavailableReason ?? 'Credentials are not configured'),
+      ? `${provider.model}${provider.id === currentProviderId ? localText(context, ' (current)', '（当前）') : ''}`
+      : (provider.unavailableReason ??
+        localText(context, 'Credentials are not configured', '尚未配置凭证')),
     current: provider.id === currentProviderId
   }));
 }
@@ -523,7 +685,7 @@ async function chooseFromNumberedList<T>(
   values: readonly T[],
   format: (value: T, index: number) => string,
   prompt: string,
-  terminal: TerminalInputController,
+  terminal: InteractiveTerminalReader,
   signal: AbortSignal
 ): Promise<T | undefined> {
   values.forEach((value, index) => {
@@ -571,7 +733,7 @@ function formatCommandsHelp(
   return lines.join('\n');
 }
 
-function createCommandRegistry(): CommandRegistry<InteractiveCommandContext> {
+export function createCommandRegistry(): CommandRegistry<InteractiveCommandContext> {
   const registry = new CommandRegistry<InteractiveCommandContext>();
   const register = (command: CommandDefinition<InteractiveCommandContext>) =>
     registry.register(command);
@@ -645,21 +807,23 @@ function createCommandRegistry(): CommandRegistry<InteractiveCommandContext> {
           console.log(chalk.yellow('\nNo saved sessions for this workspace.\n'));
           return 'continue';
         }
-        console.log(chalk.cyan('\nSaved sessions:\n'));
-        const selected = await chooseFromNumberedList(
-          sessions,
-          (session, index) =>
-            `  ${index + 1}. ${session.title} ` +
-            `[${session.sessionId.slice(0, 8)}] ${session.updatedAt}`,
-          '\nSelect session [1]: ',
-          commandContext.terminal,
+        const selectedId = await commandContext.interaction.select(
+          {
+            title: 'Resume session',
+            choices: sessions.map((session) => ({
+              value: session.sessionId,
+              label: `${session.title} [${session.sessionId.slice(0, 8)}]`,
+              description: session.updatedAt
+            })),
+            initialValue: sessions[0]?.sessionId
+          },
           signal
         );
-        if (!selected) {
+        if (!selectedId) {
           console.log(chalk.yellow('\nInvalid selection.\n'));
           return 'continue';
         }
-        selection = selected.sessionId;
+        selection = selectedId;
       }
       if (!(await confirmDiscardIfNeeded(commandContext, signal))) {
         console.log(chalk.yellow('\nResume cancelled.\n'));
@@ -716,10 +880,19 @@ function createCommandRegistry(): CommandRegistry<InteractiveCommandContext> {
       if (typeof commandContext.engine.compactContext !== 'function') {
         throw new Error('The current engine does not support manual compaction');
       }
-      const spinner = ora({
-        text: 'Compacting context...',
-        discardStdin: false
-      }).start();
+      const spinner = commandContext.structuredSelections
+        ? undefined
+        : ora({
+            text: 'Compacting context...',
+            discardStdin: false
+          }).start();
+      if (!spinner) {
+        commandContext.interaction.notice({
+          tone: 'info',
+          text: 'Compacting context...',
+          transient: true
+        });
+      }
       const renderer = new HumanEventRenderer({
         streamOutput: false,
         spinner
@@ -862,42 +1035,124 @@ function createCommandRegistry(): CommandRegistry<InteractiveCommandContext> {
     name: 'context',
     category: 'runtime',
     priority: COMMAND_PRIORITIES.context,
-    description: 'Show or reload AGENTS.md and explicit context diagnostics.',
-    argumentHint: '[reload]',
-    isEnabled: (commandContext) => Boolean(commandContext.engine.getCompositionRuntime?.()),
-    choices: () => [{ value: 'reload', description: 'Reload AGENTS.md and Skill metadata' }],
+    description: 'Show context usage, reload instructions, or select a context window budget.',
+    argumentHint: '[reload|64k|128k|200k]',
+    choices: (commandContext) => [
+      ...CONTEXT_WINDOW_PRESETS.map((tokens) => ({
+        value: formatTokenWindow(tokens).toLowerCase(),
+        label: `${formatTokenWindow(tokens)} ${localText(commandContext, 'context', '上下文')}`,
+        description: localText(
+          commandContext,
+          'Persist this fallback context budget for configured models without an override',
+          '为未单独配置窗口的模型持久化此 fallback 上下文预算'
+        ),
+        current: commandContext.contextWindowTokens === tokens
+      })),
+      {
+        value: 'reload',
+        description: localText(
+          commandContext,
+          'Reload AGENTS.md and Skill metadata',
+          '重新加载 AGENTS.md 与 Skill 元数据'
+        )
+      }
+    ],
     async execute(argument, commandContext): Promise<CommandExecutionResult> {
       const runtime = commandContext.engine.getCompositionRuntime?.();
-      if (!runtime) {
-        console.log(chalk.yellow('\nTask composition is unavailable.\n'));
-        return 'continue';
-      }
       const normalized = argument?.trim().toLowerCase();
       if (normalized === 'reload') {
+        if (!runtime) {
+          console.log(chalk.yellow('\nTask composition is unavailable.\n'));
+          return 'continue';
+        }
         await runtime.reload();
         console.log(chalk.green('\nContext and Skill metadata reloaded.\n'));
       } else if (normalized) {
-        console.log(chalk.red('\nUse: /context [reload]\n'));
-        return 'continue';
-      }
-      const status = runtime.getStatus();
-      console.log(chalk.cyan('\nTask context\n'));
-      console.log(`  AGENTS.md: ${status.instructions.loaded} loaded`);
-      for (const source of status.instructions.sources) {
+        const tokens = parseContextWindowPreset(normalized);
+        if (!tokens) {
+          console.log(chalk.red('\nUse: /context reload | 64k | 128k | 200k\n'));
+          return 'continue';
+        }
+        await commandContext.persistContextWindow?.(tokens);
+        commandContext.engine.setDefaultContextWindowTokens(tokens);
+        commandContext.contextWindowTokens = tokens;
+        console.log(chalk.green(`\nContext fallback budget set to ${formatTokenWindow(tokens)}.`));
         console.log(
-          `    ${source.source}: ${source.path} (${source.byteCount} bytes)` +
-            `${source.truncated ? ' [truncated]' : ''}`
+          chalk.gray('A model-specific Provider context override remains authoritative when set.\n')
         );
       }
+      const engineStatus = commandContext.engine.getStatus();
+      console.log(chalk.cyan('\nTask context\n'));
       console.log(
-        `  References: max ${status.context.maximumReferencesPerTurn} / ` +
-          `${status.context.maximumFileBytes} bytes each / ` +
-          `${status.context.maximumTotalBytes} bytes total`
+        `  Usage: ${engineStatus.context.estimatedInputTokens} / ` +
+          `${engineStatus.context.contextWindowTokens} tokens`
       );
-      for (const warning of status.warnings) {
-        console.log(chalk.yellow(`  Warning: ${warning}`));
+      console.log(`  Fallback: ${formatTokenWindow(commandContext.contextWindowTokens)}`);
+      if (runtime) {
+        const status = runtime.getStatus();
+        console.log(`  AGENTS.md: ${status.instructions.loaded} loaded`);
+        for (const source of status.instructions.sources) {
+          console.log(
+            `    ${source.source}: ${source.path} (${source.byteCount} bytes)` +
+              `${source.truncated ? ' [truncated]' : ''}`
+          );
+        }
+        console.log(
+          `  References: max ${status.context.maximumReferencesPerTurn} / ` +
+            `${status.context.maximumFileBytes} bytes each / ` +
+            `${status.context.maximumTotalBytes} bytes total`
+        );
+        for (const warning of status.warnings) {
+          console.log(chalk.yellow(`  Warning: ${warning}`));
+        }
       }
       console.log('');
+      return 'continue';
+    }
+  });
+
+  register({
+    name: 'language',
+    category: 'runtime',
+    priority: COMMAND_PRIORITIES.language,
+    description: 'Choose Chinese or English descriptions for local interactive commands.',
+    argumentHint: '[auto|zh-CN|en]',
+    choices: (commandContext) =>
+      (
+        [
+          {
+            value: 'auto',
+            label: localText(commandContext, 'Auto', '自动'),
+            description: localText(commandContext, 'Follow the terminal locale', '跟随终端区域设置')
+          },
+          { value: 'zh-CN', label: '中文', description: '使用中文本地描述' },
+          {
+            value: 'en',
+            label: 'English',
+            description: localText(
+              commandContext,
+              'Use English local descriptions',
+              '使用英文本地描述'
+            )
+          }
+        ] as const
+      ).map((choice) => ({
+        ...choice,
+        current: commandContext.uiLanguage === choice.value
+      })),
+    async execute(argument, commandContext): Promise<CommandExecutionResult> {
+      const language = argument?.trim();
+      if (language !== 'auto' && language !== 'zh-CN' && language !== 'en') {
+        console.log(chalk.red('\nUse: /language auto | zh-CN | en\n'));
+        return 'continue';
+      }
+      await commandContext.persistUiLanguage?.(language);
+      commandContext.uiLanguage = language;
+      console.log(
+        chalk.green(
+          `\nLocal description language set to ${language === 'zh-CN' ? '中文' : language === 'en' ? 'English' : 'Auto'}.\n`
+        )
+      );
       return 'continue';
     }
   });
@@ -1014,14 +1269,14 @@ function createCommandRegistry(): CommandRegistry<InteractiveCommandContext> {
         const descriptionIndex = rest.indexOf('--description');
         let description = descriptionIndex >= 0 ? rest[descriptionIndex + 1] : undefined;
         if (!description) {
-          const answer = await commandContext.terminal.readLine({
-            prompt: chalk.yellow('Skill description: '),
-            signal
-          });
-          if (answer.type === 'interrupt') {
-            throw new OperationAbortedError('Skill creation cancelled');
-          }
-          description = answer.type === 'line' ? answer.value : '';
+          description =
+            (await commandContext.interaction.textInput(
+              {
+                title: 'Skill description',
+                maximumCharacters: 1024
+              },
+              signal
+            )) ?? '';
         }
         const bodyIndex = rest.indexOf('--body-file');
         const bodyFile = bodyIndex >= 0 ? rest[bodyIndex + 1] : undefined;
@@ -1097,15 +1352,16 @@ function createCommandRegistry(): CommandRegistry<InteractiveCommandContext> {
         const parsed = parseInteractiveSkillManagement(rest);
         const installer = new SkillInstaller({ workspaceRoot: runtime.workspaceRoot });
         const confirm = async (preview: SkillInstallPreview) => {
-          console.log(`\n${formatInteractiveSkillPreview(preview)}\n`);
-          const answer = await commandContext.terminal.readLine({
-            prompt: chalk.yellow(`Proceed with Skill ${preview.action}? [y/N]: `),
+          return commandContext.interaction.confirm(
+            {
+              title: `Proceed with Skill ${preview.action}?`,
+              message:
+                'Installing a Skill does not execute its scripts or change permissions or workspace trust.',
+              preview: formatInteractiveSkillPreview(preview),
+              confirmToken: 'y'
+            },
             signal
-          });
-          if (answer.type === 'interrupt') {
-            throw new OperationAbortedError('Skill management cancelled');
-          }
-          return answer.type === 'line' && (answer.value === 'y' || answer.value === 'Y');
+          );
         };
         if (action === 'install') {
           const record = await installer.install(parsed.target, {
@@ -1175,15 +1431,10 @@ function createCommandRegistry(): CommandRegistry<InteractiveCommandContext> {
     category: 'runtime',
     priority: COMMAND_PRIORITIES.permissions,
     description: 'View or change the session permission mode.',
-    argumentHint: '[safe|acceptEdits|fullAccess]',
-    choices: (commandContext) => permissionChoices(commandContext.engine),
+    argumentHint: '[safe|acceptEdits|workspace|fullAccess]',
+    choices: (commandContext) => permissionChoices(commandContext),
     async execute(argument, commandContext, signal): Promise<CommandExecutionResult> {
-      await handlePermissionsCommand(
-        commandContext.engine,
-        argument,
-        commandContext.terminal,
-        signal
-      );
+      await handlePermissionsCommand(commandContext, argument, signal);
       return 'continue';
     }
   });
@@ -1503,14 +1754,17 @@ function createCommandRegistry(): CommandRegistry<InteractiveCommandContext> {
         'Referenced programs can still change independently. This does not change ' +
           'Agent mode or permission mode, and it is not an OS sandbox.'
       );
-      const answer = await commandContext.terminal.readLine({
-        prompt: chalk.yellow('Trust project extensions for this workspace? [y/N]: '),
+      const confirmed = await commandContext.interaction.confirm(
+        {
+          title: 'Trust project extensions for this workspace?',
+          message:
+            'Trust is bound to this workspace and reviewed extension definition. This is not an OS sandbox.',
+          preview: [...preview.lines, `Review digest: ${preview.digest.slice(0, 12)}`].join('\n'),
+          confirmToken: 'y'
+        },
         signal
-      });
-      if (answer.type === 'interrupt') {
-        throw new OperationAbortedError('Workspace trust cancelled');
-      }
-      if (answer.type !== 'line' || (answer.value !== 'y' && answer.value !== 'Y')) {
+      );
+      if (!confirmed) {
         console.log(chalk.yellow('\nWorkspace trust cancelled.\n'));
         return 'continue';
       }
@@ -1589,6 +1843,146 @@ function createCommandRegistry(): CommandRegistry<InteractiveCommandContext> {
   });
 
   register({
+    name: 'history',
+    category: 'session',
+    priority: COMMAND_PRIORITIES.history,
+    description: 'Inspect or control workspace input history.',
+    argumentHint: '[status|on|off|clear]',
+    async execute(argument, commandContext, signal): Promise<CommandExecutionResult> {
+      const action = argument?.trim().toLowerCase() || 'status';
+      if (action === 'status') {
+        const status = commandContext.interaction.historyStatus();
+        console.log(
+          chalk.cyan(
+            `\nInput history: ${status.enabled ? 'on' : 'off'} | ` +
+              `${status.entries} entries\n${status.path}\n`
+          )
+        );
+        return 'continue';
+      }
+      if (action === 'on' || action === 'off') {
+        const enabled = action === 'on';
+        await commandContext.interaction.setHistoryEnabled(enabled);
+        await commandContext.persistHistoryEnabled?.(enabled);
+        console.log(
+          chalk.green(`\nWorkspace input history ${enabled ? 'enabled' : 'disabled'}.\n`)
+        );
+        return 'continue';
+      }
+      if (action === 'clear') {
+        const confirmed = await commandContext.interaction.confirm(
+          {
+            title: 'Clear workspace input history?',
+            message: 'Only the current workspace history file will be cleared.',
+            confirmToken: 'y'
+          },
+          signal
+        );
+        if (confirmed) {
+          await commandContext.interaction.clearHistory();
+          console.log(chalk.green('\nWorkspace input history cleared.\n'));
+        } else {
+          console.log(chalk.yellow('\nHistory clear cancelled.\n'));
+        }
+        return 'continue';
+      }
+      console.log(chalk.red('\nUse: /history status|on|off|clear\n'));
+      return 'continue';
+    }
+  });
+
+  register({
+    name: 'terminal-setup',
+    category: 'general',
+    priority: COMMAND_PRIORITIES.terminalSetup,
+    description: 'Inspect or install a safe Shift+Enter terminal mapping.',
+    argumentHint: '[status|install]',
+    choices: () => [
+      { value: 'status', label: 'Status' },
+      { value: 'install', label: 'Install Shift+Enter mapping' }
+    ],
+    async execute(argument, commandContext, signal): Promise<CommandExecutionResult> {
+      const action = argument?.trim().toLowerCase() || 'status';
+      const status = await inspectTerminalKeyboard();
+      if (action === 'status') {
+        const state = status.setupInstalled
+          ? localText(commandContext, 'installed', '已安装')
+          : status.setupAvailable
+            ? localText(commandContext, 'not installed', '未安装')
+            : localText(
+                commandContext,
+                'not available for this terminal',
+                '当前终端不支持自动设置'
+              );
+        console.log(
+          chalk.cyan(
+            `\nShift+Enter mapping: ${state}\n` +
+              `Terminal: ${status.host}\n` +
+              (status.configurationPath ? `Configuration: ${status.configurationPath}\n` : '')
+          )
+        );
+        if (status.conflict) console.log(chalk.yellow(`${status.conflict}\n`));
+        if (!status.setupInstalled) {
+          console.log(
+            chalk.gray(
+              status.setupAvailable
+                ? 'Use /terminal-setup install. Ctrl+J remains the no-configuration newline shortcut.\n'
+                : 'Use Ctrl+J to insert a newline in this terminal.\n'
+            )
+          );
+        }
+        return 'continue';
+      }
+      if (action !== 'install') {
+        console.log(chalk.red('\nUse: /terminal-setup status|install\n'));
+        return 'continue';
+      }
+      if (status.setupInstalled) {
+        console.log(chalk.green('\nShift+Enter terminal mapping is already installed.\n'));
+        return 'continue';
+      }
+      if (!status.setupAvailable || !status.configurationPath) {
+        console.log(
+          chalk.yellow(
+            '\nAutomatic Shift+Enter setup is unavailable for this terminal. Use Ctrl+J for newline.\n'
+          )
+        );
+        return 'continue';
+      }
+      if (status.conflict) {
+        console.log(chalk.yellow(`\n${status.conflict}\n`));
+        return 'continue';
+      }
+      const confirmed = await commandContext.interaction.confirm(
+        {
+          title: 'Install Shift+Enter terminal mapping?',
+          message:
+            'Syzzz will back up the terminal configuration, then map Shift+Enter to an escape-prefixed Enter sequence.',
+          preview: status.configurationPath,
+          confirmToken: 'y'
+        },
+        signal
+      );
+      if (!confirmed) {
+        console.log(chalk.yellow('\nTerminal setup cancelled.\n'));
+        return 'continue';
+      }
+      const result = await installTerminalShiftEnter();
+      console.log(
+        chalk.green(
+          result.changed
+            ? '\nShift+Enter mapping installed. Restart the terminal if it does not take effect immediately.\n'
+            : '\nShift+Enter mapping is already installed.\n'
+        )
+      );
+      if (result.backupPath) {
+        console.log(chalk.gray(`Backup: ${result.backupPath}\n`));
+      }
+      return 'continue';
+    }
+  });
+
+  register({
     name: 'help',
     aliases: ['?'],
     category: 'general',
@@ -1614,55 +2008,126 @@ function createCommandRegistry(): CommandRegistry<InteractiveCommandContext> {
   return registry;
 }
 
-async function executeSlashCommand(
+export async function executeSlashCommand(
   input: string,
   registry: CommandRegistry<InteractiveCommandContext>,
   context: InteractiveCommandContext,
   signal: AbortSignal
-): Promise<CommandExecutionResult> {
+): Promise<StructuredCommandExecutionResult> {
   const parsed = parseSlashCommand(input);
   if (!parsed) {
-    return 'continue';
+    return { type: 'continue' };
   }
   const command = registry.resolve(parsed.name, context);
   if (!command) {
     const suggestions = registry.closest(parsed.name, context);
-    console.log(chalk.red(`\nUnknown command: /${parsed.name}`));
+    context.interaction.notice({ tone: 'error', text: `Unknown command: /${parsed.name}` });
     if (suggestions.length > 0) {
-      console.log(
-        chalk.gray(`Did you mean: ${suggestions.map((name) => `/${name}`).join(', ')}?\n`)
-      );
+      context.interaction.notice({
+        tone: 'muted',
+        text: `Did you mean: ${suggestions.map((name) => `/${name}`).join(', ')}?`
+      });
     }
-    return 'continue';
+    return { type: 'continue' };
   }
-  return command.execute(parsed.argument, context, signal);
+  let argument = parsed.argument;
+  if (!argument && context.structuredSelections) {
+    const choices = command.choices?.(context) ?? [];
+    if (choices.length > 0) {
+      argument = await context.interaction.select(
+        {
+          title: `/${command.name}`,
+          message: localizeCommandDescription(
+            command.name,
+            command.description,
+            resolveUiLanguage(context.uiLanguage)
+          ),
+          choices: choices.map((choice) => ({
+            value: choice.value,
+            label: choice.label ?? choice.value,
+            ...(choice.description ? { description: choice.description } : {}),
+            ...(choice.current ? { current: true } : {})
+          })),
+          initialValue: choices.find((choice) => choice.current)?.value
+        },
+        signal
+      );
+      if (!argument) {
+        return { type: 'continue' };
+      }
+    }
+  }
+  return normalizeCommandExecutionResult(
+    await activeInteraction.run(context.interaction, () =>
+      command.execute(argument, context, signal)
+    )
+  );
 }
 
-async function requestApproval(
-  request: ToolApprovalRequest,
-  signal: AbortSignal,
-  terminal: TerminalInputController
-) {
-  console.log(formatApprovalRequest(request));
-  const allowsEditSession = request.choices.includes('allow-edits-session');
-  const answer = await terminal.readLine({
-    prompt: chalk.yellow(
-      allowsEditSession
-        ? 'Approve? [y] once / [a] all edits this session / [N] deny: '
-        : 'Approve this operation? [y/N]: '
-    ),
-    signal
+export function createInteractiveCommandRuntime(
+  engine: QueryEngine,
+  options: InteractiveSessionOptions,
+  terminal: InteractiveTerminalReader,
+  interaction: InteractionPort,
+  structuredSelections: boolean
+): InteractiveCommandRuntime {
+  const providerInfo = getProviderInfo(engine);
+  const context: InteractiveCommandContext = {
+    engine,
+    terminal,
+    interaction,
+    structuredSelections,
+    streamOutput: options.streamOutput ?? true,
+    availableModels: options.availableModels ?? (providerInfo?.model ? [providerInfo.model] : []),
+    persistStreamOutput: options.persistStreamOutput,
+    persistSubagentsEnabled: options.persistSubagentsEnabled,
+    persistModel: options.persistModel,
+    session: options.session,
+    getProviderOptions: options.getProviderOptions,
+    activateProvider: options.activateProvider,
+    modelsForProvider: options.modelsForProvider,
+    createSkillEvalProvider: options.createSkillEvalProvider,
+    persistHistoryEnabled: options.persistHistoryEnabled,
+    contextWindowTokens: options.contextWindowTokens ?? 65_536,
+    persistContextWindow: options.persistContextWindow,
+    uiLanguage: options.uiLanguage ?? 'auto',
+    persistUiLanguage: options.persistUiLanguage
+  };
+  const registry = createCommandRegistry();
+  const slashSuggestions = createSlashSuggestionProvider(
+    registry,
+    () => context,
+    () => resolveUiLanguage(context.uiLanguage)
+  );
+  const dynamicCompositionSuggestion = (
+    createProvider: typeof createContextSuggestionProvider
+  ): SuggestionProvider => ({
+    trigger: createProvider === createContextSuggestionProvider ? '@' : '$',
+    match(value, cursor) {
+      const composition = context.engine.getCompositionRuntime?.();
+      return composition ? createProvider(composition).match(value, cursor) : null;
+    },
+    async suggest(request, signal) {
+      const composition = context.engine.getCompositionRuntime?.();
+      const items = composition ? await createProvider(composition).suggest(request, signal) : [];
+      const language = resolveUiLanguage(context.uiLanguage);
+      return items.map((item) => ({
+        ...item,
+        description: localizeSuggestionDescription(item.id, item.description, language)
+      }));
+    }
   });
-  if (answer.type === 'interrupt') {
-    console.log(chalk.yellow('\nCancelling the current operation...'));
-    throw new OperationAbortedError('Approval cancelled');
-  }
-  const normalizedAnswer = answer.type === 'line' ? answer.value.trim().toLowerCase() : undefined;
-  return normalizedAnswer === 'y'
-    ? ('allow-once' as const)
-    : allowsEditSession && normalizedAnswer === 'a'
-      ? ('allow-edits-session' as const)
-      : ('deny' as const);
+  const suggestionProviders: SuggestionProvider[] = [
+    slashSuggestions,
+    dynamicCompositionSuggestion(createContextSuggestionProvider),
+    dynamicCompositionSuggestion(createSkillSuggestionProvider)
+  ];
+  return {
+    context,
+    registry,
+    suggestionProviders,
+    execute: (input, signal) => executeSlashCommand(input, registry, context, signal)
+  };
 }
 
 export async function runInteractiveSession(
@@ -1693,26 +2158,22 @@ export async function runInteractiveSession(
   console.log(chalk.gray('Type / to browse interactive commands.\n'));
 
   const terminal = new TerminalInputController();
-  const commandContext: InteractiveCommandContext = {
+  const history = await WorkspaceInputHistory.create({
+    workspaceRoot:
+      typeof engine.getStatus === 'function' ? engine.getStatus().workspaceRoot : process.cwd(),
+    enabled: options.persistentHistory ?? true,
+    onWarning: (message) => console.warn(chalk.yellow(message))
+  });
+  terminal.replaceHistory(history.list());
+  const interaction = new InlineInteractionPort(terminal, history);
+  const commandRuntime = createInteractiveCommandRuntime(
     engine,
+    options,
     terminal,
-    streamOutput: options.streamOutput ?? true,
-    availableModels: options.availableModels ?? (providerInfo?.model ? [providerInfo.model] : []),
-    persistStreamOutput: options.persistStreamOutput,
-    persistSubagentsEnabled: options.persistSubagentsEnabled,
-    persistModel: options.persistModel,
-    session: options.session,
-    getProviderOptions: options.getProviderOptions,
-    activateProvider: options.activateProvider,
-    modelsForProvider: options.modelsForProvider,
-    createSkillEvalProvider: options.createSkillEvalProvider
-  };
-  const commandRegistry = createCommandRegistry();
-  const slashSuggestions = createSlashSuggestionProvider(commandRegistry, () => commandContext);
-  const composition = engine.getCompositionRuntime?.();
-  const compositionSuggestions = composition
-    ? [createContextSuggestionProvider(composition), createSkillSuggestionProvider(composition)]
-    : [];
+    interaction,
+    false
+  );
+  const commandContext = commandRuntime.context;
 
   let lastInterruptAt = 0;
   let isClosed = false;
@@ -1745,7 +2206,7 @@ export async function runInteractiveSession(
           getEngineMode(commandContext.engine),
           getEnginePermissionMode(commandContext.engine)
         ),
-        suggestionProviders: [slashSuggestions, ...compositionSuggestions],
+        suggestionProviders: commandRuntime.suggestionProviders,
         history: true
       });
       if (input.type === 'eof') {
@@ -1755,6 +2216,8 @@ export async function runInteractiveSession(
         handleIdleInterrupt();
         continue;
       }
+
+      await history.record(input.value);
 
       const trimmedInput = input.value.trim();
       lastInterruptAt = 0;
@@ -1770,20 +2233,17 @@ export async function runInteractiveSession(
         const commandController = new AbortController();
         activeOperationAbortController = commandController;
         try {
-          const result = await executeSlashCommand(
-            trimmedInput,
-            commandRegistry,
-            commandContext,
-            commandController.signal
-          );
-          if (result === 'exit') {
+          const result = await commandRuntime.execute(trimmedInput, commandController.signal);
+          if (result.type === 'exit') {
             break;
           }
-          if (typeof result === 'object') {
-            message = result.submitMessage;
-          } else {
+          if (result.notice) {
+            interaction.notice(result.notice);
+          }
+          if (result.type !== 'submit') {
             continue;
           }
+          message = result.message;
         } catch (error) {
           if (isAbortError(error)) {
             const reason = error instanceof Error ? error.message : 'Command cancelled';
@@ -1816,7 +2276,8 @@ export async function runInteractiveSession(
           message,
           {
             signal: turnAbortController.signal,
-            requestApproval: (request, signal) => requestApproval(request, signal, terminal)
+            requestApproval: (request, signal) => interaction.requestApproval(request, signal),
+            requestUserInput: (request, signal) => interaction.requestUserInput(request, signal)
           },
           (event) => renderer.handle(event)
         );

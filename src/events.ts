@@ -1,4 +1,5 @@
 import type { ToolApprovalChoice, ToolRisk } from './types.js';
+import type { UserQuestionKind } from './types.js';
 import type { ProviderInfo, ProviderUsage } from './providers/base.js';
 import type { ProviderErrorCode, PublicProviderError } from './providers/errors.js';
 import type { AgentMode } from './modes.js';
@@ -19,6 +20,7 @@ export type AgentPhase =
   | 'extension'
   | 'subagent'
   | 'approval'
+  | 'interaction'
   | 'tool'
   | 'completed';
 
@@ -198,6 +200,21 @@ export interface ApprovalResolvedEvent extends AgentEventEnvelope {
   resolution: 'user' | 'handler-unavailable' | 'invalid-choice';
 }
 
+export interface UserInputRequestedEvent extends AgentEventEnvelope {
+  type: 'user_input_requested';
+  requestId: string;
+  questionCount: number;
+  questionKinds: readonly UserQuestionKind[];
+}
+
+export interface UserInputResolvedEvent extends AgentEventEnvelope {
+  type: 'user_input_resolved';
+  requestId: string;
+  questionCount: number;
+  durationMs: number;
+  outcome: 'answered' | 'cancelled' | 'handler-unavailable' | 'invalid-answer';
+}
+
 export interface ToolStartedEvent extends AgentEventEnvelope {
   type: 'tool_started';
   toolCallId: string;
@@ -334,6 +351,8 @@ export type AgentEvent =
   | ToolRequestedEvent
   | ApprovalRequestedEvent
   | ApprovalResolvedEvent
+  | UserInputRequestedEvent
+  | UserInputResolvedEvent
   | ToolStartedEvent
   | McpServerStatusEvent
   | HookStartedEvent

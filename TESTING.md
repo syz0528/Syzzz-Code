@@ -7,6 +7,7 @@ npm ci
 npm run format:check
 npm run lint
 npm test
+npm run test:tui
 npm run test:coverage
 npm run test:providers
 npm run eval:offline
@@ -18,7 +19,7 @@ npm run check
 
 `npm run check` 是本地综合门槛；`smoke:package` 额外安装真实 tarball，耗时更长。Windows 进程、会话锁与 MCP 生命周期可用 `npm run test:stability` 连续执行三轮，任一轮失败都会立即终止。
 
-2026-08-04 的 Phase 7.1 冻结基线为：319/319 项测试、覆盖率 Lines 82.34%/Branches 75.91%/Functions 86.41%、离线 Eval 12/12 通过。生产依赖审计、包内容检查、候选包安装 smoke、人工 dogfood 与 Windows/Ubuntu Node 22/24 CI 同样通过。覆盖率进程固定 `--test-concurrency=4`，用于避免 Windows instrumentation 与多个进程型测试争抢资源；测试失败不会自动重跑。Phase 6 发布候选的跨平台 CI 与人工验收结论保持不变。
+2026-08-06 的 Phase 8.1 本地基线为：362/362 项测试、TUI 专项 38/38、覆盖率 Lines 82.03%/Branches 75.73%/Functions 85.40%。TUI 专项使用 headless VT/ANSI 屏幕回放验证 changed-line 增量提交不重复清屏，并覆盖 source-backed 流式中间帧、Markdown、sticky 问题、鼠标滚轮与滚动条拖动、正文直接拖选复制、grapheme 光标、`/ @ $` 候选、启动续聊、可见确认输入、活动计时、增强键盘首帧前探测、终端映射备份与冲突拒绝、中文界面、`grill-me` 与结构化 AskUser；覆盖率门槛继续保持 Lines 82%、Branches 74%、Functions 84%。
 
 Windows PowerShell 5.1 手工创建包含中文的 `AGENTS.md` 或 `SKILL.md` 时，必须使用 `Set-Content -Encoding UTF8`；默认 `Set-Content` 会使用当前 ANSI 代码页并被 UTF-8 安全校验拒绝。`@@name` 的模型可见结果是字面量 `@name`，并附带“已显式转义”的组合证据，模型不应把它当作缺失路径继续搜索。
 
@@ -30,6 +31,27 @@ Windows PowerShell 5.1 手工创建包含中文的 `AGENTS.md` 或 `SKILL.md` �
 4. 固定 Agent Eval：真实 QueryEngine、工具、审批和外部 grader。
 5. tarball smoke：从 npm 生成的 `.tgz` 安装到全新 prefix 后运行 CLI。
 6. Live Eval 与人工 dogfood：只在明确配置凭证时执行。
+
+## TUI 验证
+
+`npm run test:tui` 覆盖 InteractionController、语义 ConversationBlock、`AskUser`、UI 自动路由、grapheme Composer、工作区历史、source-backed 流式 Presenter、Markdown、滚动锚点、候选刷新、Ink 布局、审批和 alternate screen/raw mode 恢复。真实屏幕断言通过 `@xterm/headless` 回放 ANSI，不依赖原生 PTY。
+
+人工 dogfood 使用 Windows Terminal，至少验证：
+
+1. `syzzz` 自动进入 fullscreen，`syzzz --ui inline` 保持滚动式界面；
+2. 中文 IME、Emoji、原生 Kitty `Shift+Enter`、`/terminal-setup install` 后的 `ESC+CR` 映射和 `Ctrl+J` 后备、一次性多行粘贴及频繁缩放；确认不支持增强按键的终端不会被强制启用协议；
+3. 同一工作区已有会话时出现“继续最近对话 / 新建对话”，显式 `--continue` 与 `--resume` 仍直接执行；
+4. `/`、`@`、`$` 候选不会写入 scrollback，`/model`、`/provider`、`/permissions` 和 `/resume` 使用选择面板；`/language zh-CN|en` 只改变本地描述；
+5. Write/Edit/Patch 的 `y/a/N`、Shell 的 `y/N`、fullAccess 与 Trust 精确确认；确认字符在面板输入区可见，只有 Enter 提交；
+6. 分别把 `acceptEdits` 保存到当前对话和工作区，重启或恢复后编辑免审批但 Shell 仍审批；`fullAccess` 重启后消失，`/permissions safe` 清除授权；
+7. `/context 64k|128k|200k` 后 Footer 显示 `used/window`，模型专属 context window 配置仍优先；
+8. 单选、多选和短文本 `AskUser`，以及模型不可关闭的自定义答案；取消后当前回合终止，答案不进入输入历史；
+9. 长流式逐步可见、Markdown 不暴露原始标记、鼠标滚轮、可拖动右侧滚动条与 `PageUp/PageDown` 全文回看、sticky 问题和新输出提示；
+10. 直接左键拖选 Transcript 并在松开时写入有界 OSC 52 剪贴板，覆盖中文、宽字符和反向选区；
+11. 等待期间 spinner 与有效工作耗时、`Ctrl+O` 工具详情、MCP/Hook/Subagent 状态、会话恢复和异常退出后的终端恢复；
+12. 同时在 Windows Terminal 与 Codex 内嵌终端观察普通输入、spinner 和流式输出不出现整屏闪烁。
+
+将 stdout 重定向、设置 `CI=1`、`TERM=dumb` 或 `INK_SCREEN_READER=true` 时应稳定选择 inline。`chat -m` 与 `stream-json` 永不启动 TUI；显式 `chat -m --ui tui` 应返回参数错误。
 
 ## Provider 契约
 
