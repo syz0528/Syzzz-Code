@@ -126,6 +126,7 @@ test('interactive session lifecycle commands remain local and compose', () => {
 
     await runInteractiveSession(session.engine, {
       session,
+      uiLanguage: 'en',
       availableModels: ['alpha-model'],
       getProviderOptions() {
         return [
@@ -219,7 +220,7 @@ test('autosave-off session switching requires explicit discard confirmation', ()
       async newSession() { console.log('MARK:new-should-not-run'); },
       async close() {}
     };
-    await runInteractiveSession(engine, { session });
+    await runInteractiveSession(engine, { session, uiLanguage: 'en' });
   `;
 
   const result = spawnSync(process.execPath, ['--input-type=module', '--eval', script], {

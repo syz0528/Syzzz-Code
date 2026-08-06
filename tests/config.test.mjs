@@ -100,7 +100,8 @@ test('UI streaming defaults safely and validates explicit configuration', () => 
     streamOutput: true,
     mode: 'auto',
     persistentHistory: true,
-    language: 'auto'
+    language: 'auto',
+    frameRate: 'auto'
   });
 
   const buffered = createValidConfig();
@@ -109,7 +110,8 @@ test('UI streaming defaults safely and validates explicit configuration', () => 
     streamOutput: false,
     mode: 'auto',
     persistentHistory: true,
-    language: 'auto'
+    language: 'auto',
+    frameRate: 'auto'
   });
 
   const explicit = createValidConfig();
@@ -117,7 +119,8 @@ test('UI streaming defaults safely and validates explicit configuration', () => 
     streamOutput: true,
     mode: 'inline',
     persistentHistory: false,
-    language: 'zh-CN'
+    language: 'zh-CN',
+    frameRate: 60
   };
   assert.deepEqual(validateConfig(explicit).ui, explicit.ui);
 
@@ -128,6 +131,10 @@ test('UI streaming defaults safely and validates explicit configuration', () => 
   const invalidMode = createValidConfig();
   invalidMode.ui = { streamOutput: true, mode: 'windowed' };
   assert.throws(() => validateConfig(invalidMode), /ui.mode/);
+
+  const invalidFrameRate = createValidConfig();
+  invalidFrameRate.ui = { streamOutput: true, frameRate: 45 };
+  assert.throws(() => validateConfig(invalidFrameRate), /ui.frameRate/);
 });
 
 test('context configuration defaults safely and validates model overrides', () => {

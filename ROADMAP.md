@@ -828,7 +828,7 @@ Phase 7.1 冻结基线为 319/319、coverage 82.34%/75.91%/86.41%、offline Eval
 
 **基线：** Phase 7/7.1 Frozen `465f0bf`，TUI Spike `64ecaf2`。
 
-**当前状态：** **Implemented / Validation Pending**；Phase 8.1 本地自动门槛已通过，跨平台 CI 和真实终端 dogfood 尚未完成。
+**当前状态：** **Implemented / Validation Pending**；Phase 8.2 本地专项门槛已通过，完整自动门槛、跨平台 CI 和真实终端 dogfood 尚未完成。Phase 8 的可回退检查点为 `a4e93d4`。
 
 - [x] 使用 Ink 7 + React 19 建立 fullscreen Renderer，并长期保留 inline 与 NDJSON；
 - [x] `auto|tui|inline` 能力路由，非 TTY、CI、dumb terminal 与 screen reader 确定性降级；
@@ -846,7 +846,13 @@ Phase 7.1 冻结基线为 319/319、coverage 82.34%/75.91%/86.41%、offline Eval
 - [x] 64K/128K/200K fallback context 预设、`used/window` Footer 与本地中英文候选描述；
 - [x] 可见且需 Enter 提交的确认输入，以及无需模式切换的 Transcript 左键拖选复制；
 - [x] 强化 Skill 的结构化 `AskUser`，单选、多选和文本答案复用安全交互生命周期；
-- [x] 本地 362/362、TUI 38/38；coverage、Eval、audit、pack 与 tarball smoke 等完整门槛等待本轮最终复验；
+- [x] Phase 8.2 增加完成块缓存、Transcript memo 和 source-row 线性布局，降低流式 delta 对完整历史的重复排版；
+- [x] 首个正文 delta 立即可见，后续 delta 按 standard/conservative 终端 profile 有界合并；
+- [x] 有状态 SGR 输入解码覆盖拆分与合并读取，避免鼠标控制序列污染 Composer 或 AskUser；
+- [x] `/ui status` 展示终端主机、Renderer profile、键盘协议、帧节奏和渲染耗时；
+- [x] `/setting` 集中管理界面语言、流式展示、输入历史、上下文和 `auto|30|60` FPS，帧率在下次启动安全生效；
+- [x] `/help`、二级选项和高频本地状态支持中英文，Transcript 拖选后自动复制并显示短暂反馈；
+- [x] 本地 367/367、TUI 43/43、Eval 12/12、coverage 82.18%/75.96%/85.45%；audit、license、Secret 扫描、320 文件 pack 与 tarball smoke 全部通过；
 - [ ] 用户重新验收无闪烁、真实流式、Markdown、滚动和 `$skill` 问答；
 - [ ] Windows/Ubuntu Node 22/24 CI；
 - [ ] Windows Terminal 中文 IME、长流式、全部选择器、MCP/Hook/Subagent 和异常退出 dogfood；

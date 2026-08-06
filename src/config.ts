@@ -42,10 +42,12 @@ export interface UiConfig {
   mode: UiMode;
   persistentHistory: boolean;
   language: UiLanguage;
+  frameRate: UiFrameRate;
 }
 
 export type UiMode = 'auto' | 'tui' | 'inline';
 export type UiLanguage = 'auto' | 'zh-CN' | 'en';
+export type UiFrameRate = 'auto' | 30 | 60;
 
 export interface ContextConfig {
   autoCompact: boolean;
@@ -113,7 +115,8 @@ export const DEFAULT_UI_CONFIG: Readonly<UiConfig> = Object.freeze({
   streamOutput: true,
   mode: 'auto',
   persistentHistory: true,
-  language: 'auto'
+  language: 'auto',
+  frameRate: 'auto'
 });
 
 export const DEFAULT_CONTEXT_CONFIG: Readonly<ContextConfig> = Object.freeze({
@@ -243,7 +246,11 @@ function validateUiConfig(value: unknown): UiConfig {
   if (language !== 'auto' && language !== 'zh-CN' && language !== 'en') {
     throw new Error('ui.language must be "auto", "zh-CN", or "en"');
   }
-  return { streamOutput: value.streamOutput, mode, persistentHistory, language };
+  const frameRate = value.frameRate ?? DEFAULT_UI_CONFIG.frameRate;
+  if (frameRate !== 'auto' && frameRate !== 30 && frameRate !== 60) {
+    throw new Error('ui.frameRate must be "auto", 30, or 60');
+  }
+  return { streamOutput: value.streamOutput, mode, persistentHistory, language, frameRate };
 }
 
 function validateContextConfig(value: unknown): ContextConfig {

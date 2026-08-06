@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useRef, useState } from 'react';
+import React, { memo, useEffect, useMemo, useRef, useState } from 'react';
 import { Box, Text } from 'ink';
 import stringWidth from 'string-width';
 import type {
@@ -144,16 +144,58 @@ function summaryLine(
   return fields.length > 0 ? plainLine(`  ${fields.join(' · ')}`, { dim: true }) : undefined;
 }
 
+const staticBlockCache = new WeakMap<object, Map<string, readonly StyledLine[]>>();
+const MAX_CACHED_LAYOUTS_PER_BLOCK = 4;
+
+function cachedStaticLines(
+  block: ConversationBlock,
+  width: number,
+  language: ResolvedUiLanguage
+): readonly StyledLine[] {
+  const key = `${width}:${language}:${process.env.NO_COLOR ? 'plain' : 'color'}`;
+  let entries = staticBlockCache.get(block);
+  const cached = entries?.get(key);
+  if (cached) return cached;
+
+  let lines: readonly StyledLine[];
+  if (block.kind === 'user') {
+    lines = prefixed(renderMarkdown(block.text, Math.max(1, width - 2)), '> ');
+  } else if (block.kind === 'assistant') {
+    lines = prefixed(renderMarkdown(block.markdown, Math.max(1, width - 2)), '· ');
+  } else if (block.kind === 'tool-group') {
+    lines = toolRows(block, width, language);
+  } else if (block.kind === 'notice') {
+    const color =
+      block.tone === 'error'
+        ? 'red'
+        : block.tone === 'warning'
+          ? 'yellow'
+          : block.tone === 'success'
+            ? 'green'
+            : 'cyan';
+    lines = prefixed(renderMarkdown(block.text, Math.max(1, width - 2)), '· ').map((line) => ({
+      spans: line.spans.map((item) => ({ ...item, color: item.color ?? color }))
+    }));
+  } else {
+    lines = [plainLine(`  [${block.text}]`, { dim: true })];
+  }
+  entries ??= new Map();
+  if (entries.size >= MAX_CACHED_LAYOUTS_PER_BLOCK) {
+    const oldest = entries.keys().next().value;
+    if (oldest !== undefined) entries.delete(oldest);
+  }
+  entries.set(key, lines);
+  staticBlockCache.set(block, entries);
+  return lines;
+}
+
 function appendRows(
   target: TranscriptRow[],
   block: ConversationBlock,
   lines: readonly StyledLine[],
-  backgroundColor?: string
+  backgroundColor?: string,
+  sourceRowOffset = 0
 ): void {
-  const sourceRowOffset = target.reduce(
-    (count, row) => count + (row.blockId === block.id ? 1 : 0),
-    0
-  );
   lines.forEach((line, sourceRow) => {
     target.push({
       key: `${block.id}:${sourceRowOffset + sourceRow}`,
@@ -178,12 +220,13 @@ export function useTranscriptLayout(
 
   for (const block of blocks) {
     if (block.kind !== 'assistant') continue;
-    activeIds.add(block.id);
     let presenter = presenters.current.get(block.id);
+    if (!presenter && block.status !== 'streaming' && block.live !== true) continue;
     if (!presenter) {
       presenter = new StreamingTextPresenter();
       presenters.current.set(block.id, presenter);
     }
+    activeIds.add(block.id);
     presenter.sync(
       block.markdown,
       Math.max(1, width - 2),
@@ -191,6 +234,10 @@ export function useTranscriptLayout(
       Date.now(),
       block.live === true
     );
+    if (block.status !== 'streaming' && presenter.snapshot().queueDepth === 0) {
+      presenters.current.delete(block.id);
+      activeIds.delete(block.id);
+    }
   }
   for (const id of presenters.current.keys()) {
     if (!activeIds.has(id)) presenters.current.delete(id);
@@ -218,42 +265,31 @@ export function useTranscriptLayout(
         appendRows(
           rows,
           block,
-          prefixed(renderMarkdown(block.text, Math.max(1, width - 2)), '> '),
+          cachedStaticLines(block, width, language),
           process.env.NO_COLOR ? undefined : '#1f2937'
         );
         continue;
       }
       if (block.kind === 'assistant') {
         const presenter = presenters.current.get(block.id);
-        appendRows(rows, block, prefixed(presenter?.visibleRows() ?? [], '· '));
+        const body = presenter?.visibleRows();
+        const bodyLines = body ? prefixed(body, '· ') : cachedStaticLines(block, width, language);
+        appendRows(rows, block, bodyLines);
         const summary = summaryLine(block, language);
         if (summary && (presenter?.snapshot().queueDepth ?? 0) === 0) {
-          appendRows(rows, block, [summary]);
+          appendRows(rows, block, [summary], undefined, bodyLines.length);
         }
         continue;
       }
       if (block.kind === 'tool-group') {
-        appendRows(rows, block, toolRows(block, width, language));
+        appendRows(rows, block, cachedStaticLines(block, width, language));
         continue;
       }
       if (block.kind === 'notice') {
-        const color =
-          block.tone === 'error'
-            ? 'red'
-            : block.tone === 'warning'
-              ? 'yellow'
-              : block.tone === 'success'
-                ? 'green'
-                : 'cyan';
-        const lines = prefixed(renderMarkdown(block.text, Math.max(1, width - 2)), '· ').map(
-          (line) => ({
-            spans: line.spans.map((item) => ({ ...item, color: item.color ?? color }))
-          })
-        );
-        appendRows(rows, block, lines);
+        appendRows(rows, block, cachedStaticLines(block, width, language));
         continue;
       }
-      appendRows(rows, block, [plainLine(`  [${block.text}]`, { dim: true })]);
+      appendRows(rows, block, cachedStaticLines(block, width, language));
     }
     return {
       rows,
@@ -511,7 +547,7 @@ export function transcriptViewport(
   };
 }
 
-export function TranscriptView({
+export const TranscriptView = memo(function TranscriptView({
   layout,
   width,
   height,
@@ -557,7 +593,7 @@ export function TranscriptView({
       </Box>
     </Box>
   );
-}
+});
 
 export function transcriptLayoutForTest(
   blocks: readonly ConversationBlock[],

@@ -10,6 +10,12 @@ import {
   probeKittyKeyboardSupport,
   terminalKeyboardPresentation
 } from './terminal-keyboard.js';
+import {
+  createTerminalCapabilityProfile,
+  createTuiRenderDiagnostics,
+  formatTerminalCapabilityProfile,
+  recordTuiRender
+} from './terminal-profile.js';
 
 export interface TuiSessionOptions extends InteractiveSessionOptions {
   persistentHistory: boolean;
@@ -26,11 +32,29 @@ export async function runTuiSession(
   engine: QueryEngine,
   options: TuiSessionOptions
 ): Promise<TuiExitSummary> {
+  const keyboardStatus = await inspectTerminalKeyboard().catch(() => ({
+    host: 'unknown' as const,
+    setupAvailable: false,
+    setupInstalled: false
+  }));
+  const kittySupported = await probeKittyKeyboardSupport().catch(() => false);
+  const keyboard = terminalKeyboardPresentation(kittySupported, keyboardStatus);
+  const profile = createTerminalCapabilityProfile({
+    keyboardStatus,
+    keyboard,
+    kittySupported,
+    configuredFrameRate: options.uiFrameRate ?? 'auto'
+  });
+  const renderDiagnostics = createTuiRenderDiagnostics();
   const controller = await InteractionController.create({
     engine,
-    sessionOptions: options,
+    sessionOptions: {
+      ...options,
+      uiDiagnostics: () => formatTerminalCapabilityProfile(profile, renderDiagnostics)
+    },
     persistentHistory: options.persistentHistory,
-    streamOutput: options.streamOutput ?? true
+    streamOutput: options.streamOutput ?? true,
+    textFrameIntervalMs: profile.textFrameIntervalMs
   });
   const handleTerminate = () => controller.requestExit('signal');
   const handleInterrupt = () => {
@@ -42,14 +66,7 @@ export async function runTuiSession(
   process.once('SIGINT', handleInterrupt);
   let startupController: AbortController | undefined;
   try {
-    const keyboardStatus = await inspectTerminalKeyboard().catch(() => ({
-      host: 'unknown' as const,
-      setupAvailable: false,
-      setupInstalled: false
-    }));
-    const kittySupported = await probeKittyKeyboardSupport().catch(() => false);
-    const keyboard = terminalKeyboardPresentation(kittySupported, keyboardStatus);
-    if (process.stdout.isTTY) {
+    if (process.stdout.isTTY && profile.mouseTracking) {
       process.stdout.write(ENABLE_MOUSE_TRACKING);
     }
     const instance = render(
@@ -60,13 +77,15 @@ export async function runTuiSession(
           process.stdout.write(encodeOsc52Clipboard(text));
         }}
         keyboard={keyboard}
+        profile={profile}
       />,
       {
         alternateScreen: true,
         concurrent: true,
         exitOnCtrlC: false,
         incrementalRendering: true,
-        maxFps: 30,
+        maxFps: profile.maxFps,
+        onRender: ({ renderTime }) => recordTuiRender(renderDiagnostics, renderTime),
         patchConsole: false,
         ...(kittySupported
           ? {
@@ -98,7 +117,7 @@ export async function runTuiSession(
     };
   } finally {
     startupController?.abort();
-    if (process.stdout.isTTY) {
+    if (process.stdout.isTTY && profile.mouseTracking) {
       process.stdout.write(DISABLE_MOUSE_TRACKING);
     }
     process.removeListener('SIGTERM', handleTerminate);

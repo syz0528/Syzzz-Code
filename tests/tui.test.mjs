@@ -16,6 +16,7 @@ import {
   TuiApp
 } from '../dist/tui/app.js';
 import { encodeOsc52Clipboard, MAX_CLIPBOARD_CHARACTERS } from '../dist/tui/clipboard.js';
+import { TerminalInputDecoder } from '../dist/tui/input-decoder.js';
 import { TranscriptView, transcriptLayoutForTest } from '../dist/tui/transcript-view.js';
 import {
   detectTerminalHost,
@@ -24,6 +25,10 @@ import {
   probeKittyKeyboardSupport,
   terminalKeyboardPresentation
 } from '../dist/tui/terminal-keyboard.js';
+import {
+  createTerminalCapabilityProfile,
+  formatTerminalCapabilityProfile
+} from '../dist/tui/terminal-profile.js';
 
 const wait = (milliseconds = 25) => new Promise((resolve) => setTimeout(resolve, milliseconds));
 
@@ -414,6 +419,7 @@ test('left-button drag selects visible transcript text and copies it without a m
   await wait();
   assert.equal(copied.length, 1);
   assert.match(copied[0], /SELECT_THIS_TEXT/);
+  assert.match(view.lastFrame(), /Copied!/);
   view.unmount();
 });
 
@@ -481,6 +487,83 @@ test('terminal input separates batched SGR mouse reports from real text', () => 
     { type: 'wheel', direction: 1 }
   ]);
   assert.equal(parseMouseInput('text\u001b[<0;1;1M'), undefined);
+});
+
+test('terminal input decoder preserves text while joining fragmented mouse reports', () => {
+  const decoder = new TerminalInputDecoder();
+  assert.deepEqual(decoder.push('before\u001b[<64;12;'), {
+    text: 'before',
+    mouseEvents: []
+  });
+  assert.deepEqual(decoder.push('3Mafter'), {
+    text: 'after',
+    mouseEvents: [{ type: 'wheel', direction: -1 }]
+  });
+  assert.equal(decoder.flush(), '');
+
+  assert.deepEqual(decoder.push('\u001b[<0;4'), { text: '', mouseEvents: [] });
+  assert.equal(decoder.flush(), '\u001b[<0;4');
+});
+
+test('terminal capability profile selects a conservative embedded Windows renderer', () => {
+  const keyboardStatus = {
+    host: 'vscode',
+    setupAvailable: true,
+    setupInstalled: false
+  };
+  const keyboard = { shiftEnterAvailable: false, newlineShortcut: 'Ctrl+J' };
+  const conservative = createTerminalCapabilityProfile({
+    keyboardStatus,
+    keyboard,
+    kittySupported: false,
+    environment: {},
+    platform: 'win32'
+  });
+  assert.equal(conservative.renderer, 'conservative');
+  assert.equal(conservative.maxFps, 20);
+  assert.match(formatTerminalCapabilityProfile(conservative), /vscode \(embedded\)/);
+
+  const overridden = createTerminalCapabilityProfile({
+    keyboardStatus,
+    keyboard,
+    kittySupported: false,
+    environment: { SYZZZ_TUI_PROFILE: 'standard' },
+    platform: 'win32'
+  });
+  assert.equal(overridden.renderer, 'standard');
+  assert.equal(overridden.override, 'standard');
+
+  const codexStatus = {
+    host: detectTerminalHost({
+      CODEX_INTERNAL_ORIGINATOR_OVERRIDE: 'Codex Desktop',
+      CODEX_THREAD_ID: 'thread-id'
+    }),
+    setupAvailable: false,
+    setupInstalled: false
+  };
+  const codex = createTerminalCapabilityProfile({
+    keyboardStatus: codexStatus,
+    keyboard,
+    kittySupported: false,
+    environment: {},
+    platform: 'win32'
+  });
+  assert.equal(codex.host, 'codex');
+  assert.equal(codex.renderer, 'conservative');
+
+  const sixtyFps = createTerminalCapabilityProfile({
+    keyboardStatus,
+    keyboard,
+    kittySupported: false,
+    environment: {},
+    platform: 'win32',
+    configuredFrameRate: 60
+  });
+  assert.equal(sixtyFps.renderer, 'conservative');
+  assert.equal(sixtyFps.maxFps, 60);
+  assert.equal(sixtyFps.configuredFrameRate, 60);
+  assert.equal(sixtyFps.textFrameIntervalMs, 17);
+  assert.match(formatTerminalCapabilityProfile(sixtyFps), /configured: 60/);
 });
 
 test('newline detection accepts Shift+Enter terminal encodings without treating Enter as newline', () => {

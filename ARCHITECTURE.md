@@ -30,8 +30,10 @@ CLI / Slash commands / NDJSON
 - `src/tui` 使用 Ink/React 实现 fullscreen Renderer；`src/interactive.ts`、`src/terminal-input.ts` 与 `src/cli-renderer.ts` 继续提供 inline adapter。两条路径复用同一个命令注册表。
 - `src/tui/composer-buffer.ts` 按 grapheme 管理多行输入，工作区历史由 `src/interaction/history.ts` 原子保存。
 - `src/interaction/conversation.ts` 定义语义化用户、Assistant、工具组和 notice；Controller 只维护语义状态，不解释终端物理行。
-- `src/tui/streaming-presenter.ts` 从原始 Markdown 维护 stable/mutable 行与有界提交队列；`markdown.ts` 只使用 lexer 生成终端样式，不执行 HTML。
-- `src/tui/transcript-view.tsx` 从不可变语义块生成可见窗口、sticky 问题、source-row 锚点、可拖动的有界滚动条及按终端单元格计算的正文选区。runner 使用 SGR 1002 鼠标事件，并以有界 OSC 52 写入剪贴板；共享输入规范化层会先从同批数据中分离鼠标控制码与真实文字，再交给 Composer 或 AskUser。Windows 仍预留一个物理行，避免 Ink incremental renderer 触发 fullscreen 清屏分支。
+- `src/tui/streaming-presenter.ts` 从原始 Markdown 维护 stable/mutable 行与有界提交队列；`markdown.ts` 只使用 lexer 生成终端样式，不执行 HTML。首个 Provider 正文 delta 由 Controller 立即提交，后续 delta 才按终端帧预算合并。
+- `src/tui/transcript-view.tsx` 从不可变语义块生成可见窗口、sticky 问题、source-row 锚点、可拖动的有界滚动条及按终端单元格计算的正文选区。完成块按对象、宽度和语言缓存，Transcript 作为独立 memo 子树更新，避免活动栏或 Composer 刷新重新解析完整历史。
+- `src/tui/input-decoder.ts` 使用有状态解析器分离跨读取拆分或合并到达的 SGR 1002 鼠标事件与真实文字，再交给 Composer 或 AskUser。runner 以有界 OSC 52 写入剪贴板；Windows 仍预留一个物理行，避免 Ink incremental renderer 触发 fullscreen 清屏分支。
+- `src/tui/terminal-profile.ts` 根据终端主机和键盘能力选择 standard 或 conservative Renderer profile，并允许配置层以 `auto|30|60` 覆盖帧率上限；`/ui status` 只展示当前诊断，`/setting fps` 的变更在下一次 TUI 启动生效。Ink 自身负责 DEC synchronized frame commit，Syzzz 不维护第二套 framebuffer。
 - `src/tui/terminal-keyboard.ts` 在 fullscreen 首帧前完成有界 Kitty 能力探测；只有终端明确响应时才由 Ink 启用并负责恢复增强键盘协议。旧 Windows Terminal 与 IDE 内嵌终端可通过 `/terminal-setup install` 备份并安装 `Shift+Enter -> ESC+CR` 映射；未设置时界面如实使用 `Ctrl+J` 后备，不在 React 渲染期间写入键盘协议控制序列。
 - `src/session-controller.ts` 与 `src/session-store.ts` 负责当前工作区内的原子快照、锁和恢复；TUI 启动选择通过同一个 InteractionPort 决定继续最近会话或保留它并新建会话。
 - `src/permissions/grant-store.ts` 只保存会话级或工作区级 `acceptEdits` 授权。该存储与会话快照、workspace trust 分离，不能表示 `fullAccess` 或 Shell 批准。

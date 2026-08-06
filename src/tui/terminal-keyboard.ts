@@ -10,7 +10,7 @@ const SHIFT_ENTER_INPUT = '\u001B\r';
 const WINDOWS_TERMINAL_ACTION_ID = 'Syzzz.SendShiftEnter';
 
 export type TerminalHost =
-  'windows-terminal' | 'vscode' | 'cursor' | 'windsurf' | 'native-kitty' | 'unknown';
+  'windows-terminal' | 'vscode' | 'cursor' | 'windsurf' | 'codex' | 'native-kitty' | 'unknown';
 
 export interface TerminalKeyboardStatus {
   host: TerminalHost;
@@ -64,6 +64,7 @@ export function detectTerminalHost(environment: NodeJS.ProcessEnv = process.env)
   if (terminal.includes('cursor') || environment.CURSOR_TRACE_ID) return 'cursor';
   if (terminal.includes('windsurf')) return 'windsurf';
   if (terminal.includes('vscode') || environment.VSCODE_PID) return 'vscode';
+  if (environment.CODEX_INTERNAL_ORIGINATOR_OVERRIDE || environment.CODEX_THREAD_ID) return 'codex';
   if (
     terminal.includes('kitty') ||
     terminal.includes('wezterm') ||
@@ -325,7 +326,8 @@ export async function probeKittyKeyboardSupport(
 ): Promise<boolean> {
   if (!input.isTTY || !output.isTTY || typeof input.setRawMode !== 'function') return false;
   const host = detectTerminalHost(environment);
-  if (host === 'vscode' || host === 'cursor' || host === 'windsurf') return false;
+  if (host === 'vscode' || host === 'cursor' || host === 'windsurf' || host === 'codex')
+    return false;
 
   const wasRaw = Boolean(input.isRaw);
   const wasPaused = input.isPaused();

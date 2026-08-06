@@ -20,6 +20,7 @@ import {
   saveConfig,
   type Config,
   type ProviderConfigItem,
+  type UiFrameRate,
   type UiLanguage,
   type UiMode
 } from './config.js';
@@ -241,6 +242,7 @@ function createInteractiveOptions(controller: SessionController, streamOutput?: 
     streamOutput: streamOutput ?? config.ui.streamOutput,
     persistentHistory: config.ui.persistentHistory,
     uiLanguage: config.ui.language,
+    uiFrameRate: config.ui.frameRate,
     contextWindowTokens: config.context.defaultWindowTokens,
     availableModels: provider?.models ?? [controller.engine.getProviderInfo().model],
     session: controller,
@@ -267,6 +269,11 @@ function createInteractiveOptions(controller: SessionController, streamOutput?: 
     persistUiLanguage(language: UiLanguage) {
       const latest = loadConfig();
       latest.ui.language = language;
+      saveConfig(latest);
+    },
+    persistUiFrameRate(frameRate: UiFrameRate) {
+      const latest = loadConfig();
+      latest.ui.frameRate = frameRate;
       saveConfig(latest);
     },
     persistModel(model: string, providerId: string) {
@@ -540,6 +547,7 @@ const configCommand = program
         console.log(`Model:       ${current.model}`);
         console.log(`Base URL:    ${current.env.BASE_URL}`);
         console.log(`Streaming:   ${config.ui.streamOutput ? 'on' : 'off'}`);
+        console.log(`TUI FPS:     ${config.ui.frameRate}`);
         console.log(`Autosave:    ${config.sessions.autoSave ? 'on' : 'off'}`);
         console.log(
           `API Key:     ${

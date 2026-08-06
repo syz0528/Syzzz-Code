@@ -19,7 +19,7 @@ npm run check
 
 `npm run check` 是本地综合门槛；`smoke:package` 额外安装真实 tarball，耗时更长。Windows 进程、会话锁与 MCP 生命周期可用 `npm run test:stability` 连续执行三轮，任一轮失败都会立即终止。
 
-2026-08-06 的 Phase 8.1 本地基线为：362/362 项测试、TUI 专项 38/38、覆盖率 Lines 82.03%/Branches 75.73%/Functions 85.40%。TUI 专项使用 headless VT/ANSI 屏幕回放验证 changed-line 增量提交不重复清屏，并覆盖 source-backed 流式中间帧、Markdown、sticky 问题、鼠标滚轮与滚动条拖动、正文直接拖选复制、grapheme 光标、`/ @ $` 候选、启动续聊、可见确认输入、活动计时、增强键盘首帧前探测、终端映射备份与冲突拒绝、中文界面、`grill-me` 与结构化 AskUser；覆盖率门槛继续保持 Lines 82%、Branches 74%、Functions 84%。
+2026-08-07 的 Phase 8.2 冻结候选基线为：完整回归 367/367、TUI/Interaction 专项 43/43、离线 Eval 12/12；最新正式覆盖率 Lines 82.18%/Branches 75.96%/Functions 85.45%。除 Phase 8.1 的 headless VT/ANSI 屏幕回放、source-backed 流式中间帧、Markdown、sticky 问题、鼠标、grapheme、`/ @ $`、启动续聊、可见确认、活动计时、中文界面和结构化 AskUser 外，本轮新增拆分 SGR 输入、有状态鼠标解码、embedded Windows conservative profile、首个正文 delta 立即显示、后续 delta 帧合并、自动复制提示、`/setting`、30/60 FPS 配置和中英文帮助回归。生产依赖审计、许可证、Secret 扫描、320 文件候选包检查和全新 prefix 安装 smoke 均通过；覆盖率门槛继续保持 Lines 82%、Branches 74%、Functions 84%。
 
 Windows PowerShell 5.1 手工创建包含中文的 `AGENTS.md` 或 `SKILL.md` 时，必须使用 `Set-Content -Encoding UTF8`；默认 `Set-Content` 会使用当前 ANSI 代码页并被 UTF-8 安全校验拒绝。`@@name` 的模型可见结果是字面量 `@name`，并附带“已显式转义”的组合证据，模型不应把它当作缺失路径继续搜索。
 
@@ -41,7 +41,7 @@ Windows PowerShell 5.1 手工创建包含中文的 `AGENTS.md` 或 `SKILL.md` �
 1. `syzzz` 自动进入 fullscreen，`syzzz --ui inline` 保持滚动式界面；
 2. 中文 IME、Emoji、原生 Kitty `Shift+Enter`、`/terminal-setup install` 后的 `ESC+CR` 映射和 `Ctrl+J` 后备、一次性多行粘贴及频繁缩放；确认不支持增强按键的终端不会被强制启用协议；
 3. 同一工作区已有会话时出现“继续最近对话 / 新建对话”，显式 `--continue` 与 `--resume` 仍直接执行；
-4. `/`、`@`、`$` 候选不会写入 scrollback，`/model`、`/provider`、`/permissions` 和 `/resume` 使用选择面板；`/language zh-CN|en` 只改变本地描述；
+4. `/`、`@`、`$` 候选不会写入 scrollback，`/model`、`/provider`、`/permissions` 和 `/resume` 使用选择面板；`/language zh-CN|en` 改变本地描述，`/setting` 可集中选择语言、流式展示、帧率、历史与上下文；
 5. Write/Edit/Patch 的 `y/a/N`、Shell 的 `y/N`、fullAccess 与 Trust 精确确认；确认字符在面板输入区可见，只有 Enter 提交；
 6. 分别把 `acceptEdits` 保存到当前对话和工作区，重启或恢复后编辑免审批但 Shell 仍审批；`fullAccess` 重启后消失，`/permissions safe` 清除授权；
 7. `/context 64k|128k|200k` 后 Footer 显示 `used/window`，模型专属 context window 配置仍优先；
@@ -50,6 +50,8 @@ Windows PowerShell 5.1 手工创建包含中文的 `AGENTS.md` 或 `SKILL.md` �
 10. 直接左键拖选 Transcript 并在松开时写入有界 OSC 52 剪贴板，覆盖中文、宽字符和反向选区；
 11. 等待期间 spinner 与有效工作耗时、`Ctrl+O` 工具详情、MCP/Hook/Subagent 状态、会话恢复和异常退出后的终端恢复；
 12. 同时在 Windows Terminal 与 Codex 内嵌终端观察普通输入、spinner 和流式输出不出现整屏闪烁。
+13. 在 fullscreen 中运行 `/ui status`，确认 Windows Terminal 通常使用 `standard`，Codex/VS Code 类内嵌终端使用 `conservative`；用 `SYZZZ_TUI_PROFILE=standard|conservative` 可仅为诊断显式覆盖。
+14. 运行 `/setting fps 60` 后重启 TUI，确认 `/ui status` 显示 60 FPS；拖选 Transcript 后确认文本自动进入剪贴板，Footer 右侧短暂显示复制成功提示。
 
 将 stdout 重定向、设置 `CI=1`、`TERM=dumb` 或 `INK_SCREEN_READER=true` 时应稳定选择 inline。`chat -m` 与 `stream-json` 永不启动 TUI；显式 `chat -m --ui tui` 应返回参数错误。
 

@@ -113,10 +113,11 @@ Phase 1 至 Phase 5.1、Phase 7 与 Phase 7.1 已完成并保持 **Frozen**。Ph
 - Composer 使用简洁的 `>` 前缀，并通过 Ink 实际布局坐标定位真实终端光标；Windows 终端预留最后一个物理行，使 Ink 使用 changed-line 增量提交而不是每帧清屏。
 - Transcript 使用 `ConversationBlock` 保存用户问题、Markdown 回答、工具组与 notice；用户问题采用全宽背景带，回答使用 `·` 前缀，并支持标题、强调、代码、列表、引用、链接与简单表格。
 - 流式回答使用 source-backed stable/mutable 分区和有界队列。首个正文 delta 立即可见，稳定行平滑提交，积压时自动追平；Provider 只返回完整块时不会伪造打字动画。
+- Phase 8.2 会缓存不可变的完成块，并根据终端能力选择 30 FPS `standard` 或 20 FPS `conservative` profile；IDE 内嵌 Windows 终端默认采用后者。`/setting fps auto|30|60` 可持久化选择 TUI 帧率并在下次启动生效；`/ui status` 可查看当前 profile、键盘协议、帧节奏和渲染耗时，`SYZZZ_TUI_PROFILE=standard|conservative` 可用于诊断覆盖。
 - Transcript 支持鼠标滚轮、PageUp/PageDown、Home/End 和右侧滚动条有界回看；离开底部后冻结视口并提示新输出，当前回答对应的问题会在离开可视区后置顶。
 - `/model`、`/provider`、`/permissions`、`/resume`、审批和确认在 TUI 中使用结构化面板。确认 token 会先显示在输入区域，按 Enter 后才提交。
 - Agent 可在交互回合中使用 `AskUser` 提出单选、多选或短文本问题；单选和多选始终提供“输入自己的想法”，也可按 `C` 直接进入自定义回答。该能力由客户端保证，不能被模型关闭。问题和答案不会进入输入历史或审计正文，但答案会作为普通 ToolResult 进入模型上下文和会话快照。
-- 鼠标追踪启用时，滚轮和支持按住拖动的右侧滚动条负责历史导航；Transcript 正文可直接按住左键拖选，松开后通过终端剪贴板协议复制，无需切换复制模式。
+- 鼠标追踪启用时，滚轮和支持按住拖动的右侧滚动条负责历史导航；Transcript 正文可直接按住左键拖选，松开后通过终端剪贴板协议自动复制，并在 Footer 右侧短暂显示“已复制！”或 `Copied!`。
 - 固定活动栏展示当前 phase、动态状态、有效工作耗时和等待输入状态；回合结束后在回答尾部显示耗时、token、工具和重试摘要。
 - 流式开关由当前交互上下文实时驱动；Skill 显式或隐式激活的成功与失败会投影到 Transcript，存在 `AskUser` 时改变执行路径的选项必须进入结构化提问面板。
 - TUI 只保存有界显示投影，不改变 Engine 历史；恢复会话最多显示最后 100 条、512 KiB 的普通用户和 Assistant 文本。
@@ -328,7 +329,10 @@ Runtime
 /provider [provider]                   切换本地已配置 Provider
 /stream on|off                         控制正文是否逐段显示
 /language auto|zh-CN|en                切换本地候选和命令描述语言
+/setting                               集中设置语言、流式展示、帧率、历史与上下文
+/setting fps auto|30|60                选择 TUI 帧率（下次启动生效）
 /terminal-setup status|install         检查或安装 Shift+Enter 终端映射
+/ui status                             查看终端能力与 TUI 渲染诊断
 
 Composition
 /context reload|64k|128k|200k          查看、重载或选择 fallback context window
@@ -354,7 +358,7 @@ General
 
 TUI Composer 中 `Enter` 提交。启动时会在 fullscreen 首帧前探测 Kitty Keyboard Protocol；终端明确支持时，`Shift+Enter` 换行。旧版 Windows Terminal 或 IDE 内嵌终端可能把 `Shift+Enter` 编码成与 Enter 完全相同的字节，此时使用 `Ctrl+J` 稳定换行，或运行 `/terminal-setup install`，经确认后备份终端设置并安装 `Shift+Enter -> ESC+CR` 映射。Syzzz 不覆盖已有冲突键位，也不在渲染期间强行写入未知键盘协议。鼠标滚轮、拖动右侧滚动条或 `PageUp/PageDown` 滚动 Transcript，左键拖选正文会在松开后复制，`Ctrl+O` 展开或收起最近一项工具详情，`Esc` 关闭候选、详情或正文选区。`Ctrl+C` 依次关闭面板、清空非空 Composer、取消当前操作；空闲且输入为空时两秒内按两次退出。
 
-`/language` 只本地化 Syzzz 自带的 Slash 分类、命令说明和 `@` 上下文说明。Skill 作者提供的名称与描述保持原文，避免无依据翻译改变 Skill 语义。
+`/language` 会本地化 Syzzz 自带的 `/help`、Slash 分类、二级选择、常用本地状态与 `@` 上下文说明。Skill 作者提供的名称与描述、模型名以及第三方 MCP 文本保持原文，避免无依据翻译改变真实语义。
 
 显式任务组合示例：
 
@@ -475,7 +479,7 @@ git diff --check
 
 自动化套件覆盖路径与权限安全、事件 Runtime、Provider 可靠性、双 Renderer、Composer、结构化交互、代码库上下文、压缩、会话恢复、Trust V2、MCP、Hooks 和只读 Subagent。当前包含五种离线 Provider Profile 与发布门禁；Phase 7 增加 `@`、分层 AGENTS、Skills、公开 Git 安装及五项任务组合 Eval。
 
-Phase 8.1 当前本地基线为 **362/362** 项测试、TUI 专项 **38/38** 和离线 Eval **12/12** 通过；综合门槛覆盖率为 Lines **82.03%**、Branches **75.73%**、Functions **85.40%**，均高于 82%/74%/84% 门槛。真实 VT/ANSI 屏幕回放还验证了普通按键、spinner、正文 delta 和增强键盘探测不触发重复全屏清除；终端映射安装在隔离配置中验证了备份、幂等和冲突拒绝。当前状态为 **Implemented**；跨平台 CI 与 Windows Terminal、Codex 内嵌终端的人工复验尚未完成，因此不能标记为 Validated 或 Frozen。Phase 6 的真实 DeepSeek/OpenCode Live Eval 保持 7/7；OpenCode `gpt-5.6-luna` 的 Responses 文本流与 function call 往返 smoke 已通过。
+Phase 8.2 当前本地完整回归为 **367/367**，TUI 专项为 **43/43**，离线 Eval 为 **12/12**；最新正式覆盖率为 Lines **82.18%**、Branches **75.96%**、Functions **85.45%**，均高于 82%/74%/84% 门槛。真实 VT/ANSI 屏幕回放还验证了普通按键、spinner、正文 delta 和增强键盘探测不触发重复全屏清除；本轮额外锁定拆分鼠标序列、终端 profile、首包立即显示、后续帧合并、中英文帮助、自动复制提示、`/setting` 和 30/60 FPS 配置。生产依赖审计、许可证、Secret 扫描、320 文件候选包检查和全新 prefix 安装 smoke 均通过。当前状态为 **Implemented**；跨平台 CI 与 Windows Terminal、Codex 内嵌终端的人工复验尚未完成，因此不能标记为 Validated 或 Frozen。Phase 6 的真实 DeepSeek/OpenCode Live Eval 保持 7/7；OpenCode `gpt-5.6-luna` 的 Responses 文本流与 function call 往返 smoke 已通过。
 
 Phase 5 冻结验收还完成了 11 项真实终端 dogfood，覆盖未信任边界、Trust V2 复审、MCP 策略与惰性重连、Hook 拒绝与生命周期、取消清理、Subagent 预算、隐私恢复和撤销信任。公开 Streamable HTTP MCP 的真实握手、工具发现及只读天气调用同样通过；该外部服务只用于兼容性验证，不是 Syzzz 的运行依赖。
 
@@ -501,4 +505,4 @@ npm 包使用 allowlist，只包含 `dist`、README、SECURITY、LICENSE、CHANG
 
 ## 当前阶段
 
-Phase 1 至 Phase 5.1、Phase 7 与 Phase 7.1 均保持 **Frozen**，Phase 6 保持 **Release Candidate Accepted**。Phase 8.1 位于 `codex/phase8-tui`，当前为 **Implemented / Validation Pending**；稳定帧、真实流式、语义 Transcript、Markdown、活动栏、滚动锚点和结构化 Skill 提问已完成本地自动验收，仍需跨平台 CI 与真实终端 dogfood 后才能进入 Validated 和 Frozen。
+Phase 1 至 Phase 5.1、Phase 7 与 Phase 7.1 均保持 **Frozen**，Phase 6 保持 **Release Candidate Accepted**。Phase 8.2 位于 `codex/phase8-tui`，当前为 **Implemented / Validation Pending**；回退检查点 `a4e93d4` 已推送，稳定帧、真实流式、语义 Transcript、终端 profile、输入解码、Markdown、活动栏、滚动锚点和结构化 Skill 提问已完成本地专项验收，仍需完整门槛、跨平台 CI 与真实终端 dogfood 后才能进入 Validated 和 Frozen。

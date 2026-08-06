@@ -33,6 +33,7 @@ import {
   createComposerViewport,
   splitAtGraphemeCursor
 } from './composer-buffer.js';
+import { TerminalInputDecoder, type MouseInputEvent } from './input-decoder.js';
 import {
   anchorAt,
   anchorAtFraction,
@@ -45,6 +46,10 @@ import {
   type TranscriptSelectionPoint
 } from './transcript-view.js';
 import type { TerminalKeyboardPresentation } from './terminal-keyboard.js';
+import type { TerminalCapabilityProfile } from './terminal-profile.js';
+
+export { normalizeTerminalInput, parseMouseInput } from './input-decoder.js';
+export type { MouseInputEvent, NormalizedTerminalInput } from './input-decoder.js';
 
 const MAX_SUGGESTIONS = 8;
 const HEADER_HEIGHT = 1;
@@ -53,64 +58,6 @@ const FOOTER_HEIGHT = 1;
 
 export const ENABLE_MOUSE_TRACKING = '\u001B[?1002h\u001B[?1006h';
 export const DISABLE_MOUSE_TRACKING = '\u001B[?1006l\u001B[?1002l';
-
-export type MouseInputEvent =
-  | { type: 'wheel'; direction: -1 | 1 }
-  | { type: 'press' | 'move' | 'release'; x: number; y: number }
-  | { type: 'other' };
-
-export interface NormalizedTerminalInput {
-  text: string;
-  mouseEvents: MouseInputEvent[];
-}
-
-function decodeMouseInput(match: RegExpMatchArray): MouseInputEvent {
-  const button = Number.parseInt(match[1] ?? '', 10);
-  if (!Number.isFinite(button)) {
-    return { type: 'other' };
-  }
-  if ((button & 64) !== 0) {
-    return { type: 'wheel', direction: (button & 1) === 0 ? -1 : 1 };
-  }
-  const x = Number.parseInt(match[2] ?? '', 10);
-  const y = Number.parseInt(match[3] ?? '', 10);
-  if (match[4] === 'm') {
-    return { type: 'release', x, y };
-  }
-  if ((button & 3) === 0 && (button & 32) !== 0) {
-    return { type: 'move', x, y };
-  }
-  if ((button & 3) === 0) {
-    return {
-      type: 'press',
-      x,
-      y
-    };
-  }
-  return { type: 'other' };
-}
-
-export function normalizeTerminalInput(input: string): NormalizedTerminalInput {
-  const mouseEvents: MouseInputEvent[] = [];
-  let text = '';
-  let offset = 0;
-  const pattern = /(?:\u001B)?\[<(\d+);(\d+);(\d+)([Mm])/gu;
-  for (const match of input.matchAll(pattern)) {
-    const matchOffset = match.index ?? offset;
-    text += input.slice(offset, matchOffset);
-    mouseEvents.push(decodeMouseInput(match));
-    offset = matchOffset + match[0].length;
-  }
-  text += input.slice(offset);
-  return { text, mouseEvents };
-}
-
-export function parseMouseInput(input: string): MouseInputEvent | undefined {
-  const normalized = normalizeTerminalInput(input);
-  return normalized.text.length === 0 && normalized.mouseEvents.length === 1
-    ? normalized.mouseEvents[0]
-    : undefined;
-}
 
 type NewlineKey = Pick<Key, 'ctrl' | 'meta' | 'return' | 'shift'>;
 
@@ -130,6 +77,7 @@ interface TuiAppProps {
   controller: InteractionController;
   copyToClipboard?: (text: string) => void;
   keyboard?: TerminalKeyboardPresentation;
+  profile?: TerminalCapabilityProfile;
 }
 
 function toneColor(tone?: string): string | undefined {
@@ -387,6 +335,7 @@ function QuestionInteraction({
   const [customMode, setCustomMode] = useState(false);
   const [answers, setAnswers] = useState<UserInputAnswers>({});
   const textBuffer = useRef(new ComposerBuffer());
+  const inputDecoder = useRef(new TerminalInputDecoder());
   const [, setTextRevision] = useState(0);
   const question = pending.request.questions[questionIndex];
 
@@ -450,7 +399,7 @@ function QuestionInteraction({
   ];
 
   useInput((rawInput, key) => {
-    const { text: input } = normalizeTerminalInput(rawInput);
+    const { text: input } = inputDecoder.current.push(rawInput);
     if (input.length === 0 && rawInput.length > 0) {
       return;
     }
@@ -651,12 +600,13 @@ function useSuggestions(
   return items;
 }
 
-export function TuiApp({ controller, copyToClipboard, keyboard }: TuiAppProps) {
+export function TuiApp({ controller, copyToClipboard, keyboard, profile }: TuiAppProps) {
   const state = useSyncExternalStore(controller.subscribe.bind(controller), controller.getSnapshot);
   const { columns = 80, rows = 24 } = useWindowSize();
   const { exit } = useApp();
   const { setCursorPosition } = useCursor();
   const composer = useRef(new ComposerBuffer());
+  const inputDecoder = useRef(new TerminalInputDecoder());
   const composerContentRef = useRef<DOMElement | null>(null);
   const [composerOrigin, setComposerOrigin] = useState<{ x: number; y: number }>();
   const [composerRevision, redraw] = useState(0);
@@ -670,6 +620,8 @@ export function TuiApp({ controller, copyToClipboard, keyboard }: TuiAppProps) {
   const transcriptSignature = useRef('');
   const [lastIdleInterrupt, setLastIdleInterrupt] = useState(0);
   const [transcriptSelection, setTranscriptSelection] = useState<TranscriptSelection>();
+  const [copyToast, setCopyToast] = useState<string>();
+  const copyToastTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
   const selectionDrag = useRef<
     | {
         start: TranscriptSelectionPoint;
@@ -678,6 +630,12 @@ export function TuiApp({ controller, copyToClipboard, keyboard }: TuiAppProps) {
     | undefined
   >(undefined);
   const scrollbarDragging = useRef<{ grabOffset: number } | undefined>(undefined);
+  useEffect(
+    () => () => {
+      if (copyToastTimer.current) clearTimeout(copyToastTimer.current);
+    },
+    []
+  );
   const suggestions = useSuggestions(
     controller,
     composer.current.value,
@@ -721,10 +679,13 @@ export function TuiApp({ controller, copyToClipboard, keyboard }: TuiAppProps) {
   const desiredTranscriptWidth = Math.max(10, columns - 3);
   const [settledTranscriptWidth, setSettledTranscriptWidth] = useState(desiredTranscriptWidth);
   useEffect(() => {
-    const timer = setTimeout(() => setSettledTranscriptWidth(desiredTranscriptWidth), 75);
+    const timer = setTimeout(
+      () => setSettledTranscriptWidth(desiredTranscriptWidth),
+      profile?.resizeDebounceMs ?? 75
+    );
     timer.unref?.();
     return () => clearTimeout(timer);
-  }, [desiredTranscriptWidth]);
+  }, [desiredTranscriptWidth, profile?.resizeDebounceMs]);
   // Shrink immediately to avoid overflow; debounce expansion so a resize drag
   // does not continuously re-lex and reflow the full visible transcript.
   const transcriptWidth = Math.min(desiredTranscriptWidth, settledTranscriptWidth);
@@ -1000,7 +961,13 @@ export function TuiApp({ controller, copyToClipboard, keyboard }: TuiAppProps) {
       const selected = selectedTranscriptText(currentTranscriptViewport, selection);
       if (selected) {
         try {
-          copyToClipboard?.(selected);
+          if (copyToClipboard) {
+            copyToClipboard(selected);
+            if (copyToastTimer.current) clearTimeout(copyToastTimer.current);
+            setCopyToast(state.language === 'zh-CN' ? '已复制！' : 'Copied!');
+            copyToastTimer.current = setTimeout(() => setCopyToast(undefined), 1_200);
+            copyToastTimer.current.unref?.();
+          }
         } catch (error) {
           controller.notice({
             tone: 'warning',
@@ -1029,7 +996,7 @@ export function TuiApp({ controller, copyToClipboard, keyboard }: TuiAppProps) {
   });
 
   useInput((rawInput, key) => {
-    const normalized = normalizeTerminalInput(rawInput);
+    const normalized = inputDecoder.current.push(rawInput);
     for (const mouseInput of normalized.mouseEvents) {
       handleMouseInput(mouseInput);
     }
@@ -1287,12 +1254,15 @@ export function TuiApp({ controller, copyToClipboard, keyboard }: TuiAppProps) {
           ))}
         </Box>
       </Box>
-      <Box height={FOOTER_HEIGHT} overflow="hidden">
-        <Text dimColor wrap="truncate-end">
-          {viewingHistory
-            ? `${state.language === 'zh-CN' ? '历史' : 'History'} | ${status.provider.name} / ${status.provider.model} | ${status.mode}|${permissionLabel} | ${formatTokenCount(status.context.estimatedInputTokens)}/${formatContextWindow(status.context.contextWindowTokens)} ctx`
-            : `${status.provider.name} / ${status.provider.model} | ${status.mode}|${permissionLabel} | ${formatTokenCount(status.context.estimatedInputTokens)}/${formatContextWindow(status.context.contextWindowTokens)} ctx | ${state.stats.tools} ${state.language === 'zh-CN' ? '次工具' : 'tools'}`}
-        </Text>
+      <Box height={FOOTER_HEIGHT} overflow="hidden" justifyContent="space-between">
+        <Box flexGrow={1} overflow="hidden">
+          <Text dimColor wrap="truncate-end">
+            {viewingHistory
+              ? `${state.language === 'zh-CN' ? '历史' : 'History'} | ${status.provider.name} / ${status.provider.model} | ${status.mode}|${permissionLabel} | ${formatTokenCount(status.context.estimatedInputTokens)}/${formatContextWindow(status.context.contextWindowTokens)} ctx`
+              : `${status.provider.name} / ${status.provider.model} | ${status.mode}|${permissionLabel} | ${formatTokenCount(status.context.estimatedInputTokens)}/${formatContextWindow(status.context.contextWindowTokens)} ctx | ${state.stats.tools} ${state.language === 'zh-CN' ? '次工具' : 'tools'}`}
+          </Text>
+        </Box>
+        {copyToast ? <Text color={toneColor('success')}> {copyToast}</Text> : null}
       </Box>
     </Box>
   );

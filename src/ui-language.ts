@@ -27,6 +27,8 @@ const COMMAND_DESCRIPTIONS_ZH: Readonly<Record<string, string>> = {
   model: '切换当前 Provider 中配置的模型。',
   history: '查看或管理当前工作区的输入历史。',
   'terminal-setup': '检查或安装安全的 Shift+Enter 终端键位映射。',
+  ui: '查看终端能力、渲染档案和当前 TUI 帧性能。',
+  setting: '集中配置界面语言、流式展示、TUI 帧率、输入历史和上下文窗口。',
   language: '切换命令、上下文候选和本地界面描述语言。',
   help: '查看可用的交互命令。',
   exit: '退出当前交互会话。'

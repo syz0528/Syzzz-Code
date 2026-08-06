@@ -205,7 +205,8 @@ test('interactive stream and model commands persist user configuration', () => {
           maxBytes: 4096
         },
         ui: {
-          streamOutput: true
+          streamOutput: true,
+          language: 'en'
         }
       })
     );
@@ -267,6 +268,7 @@ test('interactive provider switching routes between Chat Completions and Respons
           }
         },
         audit: { retentionDays: 0, maxBytes: 4096 },
+        ui: { streamOutput: true, language: 'en' },
         sessions: { autoSave: false }
       })
     );
@@ -432,6 +434,7 @@ test('interactive slash commands control display and the current provider model'
 
     await runInteractiveSession(engine, {
       streamOutput: true,
+      uiLanguage: 'en',
       availableModels: ['model-a', 'model-b'],
       persistStreamOutput(enabled) {
         console.log('STREAM_SAVED:' + enabled);
@@ -783,7 +786,7 @@ test('CLI resumes a saved workspace session with mode restored and safe permissi
           }
         },
         audit: { retentionDays: 0, maxBytes: 4096 },
-        ui: { streamOutput: true },
+        ui: { streamOutput: true, language: 'en' },
         context: { autoCompact: true, defaultWindowTokens: 65_536 },
         sessions: { autoSave: true }
       })

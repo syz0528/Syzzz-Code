@@ -569,7 +569,7 @@ test('controller projects Agent events and serializes every blocking interaction
   const engine = displayEngine('event-session', 'event');
   const controller = await InteractionController.create({
     engine,
-    sessionOptions: {},
+    sessionOptions: { uiLanguage: 'en' },
     streamOutput: true,
     persistentHistory: true,
     historyBaseDirectory: baseDirectory
@@ -774,7 +774,9 @@ test('controller runs streamed and buffered turns without mixing local commands 
   assert.ok(
     controller
       .getSnapshot()
-      .transcript.some((entry) => entry.kind === 'notice' && /Unknown command/.test(entry.text))
+      .transcript.some(
+        (entry) => entry.kind === 'notice' && /Unknown command|未知命令/.test(entry.text)
+      )
   );
   await controller.submit('');
   assert.equal(controller.inputHistory.includes(''), false);
@@ -819,6 +821,160 @@ test('changing /stream updates the active TUI renderer instead of keeping its st
       .getSnapshot()
       .transcript.some((entry) => entry.kind === 'assistant' && entry.markdown === 'first-second')
   );
+  await controller.close();
+});
+
+test('controller reveals the first text delta immediately and frame-bounds later updates', async () => {
+  const baseDirectory = await mkdtemp(join(tmpdir(), 'syzzz-phase8-frame-cadence-'));
+  const engine = displayEngine('frame-session', 'frame');
+  let releaseSecond;
+  let releaseFinish;
+  const secondGate = new Promise((resolve) => {
+    releaseSecond = resolve;
+  });
+  const finishGate = new Promise((resolve) => {
+    releaseFinish = resolve;
+  });
+  engine.runTurn = async function* () {
+    yield { type: 'text_delta', delta: 'first' };
+    await secondGate;
+    yield { type: 'text_delta', delta: '-second' };
+    await finishGate;
+    return { status: 'completed', response: 'first-second', durationMs: 2 };
+  };
+  const controller = await InteractionController.create({
+    engine,
+    sessionOptions: {},
+    streamOutput: true,
+    textFrameIntervalMs: 1_000,
+    persistentHistory: false,
+    historyBaseDirectory: baseDirectory
+  });
+
+  const turn = controller.submit('stream now');
+  await new Promise((resolve) => setImmediate(resolve));
+  const assistantText = () =>
+    controller
+      .getSnapshot()
+      .transcript.filter((entry) => entry.kind === 'assistant')
+      .at(-1)?.markdown ?? '';
+  assert.equal(assistantText(), 'first');
+
+  releaseSecond();
+  await new Promise((resolve) => setTimeout(resolve, 25));
+  assert.equal(assistantText(), 'first');
+
+  releaseFinish();
+  await turn;
+  assert.equal(assistantText(), 'first-second');
+  await controller.close();
+});
+
+test('/ui status records fullscreen diagnostics as a semantic notice', async () => {
+  const baseDirectory = await mkdtemp(join(tmpdir(), 'syzzz-phase8-ui-status-'));
+  const controller = await InteractionController.create({
+    engine: displayEngine('ui-status-session', 'ui-status'),
+    sessionOptions: {
+      uiDiagnostics: () => 'TUI status\n  Renderer: conservative\n  Frames: 12'
+    },
+    streamOutput: true,
+    persistentHistory: false,
+    historyBaseDirectory: baseDirectory
+  });
+
+  await controller.submit('/ui status');
+  const notices = controller
+    .getSnapshot()
+    .transcript.filter((entry) => entry.kind === 'notice')
+    .map((entry) => entry.text)
+    .join('\n');
+  assert.match(notices, /Renderer: conservative/);
+  assert.match(notices, /Frames: 12/);
+  assert.equal(
+    controller
+      .getSnapshot()
+      .transcript.some((entry) => entry.kind === 'user' && entry.text === '/ui status'),
+    false
+  );
+  await controller.close();
+});
+
+test('/setting persists frame rate and Chinese help localizes nested command documentation', async () => {
+  const baseDirectory = await mkdtemp(join(tmpdir(), 'syzzz-phase8-settings-'));
+  let savedFrameRate;
+  let savedStreaming;
+  let savedHistory;
+  let savedContext;
+  let savedLanguage;
+  const controller = await InteractionController.create({
+    engine: displayEngine('settings-session', 'settings'),
+    sessionOptions: {
+      uiLanguage: 'zh-CN',
+      uiFrameRate: 'auto',
+      persistUiFrameRate(frameRate) {
+        savedFrameRate = frameRate;
+      },
+      persistStreamOutput(enabled) {
+        savedStreaming = enabled;
+      },
+      persistHistoryEnabled(enabled) {
+        savedHistory = enabled;
+      },
+      persistContextWindow(tokens) {
+        savedContext = tokens;
+      },
+      persistUiLanguage(language) {
+        savedLanguage = language;
+      }
+    },
+    streamOutput: true,
+    persistentHistory: false,
+    historyBaseDirectory: baseDirectory
+  });
+
+  const choose = async (command, values) => {
+    const submission = controller.submit(command);
+    for (const value of values) {
+      for (let attempt = 0; attempt < 100; attempt += 1) {
+        if (controller.getSnapshot().pending?.type === 'select') break;
+        await new Promise((resolve) => setTimeout(resolve, 1));
+      }
+      assert.equal(controller.getSnapshot().pending?.type, 'select');
+      controller.resolvePending(value);
+    }
+    await submission;
+  };
+
+  await choose('/setting', ['fps', '60']);
+  await controller.submit('/help');
+  await choose('/setting stream', ['off']);
+  await choose('/setting history', ['off']);
+  await choose('/setting context', ['128k']);
+  await controller.submit('/setting fps auto');
+  await controller.submit('/setting fps 30');
+  await controller.submit('/setting fps 60');
+  await choose('/setting language', ['en']);
+  await controller.submit('/setting stream invalid');
+  await controller.submit('/setting history invalid');
+  await controller.submit('/setting context invalid');
+  await controller.submit('/setting fps 45');
+  await controller.submit('/setting language invalid');
+  await controller.submit('/setting unknown');
+  const notices = controller
+    .getSnapshot()
+    .transcript.filter((entry) => entry.kind === 'notice')
+    .map((entry) => entry.text)
+    .join('\n');
+  assert.equal(savedFrameRate, 60);
+  assert.equal(savedStreaming, false);
+  assert.equal(savedHistory, false);
+  assert.equal(savedContext, 131_072);
+  assert.equal(savedLanguage, 'en');
+  assert.match(notices, /TUI 帧率已设置为60 FPS；下次启动生效/);
+  assert.match(notices, /可用命令：/);
+  assert.match(notices, /运行设置：/);
+  assert.match(notices, /\/setting/);
+  assert.match(notices, /集中配置界面语言/);
   await controller.close();
 });
 

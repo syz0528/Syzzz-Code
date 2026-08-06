@@ -83,6 +83,7 @@ export interface InteractionControllerOptions {
   sessionOptions: InteractiveSessionOptions;
   history: WorkspaceInputHistory;
   streamOutput: boolean;
+  textFrameIntervalMs?: number;
 }
 
 function stripAnsi(value: string): string {
@@ -125,10 +126,13 @@ export class InteractionController implements InteractionPort {
   private activeTurnStats?: { tools: number; failedTools: number; retries: number };
   private bufferedText = '';
   private textTimer?: NodeJS.Timeout;
+  private readonly textFrameIntervalMs: number;
+  private lastTextFlushAt = 0;
   private snapshotCache?: InteractionViewState;
 
   private constructor(options: InteractionControllerOptions) {
     this.history = options.history;
+    this.textFrameIntervalMs = Math.max(0, options.textFrameIntervalMs ?? TEXT_FLUSH_MS);
     const terminal: InteractiveTerminalReader = {
       readLine: async (request) =>
         terminalResult(
@@ -458,6 +462,7 @@ export class InteractionController implements InteractionPort {
   }
 
   private handleAgentEvent(event: AgentEvent): void {
+    const chinese = resolveUiLanguage(this.commandRuntime.context.uiLanguage) === 'zh-CN';
     if (event.type !== 'text_delta' && this.commandRuntime.context.streamOutput) {
       this.flushText();
     }
@@ -473,14 +478,18 @@ export class InteractionController implements InteractionPort {
           this.activity = {
             ...this.activity,
             phase: event.status === 'started' ? 'reasoning' : this.activity.phase,
-            detail: event.status === 'started' ? 'Reasoning' : undefined
+            detail: event.status === 'started' ? (chinese ? '推理中' : 'Reasoning') : undefined
           };
         }
         break;
       case 'text_delta':
         this.bufferedText += event.delta;
         if (this.activity && typeof this.activity !== 'string') {
-          this.activity = { ...this.activity, phase: 'responding', detail: 'Responding' };
+          this.activity = {
+            ...this.activity,
+            phase: 'responding',
+            detail: chinese ? '生成回答' : 'Responding'
+          };
         }
         if (this.commandRuntime.context.streamOutput) {
           this.scheduleTextFlush();
@@ -489,13 +498,17 @@ export class InteractionController implements InteractionPort {
       case 'skill_activated':
         this.notice({
           tone: 'success',
-          text: `Skill ${event.skill} activated (${event.activation}).`
+          text: chinese
+            ? `Skill ${event.skill} 已激活（${event.activation}）。`
+            : `Skill ${event.skill} activated (${event.activation}).`
         });
         return;
       case 'skill_failed':
         this.notice({
           tone: 'error',
-          text: `Skill ${event.skill} failed (${event.code}).`
+          text: chinese
+            ? `Skill ${event.skill} 激活失败（${event.code}）。`
+            : `Skill ${event.skill} failed (${event.code}).`
         });
         return;
       case 'retry_scheduled':
@@ -505,13 +518,19 @@ export class InteractionController implements InteractionPort {
           this.activity = {
             ...this.activity,
             phase: 'retrying',
-            detail: `Retrying in ${event.delayMs}ms (${event.reason})`
+            detail: chinese
+              ? `${event.delayMs}ms 后重试（${event.reason}）`
+              : `Retrying in ${event.delayMs}ms (${event.reason})`
           };
         }
         break;
       case 'compaction_started':
         if (this.activity && typeof this.activity !== 'string') {
-          this.activity = { ...this.activity, phase: 'compaction', detail: 'Compacting context' };
+          this.activity = {
+            ...this.activity,
+            phase: 'compaction',
+            detail: chinese ? '压缩上下文' : 'Compacting context'
+          };
         }
         break;
       case 'compaction_completed':
@@ -700,10 +719,18 @@ export class InteractionController implements InteractionPort {
     if (this.textTimer) {
       return;
     }
-    this.textTimer = setTimeout(() => {
-      this.textTimer = undefined;
+    const elapsed = Date.now() - this.lastTextFlushAt;
+    if (this.lastTextFlushAt === 0 || elapsed >= this.textFrameIntervalMs) {
       this.flushText();
-    }, TEXT_FLUSH_MS);
+      return;
+    }
+    this.textTimer = setTimeout(
+      () => {
+        this.textTimer = undefined;
+        this.flushText();
+      },
+      Math.max(0, this.textFrameIntervalMs - elapsed)
+    );
     this.textTimer.unref?.();
   }
 
@@ -746,6 +773,7 @@ export class InteractionController implements InteractionPort {
         ? { ...entry, markdown: entry.markdown + delta }
         : entry
     );
+    this.lastTextFlushAt = Date.now();
     this.emit();
   }
 
@@ -794,6 +822,7 @@ export class InteractionController implements InteractionPort {
     this.activeAssistantId = undefined;
     this.activeTurnId = undefined;
     this.activeTurnStats = undefined;
+    this.lastTextFlushAt = 0;
     this.activity = undefined;
     this.emit();
   }

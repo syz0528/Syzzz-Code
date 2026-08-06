@@ -41,12 +41,13 @@ import {
   validateSkillPath
 } from './composition/skill-authoring.js';
 import { runSkillActivationEval } from './composition/skill-eval.js';
-import type { UiLanguage } from './config.js';
+import type { UiFrameRate, UiLanguage } from './config.js';
 import type { AIProvider } from './providers/base.js';
 import type { SessionController } from './session-controller.js';
 import { isAbortError, OperationAbortedError } from './tools/abort.js';
 import {
   localizeCommandDescription,
+  localizeCommandCategory,
   localizeSuggestionDescription,
   resolveUiLanguage
 } from './ui-language.js';
@@ -78,6 +79,8 @@ const COMMAND_PRIORITIES = {
   rename: 130,
   history: 135,
   terminalSetup: 137,
+  ui: 138,
+  setting: 139,
   help: 140,
   exit: 150
 } as const;
@@ -135,6 +138,9 @@ export interface InteractiveSessionOptions {
   persistContextWindow?: (tokens: number) => void | Promise<void>;
   uiLanguage?: UiLanguage;
   persistUiLanguage?: (language: UiLanguage) => void | Promise<void>;
+  uiFrameRate?: UiFrameRate;
+  persistUiFrameRate?: (frameRate: UiFrameRate) => void | Promise<void>;
+  uiDiagnostics?: () => string;
 }
 
 export interface InteractiveTerminalReader {
@@ -163,6 +169,9 @@ export interface InteractiveCommandContext {
   persistContextWindow?: (tokens: number) => void | Promise<void>;
   uiLanguage: UiLanguage;
   persistUiLanguage?: (language: UiLanguage) => void | Promise<void>;
+  uiFrameRate: UiFrameRate;
+  persistUiFrameRate?: (frameRate: UiFrameRate) => void | Promise<void>;
+  uiDiagnostics?: () => string;
 }
 
 export interface InteractiveCommandRuntime {
@@ -474,6 +483,100 @@ function streamChoices(context: InteractiveCommandContext): readonly CommandChoi
   ];
 }
 
+type SettingSection = 'language' | 'stream' | 'fps' | 'history' | 'context';
+
+function settingSectionChoices(context: InteractiveCommandContext): readonly CommandChoice[] {
+  return [
+    {
+      value: 'language',
+      label: localText(context, 'Language', '界面语言'),
+      description: localText(
+        context,
+        'Local command and interface descriptions',
+        '本地命令与界面说明语言'
+      )
+    },
+    {
+      value: 'stream',
+      label: localText(context, 'Streaming display', '流式展示'),
+      description: localText(
+        context,
+        'Progressive assistant text in the terminal',
+        '在终端中渐进显示回答正文'
+      )
+    },
+    {
+      value: 'fps',
+      label: localText(context, 'TUI frame rate', 'TUI 帧率'),
+      description: localText(context, 'Automatic, 30 FPS, or 60 FPS', '自动、30 FPS 或 60 FPS')
+    },
+    {
+      value: 'history',
+      label: localText(context, 'Input history', '输入历史'),
+      description: localText(
+        context,
+        'Workspace-scoped submitted input history',
+        '按工作区保存主动提交的输入'
+      )
+    },
+    {
+      value: 'context',
+      label: localText(context, 'Context window', '上下文窗口'),
+      description: localText(
+        context,
+        'Fallback budget for models without an override',
+        '未单独配置模型的默认上下文预算'
+      )
+    }
+  ];
+}
+
+function settingValueChoices(
+  section: SettingSection,
+  context: InteractiveCommandContext
+): readonly CommandChoice[] {
+  if (section === 'language') {
+    return [
+      {
+        value: 'auto',
+        label: localText(context, 'Auto', '自动'),
+        current: context.uiLanguage === 'auto'
+      },
+      { value: 'zh-CN', label: '中文', current: context.uiLanguage === 'zh-CN' },
+      { value: 'en', label: 'English', current: context.uiLanguage === 'en' }
+    ];
+  }
+  if (section === 'stream') return streamChoices(context);
+  if (section === 'fps') {
+    return [
+      {
+        value: 'auto',
+        label: localText(context, 'Auto', '自动'),
+        description: localText(
+          context,
+          'Adapt to the detected terminal host',
+          '根据检测到的终端环境自动调整'
+        ),
+        current: context.uiFrameRate === 'auto'
+      },
+      { value: '30', label: '30 FPS', current: context.uiFrameRate === 30 },
+      { value: '60', label: '60 FPS', current: context.uiFrameRate === 60 }
+    ];
+  }
+  if (section === 'history') {
+    const enabled = context.interaction.historyStatus().enabled;
+    return [
+      { value: 'on', label: localText(context, 'On', '开启'), current: enabled },
+      { value: 'off', label: localText(context, 'Off', '关闭'), current: !enabled }
+    ];
+  }
+  return CONTEXT_WINDOW_PRESETS.map((tokens) => ({
+    value: formatTokenWindow(tokens).toLowerCase(),
+    label: formatTokenWindow(tokens),
+    current: context.contextWindowTokens === tokens
+  }));
+}
+
 function modelChoices(context: InteractiveCommandContext): readonly CommandChoice[] {
   const currentModel = getProviderInfo(context.engine)?.model;
   return context.availableModels.map((model) => ({
@@ -567,7 +670,39 @@ function formatStatus(context: InteractiveCommandContext): string {
   if (status.context.compactionCircuitOpen) {
     lines.push('  Context:      compaction circuit open');
   }
-  return lines.join('\n');
+  if (resolveUiLanguage(context.uiLanguage) !== 'zh-CN') return lines.join('\n');
+  const labels = new Map([
+    ['Session', '会话'],
+    ['Workspace', '工作区'],
+    ['Provider', '提供商'],
+    ['Model', '模型'],
+    ['Reported', '服务端报告'],
+    ['Work mode', '工作模式'],
+    ['Permissions', '权限'],
+    ['Context', '上下文'],
+    ['Compactions', '压缩次数'],
+    ['Usage', '用量'],
+    ['Messages', '消息'],
+    ['References', '引用'],
+    ['Skills', '技能'],
+    ['Hooks', 'Hooks'],
+    ['Subagents', '子智能体'],
+    ['Trust', '信任'],
+    ['Title', '标题'],
+    ['Autosave', '自动保存'],
+    ['Persistence', '持久化']
+  ]);
+  return lines
+    .map((line, index) => {
+      if (index === 0) return '会话状态';
+      for (const [english, chinese] of labels) {
+        const prefix = `  ${english}:`;
+        if (line.startsWith(prefix))
+          return `  ${chinese}：${line.slice(prefix.length).trimStart()}`;
+      }
+      return line;
+    })
+    .join('\n');
 }
 
 function formatExtensionReload(
@@ -712,24 +847,34 @@ function formatCommandsHelp(
   registry: CommandRegistry<InteractiveCommandContext>,
   context: InteractiveCommandContext
 ): string {
-  const lines = ['Available commands:'];
+  const language = resolveUiLanguage(context.uiLanguage);
+  const chinese = language === 'zh-CN';
+  const lines = [chinese ? '可用命令：' : 'Available commands:'];
   const commands = registry.search('', context);
   for (const category of COMMAND_CATEGORIES) {
     const categoryCommands = commands.filter((command) => command.category === category);
     if (categoryCommands.length === 0) {
       continue;
     }
-    lines.push('', `${COMMAND_CATEGORY_LABELS[category]}:`);
+    lines.push(
+      '',
+      `${localizeCommandCategory(category, COMMAND_CATEGORY_LABELS[category], language)}${chinese ? '：' : ':'}`
+    );
     for (const command of categoryCommands) {
       const aliases = command.aliases?.length
-        ? ` (aliases: ${command.aliases.map((alias) => `/${alias}`).join(', ')})`
+        ? ` (${chinese ? '别名' : 'aliases'}: ${command.aliases.map((alias) => `/${alias}`).join(', ')})`
         : '';
       const hint = command.argumentHint ? ` ${command.argumentHint}` : '';
       lines.push(`  /${command.name}${hint}${aliases}`);
-      lines.push(`    ${command.description}`);
+      lines.push(`    ${localizeCommandDescription(command.name, command.description, language)}`);
     }
   }
-  lines.push('', 'Type // at the start to send a literal slash message.');
+  lines.push(
+    '',
+    chinese
+      ? '在消息开头输入 // 可发送字面量斜杠。'
+      : 'Type // at the start to send a literal slash message.'
+  );
   return lines.join('\n');
 }
 
@@ -1006,27 +1151,81 @@ export function createCommandRegistry(): CommandRegistry<InteractiveCommandConte
     async execute(argument, commandContext): Promise<CommandExecutionResult> {
       if (!argument) {
         console.log(
-          chalk.cyan(`\nStream display is ${commandContext.streamOutput ? 'on' : 'off'}.`)
+          chalk.cyan(
+            localText(
+              commandContext,
+              `\nStream display is ${commandContext.streamOutput ? 'on' : 'off'}.`,
+              `\n流式展示当前为${commandContext.streamOutput ? '开启' : '关闭'}。`
+            )
+          )
         );
-        console.log(chalk.gray('Use: /stream on | /stream off\n'));
+        console.log(
+          chalk.gray(
+            localText(
+              commandContext,
+              'Use: /stream on | /stream off\n',
+              '用法：/stream on | /stream off\n'
+            )
+          )
+        );
         return 'continue';
       }
       const normalized = argument.trim().toLowerCase();
       if (normalized !== 'on' && normalized !== 'off') {
-        console.log(chalk.red(`\nUnknown stream display mode: ${argument}`));
-        console.log(chalk.gray('Use: /stream on | /stream off\n'));
+        console.log(
+          chalk.red(
+            localText(
+              commandContext,
+              `\nUnknown stream display mode: ${argument}`,
+              `\n未知流式展示模式：${argument}`
+            )
+          )
+        );
+        console.log(
+          chalk.gray(
+            localText(
+              commandContext,
+              'Use: /stream on | /stream off\n',
+              '用法：/stream on | /stream off\n'
+            )
+          )
+        );
         return 'continue';
       }
       const enabled = normalized === 'on';
       if (enabled === commandContext.streamOutput) {
-        console.log(chalk.green(`\nStream display is already ${normalized}.\n`));
+        console.log(
+          chalk.green(
+            localText(
+              commandContext,
+              `\nStream display is already ${normalized}.\n`,
+              `\n流式展示已经${enabled ? '开启' : '关闭'}。\n`
+            )
+          )
+        );
         return 'continue';
       }
 
       await commandContext.persistStreamOutput?.(enabled);
       commandContext.streamOutput = enabled;
-      console.log(chalk.green(`\nStream display set to ${normalized}.`));
-      console.log(chalk.gray('Provider streaming and AgentEvent delivery remain enabled.\n'));
+      console.log(
+        chalk.green(
+          localText(
+            commandContext,
+            `\nStream display set to ${normalized}.`,
+            `\n流式展示已${enabled ? '开启' : '关闭'}。`
+          )
+        )
+      );
+      console.log(
+        chalk.gray(
+          localText(
+            commandContext,
+            'Provider streaming and AgentEvent delivery remain enabled.\n',
+            'Provider 流式传输与 AgentEvent 事件投递仍保持开启。\n'
+          )
+        )
+      );
       return 'continue';
     }
   });
@@ -1143,14 +1342,26 @@ export function createCommandRegistry(): CommandRegistry<InteractiveCommandConte
     async execute(argument, commandContext): Promise<CommandExecutionResult> {
       const language = argument?.trim();
       if (language !== 'auto' && language !== 'zh-CN' && language !== 'en') {
-        console.log(chalk.red('\nUse: /language auto | zh-CN | en\n'));
+        console.log(
+          chalk.red(
+            localText(
+              commandContext,
+              '\nUse: /language auto | zh-CN | en\n',
+              '\n用法：/language auto | zh-CN | en\n'
+            )
+          )
+        );
         return 'continue';
       }
       await commandContext.persistUiLanguage?.(language);
       commandContext.uiLanguage = language;
       console.log(
         chalk.green(
-          `\nLocal description language set to ${language === 'zh-CN' ? '中文' : language === 'en' ? 'English' : 'Auto'}.\n`
+          localText(
+            commandContext,
+            `\nLocal description language set to ${language === 'zh-CN' ? 'Chinese' : language === 'en' ? 'English' : 'Auto'}.\n`,
+            `\n本地界面说明语言已设置为${language === 'zh-CN' ? '中文' : language === 'en' ? '英文' : '自动'}。\n`
+          )
         )
       );
       return 'continue';
@@ -1169,11 +1380,39 @@ export function createCommandRegistry(): CommandRegistry<InteractiveCommandConte
       const runtime = commandContext.engine.getCompositionRuntime?.();
       const skills = runtime?.listSkills().filter((skill) => !skill.shadowed) ?? [];
       return [
-        { value: 'list', description: 'List discovered Skills' },
-        { value: 'reload', description: 'Reload Skill metadata' },
-        { value: 'doctor', description: 'Show Skill diagnostics' },
-        { value: 'create', description: 'Create an explicit-only Skill' },
-        { value: 'validate', description: 'Validate discovered Skills' },
+        {
+          value: 'list',
+          label: localText(commandContext, 'List', '列出'),
+          description: localText(commandContext, 'List discovered Skills', '列出已发现的 Skills')
+        },
+        {
+          value: 'reload',
+          label: localText(commandContext, 'Reload', '重新加载'),
+          description: localText(commandContext, 'Reload Skill metadata', '重新加载 Skill 元数据')
+        },
+        {
+          value: 'doctor',
+          label: localText(commandContext, 'Doctor', '诊断'),
+          description: localText(commandContext, 'Show Skill diagnostics', '查看 Skill 诊断信息')
+        },
+        {
+          value: 'create',
+          label: localText(commandContext, 'Create', '新建'),
+          description: localText(
+            commandContext,
+            'Create an explicit-only Skill',
+            '新建仅显式调用的 Skill'
+          )
+        },
+        {
+          value: 'validate',
+          label: localText(commandContext, 'Validate', '验证'),
+          description: localText(
+            commandContext,
+            'Validate discovered Skills',
+            '验证已发现的 Skills'
+          )
+        },
         ...skills.map((skill) => ({
           value: `inspect ${skill.name}`,
           description: skill.interface.shortDescription
@@ -1448,10 +1687,15 @@ export function createCommandRegistry(): CommandRegistry<InteractiveCommandConte
     isEnabled: (commandContext) =>
       typeof commandContext.engine.getExtensionRuntime === 'function' &&
       Boolean(commandContext.engine.getExtensionRuntime()),
-    choices: () => [
+    choices: (commandContext) => [
       {
         value: 'reload',
-        description: 'Re-evaluate trust and reload MCP and Hooks'
+        label: localText(commandContext, 'Reload', '重新加载'),
+        description: localText(
+          commandContext,
+          'Re-evaluate trust and reload MCP and Hooks',
+          '重新评估信任并加载 MCP 与 Hooks'
+        )
       }
     ],
     async execute(argument, commandContext): Promise<CommandExecutionResult> {
@@ -1489,16 +1733,32 @@ export function createCommandRegistry(): CommandRegistry<InteractiveCommandConte
       const runtime = commandContext.engine.getExtensionRuntime?.();
       const servers = runtime?.mcp.getStatuses() ?? [];
       return [
-        { value: 'reload', description: 'Reload extension configuration' },
+        {
+          value: 'reload',
+          label: localText(commandContext, 'Reload', '重新加载'),
+          description: localText(
+            commandContext,
+            'Reload extension configuration',
+            '重新加载扩展配置'
+          )
+        },
         ...servers.map((server) => ({
           value: `inspect ${server.name}`,
-          label: `inspect ${server.name}`,
-          description: 'Show effective MCP tool risks and policies'
+          label: `${localText(commandContext, 'Inspect', '检查')} ${server.name}`,
+          description: localText(
+            commandContext,
+            'Show effective MCP tool risks and policies',
+            '查看 MCP 工具的实际风险与策略'
+          )
         })),
         ...servers.map((server) => ({
           value: `reconnect ${server.name}`,
-          label: `reconnect ${server.name}`,
-          description: `${server.state}; ${server.toolCount} tools`
+          label: `${localText(commandContext, 'Reconnect', '重新连接')} ${server.name}`,
+          description: localText(
+            commandContext,
+            `${server.state}; ${server.toolCount} tools`,
+            `${server.state}；${server.toolCount} 个工具`
+          )
         }))
       ];
     },
@@ -1591,10 +1851,15 @@ export function createCommandRegistry(): CommandRegistry<InteractiveCommandConte
     isEnabled: (commandContext) =>
       typeof commandContext.engine.getExtensionRuntime === 'function' &&
       Boolean(commandContext.engine.getExtensionRuntime()),
-    choices: () => [
+    choices: (commandContext) => [
       {
         value: 'reload',
-        description: 'Reload MCP and Hook configuration'
+        label: localText(commandContext, 'Reload', '重新加载'),
+        description: localText(
+          commandContext,
+          'Reload MCP and Hook configuration',
+          '重新加载 MCP 与 Hook 配置'
+        )
       }
     ],
     async execute(argument, commandContext): Promise<CommandExecutionResult> {
@@ -1647,14 +1912,22 @@ export function createCommandRegistry(): CommandRegistry<InteractiveCommandConte
       return [
         {
           value: 'on',
-          label: 'On',
-          description: 'Expose Delegate when the Provider supports isolated forks',
+          label: localText(commandContext, 'On', '开启'),
+          description: localText(
+            commandContext,
+            'Expose Delegate when the Provider supports isolated forks',
+            'Provider 支持隔离 fork 时提供 Delegate'
+          ),
           current: status?.enabled === true
         },
         {
           value: 'off',
-          label: 'Off',
-          description: 'Hide Delegate from subsequent turns',
+          label: localText(commandContext, 'Off', '关闭'),
+          description: localText(
+            commandContext,
+            'Hide Delegate from subsequent turns',
+            '后续回合不再提供 Delegate'
+          ),
           current: status?.enabled === false
         }
       ];
@@ -1800,27 +2073,71 @@ export function createCommandRegistry(): CommandRegistry<InteractiveCommandConte
     async execute(argument, commandContext): Promise<CommandExecutionResult> {
       const providerInfo = getProviderInfo(commandContext.engine);
       if (!argument) {
-        console.log(chalk.cyan(`\nCurrent model: ${providerInfo?.model ?? 'unknown'}`));
+        console.log(
+          chalk.cyan(
+            localText(
+              commandContext,
+              `\nCurrent model: ${providerInfo?.model ?? 'unknown'}`,
+              `\n当前模型：${providerInfo?.model ?? '未知'}`
+            )
+          )
+        );
         if (commandContext.availableModels.length > 0) {
           console.log(
-            chalk.gray(`Configured models: ${commandContext.availableModels.join(', ')}`)
+            chalk.gray(
+              localText(
+                commandContext,
+                `Configured models: ${commandContext.availableModels.join(', ')}`,
+                `已配置模型：${commandContext.availableModels.join('、')}`
+              )
+            )
           );
         }
-        console.log(chalk.gray('Use: /model <configured-model>\n'));
+        console.log(
+          chalk.gray(
+            localText(
+              commandContext,
+              'Use: /model <configured-model>\n',
+              '用法：/model <已配置模型>\n'
+            )
+          )
+        );
         return 'continue';
       }
 
       const nextModel = findConfiguredModel(commandContext.availableModels, argument);
       if (!nextModel) {
-        console.log(chalk.red(`\nModel is not configured for this provider: ${argument}`));
         console.log(
-          chalk.gray(`Available: ${commandContext.availableModels.join(', ') || 'none'}\n`)
+          chalk.red(
+            localText(
+              commandContext,
+              `\nModel is not configured for this provider: ${argument}`,
+              `\n当前 Provider 未配置此模型：${argument}`
+            )
+          )
+        );
+        console.log(
+          chalk.gray(
+            localText(
+              commandContext,
+              `Available: ${commandContext.availableModels.join(', ') || 'none'}\n`,
+              `可用模型：${commandContext.availableModels.join('、') || '无'}\n`
+            )
+          )
         );
         return 'continue';
       }
       const previousModel = providerInfo?.model;
       if (nextModel === previousModel) {
-        console.log(chalk.green(`\nModel is already ${nextModel}.\n`));
+        console.log(
+          chalk.green(
+            localText(
+              commandContext,
+              `\nModel is already ${nextModel}.\n`,
+              `\n当前模型已经是 ${nextModel}。\n`
+            )
+          )
+        );
         return 'continue';
       }
       if (typeof commandContext.engine.setModel !== 'function') {
@@ -1837,7 +2154,15 @@ export function createCommandRegistry(): CommandRegistry<InteractiveCommandConte
         }
         throw error;
       }
-      console.log(chalk.green(`\nModel switched to ${nextModel}.\n`));
+      console.log(
+        chalk.green(
+          localText(
+            commandContext,
+            `\nModel switched to ${nextModel}.\n`,
+            `\n模型已切换为 ${nextModel}。\n`
+          )
+        )
+      );
       return 'continue';
     }
   });
@@ -1848,14 +2173,60 @@ export function createCommandRegistry(): CommandRegistry<InteractiveCommandConte
     priority: COMMAND_PRIORITIES.history,
     description: 'Inspect or control workspace input history.',
     argumentHint: '[status|on|off|clear]',
+    choices: (commandContext) => {
+      const enabled = commandContext.interaction.historyStatus().enabled;
+      return [
+        {
+          value: 'status',
+          label: localText(commandContext, 'Status', '状态'),
+          description: localText(
+            commandContext,
+            'Show workspace history status',
+            '查看工作区输入历史状态'
+          )
+        },
+        {
+          value: 'on',
+          label: localText(commandContext, 'On', '开启'),
+          description: localText(
+            commandContext,
+            'Persist submitted input for this workspace',
+            '保存当前工作区主动提交的输入'
+          ),
+          current: enabled
+        },
+        {
+          value: 'off',
+          label: localText(commandContext, 'Off', '关闭'),
+          description: localText(
+            commandContext,
+            'Stop persisting workspace input',
+            '停止保存当前工作区输入'
+          ),
+          current: !enabled
+        },
+        {
+          value: 'clear',
+          label: localText(commandContext, 'Clear', '清除'),
+          description: localText(
+            commandContext,
+            'Clear only this workspace history',
+            '仅清除当前工作区输入历史'
+          )
+        }
+      ];
+    },
     async execute(argument, commandContext, signal): Promise<CommandExecutionResult> {
       const action = argument?.trim().toLowerCase() || 'status';
       if (action === 'status') {
         const status = commandContext.interaction.historyStatus();
         console.log(
           chalk.cyan(
-            `\nInput history: ${status.enabled ? 'on' : 'off'} | ` +
-              `${status.entries} entries\n${status.path}\n`
+            localText(
+              commandContext,
+              `\nInput history: ${status.enabled ? 'on' : 'off'} | ${status.entries} entries\n${status.path}\n`,
+              `\n输入历史：${status.enabled ? '开启' : '关闭'} | ${status.entries} 条\n${status.path}\n`
+            )
           )
         );
         return 'continue';
@@ -1865,7 +2236,13 @@ export function createCommandRegistry(): CommandRegistry<InteractiveCommandConte
         await commandContext.interaction.setHistoryEnabled(enabled);
         await commandContext.persistHistoryEnabled?.(enabled);
         console.log(
-          chalk.green(`\nWorkspace input history ${enabled ? 'enabled' : 'disabled'}.\n`)
+          chalk.green(
+            localText(
+              commandContext,
+              `\nWorkspace input history ${enabled ? 'enabled' : 'disabled'}.\n`,
+              `\n工作区输入历史已${enabled ? '开启' : '关闭'}。\n`
+            )
+          )
         );
         return 'continue';
       }
@@ -1880,9 +2257,21 @@ export function createCommandRegistry(): CommandRegistry<InteractiveCommandConte
         );
         if (confirmed) {
           await commandContext.interaction.clearHistory();
-          console.log(chalk.green('\nWorkspace input history cleared.\n'));
+          console.log(
+            chalk.green(
+              localText(
+                commandContext,
+                '\nWorkspace input history cleared.\n',
+                '\n工作区输入历史已清除。\n'
+              )
+            )
+          );
         } else {
-          console.log(chalk.yellow('\nHistory clear cancelled.\n'));
+          console.log(
+            chalk.yellow(
+              localText(commandContext, '\nHistory clear cancelled.\n', '\n已取消清除输入历史。\n')
+            )
+          );
         }
         return 'continue';
       }
@@ -1897,9 +2286,12 @@ export function createCommandRegistry(): CommandRegistry<InteractiveCommandConte
     priority: COMMAND_PRIORITIES.terminalSetup,
     description: 'Inspect or install a safe Shift+Enter terminal mapping.',
     argumentHint: '[status|install]',
-    choices: () => [
-      { value: 'status', label: 'Status' },
-      { value: 'install', label: 'Install Shift+Enter mapping' }
+    choices: (commandContext) => [
+      { value: 'status', label: localText(commandContext, 'Status', '状态') },
+      {
+        value: 'install',
+        label: localText(commandContext, 'Install Shift+Enter mapping', '安装 Shift+Enter 映射')
+      }
     ],
     async execute(argument, commandContext, signal): Promise<CommandExecutionResult> {
       const action = argument?.trim().toLowerCase() || 'status';
@@ -1983,6 +2375,196 @@ export function createCommandRegistry(): CommandRegistry<InteractiveCommandConte
   });
 
   register({
+    name: 'ui',
+    category: 'general',
+    priority: COMMAND_PRIORITIES.ui,
+    description: 'Show terminal capabilities and the active TUI renderer profile.',
+    argumentHint: '[status]',
+    choices: (commandContext) => [
+      { value: 'status', label: localText(commandContext, 'Status', '状态') }
+    ],
+    execute(argument, commandContext): CommandExecutionResult {
+      const action = argument?.trim().toLowerCase() || 'status';
+      if (action !== 'status') {
+        console.log(chalk.red('\nUse: /ui status\n'));
+        return 'continue';
+      }
+      console.log(
+        chalk.cyan(
+          `\n${commandContext.uiDiagnostics?.() ?? 'TUI diagnostics are only available in fullscreen mode.'}\n`
+        )
+      );
+      return 'continue';
+    }
+  });
+
+  register({
+    name: 'setting',
+    aliases: ['settings'],
+    category: 'runtime',
+    priority: COMMAND_PRIORITIES.setting,
+    description: 'Configure local interface and terminal preferences.',
+    argumentHint: '[language|stream|fps|history|context] [value]',
+    choices: settingSectionChoices,
+    async execute(argument, commandContext, signal): Promise<CommandExecutionResult> {
+      const [rawSection, rawValue] = argument?.trim().split(/\s+/, 2) ?? [];
+      const section = rawSection?.toLowerCase() as SettingSection | undefined;
+      if (!section) {
+        const historyEnabled = commandContext.interaction.historyStatus().enabled;
+        console.log(
+          chalk.cyan(localText(commandContext, '\nInterface settings\n', '\n界面设置\n'))
+        );
+        console.log(
+          localText(
+            commandContext,
+            `  Language: ${commandContext.uiLanguage}\n  Streaming: ${commandContext.streamOutput ? 'on' : 'off'}\n  Frame rate: ${commandContext.uiFrameRate}\n  History: ${historyEnabled ? 'on' : 'off'}\n  Context: ${formatTokenWindow(commandContext.contextWindowTokens)}\n`,
+            `  语言：${commandContext.uiLanguage}\n  流式展示：${commandContext.streamOutput ? '开启' : '关闭'}\n  帧率：${commandContext.uiFrameRate === 'auto' ? '自动' : `${commandContext.uiFrameRate} FPS`}\n  输入历史：${historyEnabled ? '开启' : '关闭'}\n  上下文：${formatTokenWindow(commandContext.contextWindowTokens)}\n`
+          )
+        );
+        return 'continue';
+      }
+      if (!['language', 'stream', 'fps', 'history', 'context'].includes(section)) {
+        console.log(
+          chalk.red(
+            localText(
+              commandContext,
+              '\nUse: /setting language|stream|fps|history|context [value]\n',
+              '\n用法：/setting language|stream|fps|history|context [值]\n'
+            )
+          )
+        );
+        return 'continue';
+      }
+
+      let value: string | undefined = rawValue;
+      if (!value) {
+        const choices = settingValueChoices(section, commandContext);
+        value = await commandContext.interaction.select(
+          {
+            title: localText(commandContext, 'Choose a setting', '选择设置'),
+            message: settingSectionChoices(commandContext).find(
+              (choice) => choice.value === section
+            )?.description,
+            choices: choices.map((choice) => ({
+              value: choice.value,
+              label: choice.label ?? choice.value,
+              ...(choice.description ? { description: choice.description } : {}),
+              ...(choice.current ? { current: true } : {})
+            })),
+            initialValue: choices.find((choice) => choice.current)?.value
+          },
+          signal
+        );
+        if (!value) return 'continue';
+      }
+
+      if (section === 'language') {
+        if (value !== 'auto' && value !== 'zh-CN' && value !== 'en') {
+          console.log(chalk.red('\nUse: /setting language auto|zh-CN|en\n'));
+          return 'continue';
+        }
+        await commandContext.persistUiLanguage?.(value);
+        commandContext.uiLanguage = value;
+        console.log(
+          chalk.green(
+            localText(
+              commandContext,
+              `\nInterface language set to ${value}.\n`,
+              `\n界面语言已设置为${value === 'zh-CN' ? '中文' : value === 'en' ? '英文' : '自动'}。\n`
+            )
+          )
+        );
+        return 'continue';
+      }
+      if (section === 'stream') {
+        const normalized = value.toLowerCase();
+        if (normalized !== 'on' && normalized !== 'off') {
+          console.log(chalk.red('\nUse: /setting stream on|off\n'));
+          return 'continue';
+        }
+        const enabled = normalized === 'on';
+        await commandContext.persistStreamOutput?.(enabled);
+        commandContext.streamOutput = enabled;
+        console.log(
+          chalk.green(
+            localText(
+              commandContext,
+              `\nStreaming display ${enabled ? 'enabled' : 'disabled'}.\n`,
+              `\n流式展示已${enabled ? '开启' : '关闭'}。\n`
+            )
+          )
+        );
+        return 'continue';
+      }
+      if (section === 'fps') {
+        const frameRate: UiFrameRate =
+          value === 'auto'
+            ? 'auto'
+            : Number(value) === 30
+              ? 30
+              : Number(value) === 60
+                ? 60
+                : 'auto';
+        if (value !== 'auto' && value !== '30' && value !== '60') {
+          console.log(chalk.red('\nUse: /setting fps auto|30|60\n'));
+          return 'continue';
+        }
+        await commandContext.persistUiFrameRate?.(frameRate);
+        commandContext.uiFrameRate = frameRate;
+        console.log(
+          chalk.green(
+            localText(
+              commandContext,
+              `\nTUI frame rate set to ${frameRate === 'auto' ? 'auto' : `${frameRate} FPS`}; it takes effect on the next launch.\n`,
+              `\nTUI 帧率已设置为${frameRate === 'auto' ? '自动' : `${frameRate} FPS`}；下次启动生效。\n`
+            )
+          )
+        );
+        return 'continue';
+      }
+      if (section === 'history') {
+        const normalized = value.toLowerCase();
+        if (normalized !== 'on' && normalized !== 'off') {
+          console.log(chalk.red('\nUse: /setting history on|off\n'));
+          return 'continue';
+        }
+        const enabled = normalized === 'on';
+        await commandContext.interaction.setHistoryEnabled(enabled);
+        await commandContext.persistHistoryEnabled?.(enabled);
+        console.log(
+          chalk.green(
+            localText(
+              commandContext,
+              `\nWorkspace input history ${enabled ? 'enabled' : 'disabled'}.\n`,
+              `\n工作区输入历史已${enabled ? '开启' : '关闭'}。\n`
+            )
+          )
+        );
+        return 'continue';
+      }
+
+      const tokens = parseContextWindowPreset(value);
+      if (!tokens) {
+        console.log(chalk.red('\nUse: /setting context 64k|128k|200k\n'));
+        return 'continue';
+      }
+      await commandContext.persistContextWindow?.(tokens);
+      commandContext.engine.setDefaultContextWindowTokens(tokens);
+      commandContext.contextWindowTokens = tokens;
+      console.log(
+        chalk.green(
+          localText(
+            commandContext,
+            `\nContext fallback set to ${formatTokenWindow(tokens)}.\n`,
+            `\n默认上下文窗口已设置为 ${formatTokenWindow(tokens)}。\n`
+          )
+        )
+      );
+      return 'continue';
+    }
+  });
+
+  register({
     name: 'help',
     aliases: ['?'],
     category: 'general',
@@ -2021,11 +2603,18 @@ export async function executeSlashCommand(
   const command = registry.resolve(parsed.name, context);
   if (!command) {
     const suggestions = registry.closest(parsed.name, context);
-    context.interaction.notice({ tone: 'error', text: `Unknown command: /${parsed.name}` });
+    context.interaction.notice({
+      tone: 'error',
+      text: localText(context, `Unknown command: /${parsed.name}`, `未知命令：/${parsed.name}`)
+    });
     if (suggestions.length > 0) {
       context.interaction.notice({
         tone: 'muted',
-        text: `Did you mean: ${suggestions.map((name) => `/${name}`).join(', ')}?`
+        text: localText(
+          context,
+          `Did you mean: ${suggestions.map((name) => `/${name}`).join(', ')}?`,
+          `你是否想输入：${suggestions.map((name) => `/${name}`).join('、')}？`
+        )
       });
     }
     return { type: 'continue' };
@@ -2091,7 +2680,10 @@ export function createInteractiveCommandRuntime(
     contextWindowTokens: options.contextWindowTokens ?? 65_536,
     persistContextWindow: options.persistContextWindow,
     uiLanguage: options.uiLanguage ?? 'auto',
-    persistUiLanguage: options.persistUiLanguage
+    persistUiLanguage: options.persistUiLanguage,
+    uiFrameRate: options.uiFrameRate ?? 'auto',
+    persistUiFrameRate: options.persistUiFrameRate,
+    uiDiagnostics: options.uiDiagnostics
   };
   const registry = createCommandRegistry();
   const slashSuggestions = createSlashSuggestionProvider(

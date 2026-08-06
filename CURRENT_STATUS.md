@@ -1,6 +1,6 @@
 # Syzzz Code 当前项目状态
 
-**更新时间：** 2026-08-05
+**更新时间：** 2026-08-06
 
 **当前分支：** `codex/phase8-tui`
 
@@ -18,7 +18,9 @@
 
 **Phase 8 TUI Spike：** `64ecaf2`
 
-**当前阶段：** Phase 8.1 为 **Implemented / Validation Pending**；Phase 7 与 Phase 7.1 已 **Frozen**；Phase 6 保持 **Release Candidate Accepted**
+**Phase 8 回退检查点：** `a4e93d4`
+
+**当前阶段：** Phase 8.2 为 **Implemented / Validation Pending**；Phase 7 与 Phase 7.1 已 **Frozen**；Phase 6 保持 **Release Candidate Accepted**
 
 ## 1. 当前结论
 
@@ -30,9 +32,11 @@ Phase 5.0 Core 已完成“可信扩展运行时、MCP Broker 与受限委派”
 
 Phase 5.1 在此基础上补齐扩展配置复审、MCP 本地收紧策略与断线生命周期、统一扩展状态、压缩/委派 Hook，以及 Subagent 软硬预算和停止语义。
 
-Phase 8 在 319 项冻结回归上新增 fullscreen TUI、InteractionController、多行 Composer、结构化审批与选择、`AskUser` 和工作区输入历史。Phase 8.1 针对真实终端暴露的问题，将扁平 Transcript 改为语义 `ConversationBlock`，启用 Windows 可用的 changed-line 增量提交，加入 source-backed stable/mutable 流式展示、Markdown、活动耗时、语义滚动锚点、sticky 问题和结构化 Skill 提问。本轮继续补齐启动续聊选择、会话/工作区级编辑授权、64K/128K/200K fallback context、本地中英文描述、显式确认输入、客户端强制的 AskUser 自定义答案、直接拖选复制和可拖动滚动条；终端输入层现在会分离同批到达的 SGR 鼠标事件与真实文字，AskUser 不再被点击或滚轮控制码污染。增强键盘改为 fullscreen 首帧前探测，只有终端明确响应才启用 Kitty 协议；旧 Windows Terminal 与 IDE 内嵌终端可通过 `/terminal-setup install` 安装有备份、冲突拒绝的 `ESC+CR` 映射，未设置时使用 `Ctrl+J`。Header 展示工作区与会话 ID，Footer 集中展示 Provider/model、模式/权限、`used/window` context 和工具数。实现和本地自动门槛已通过；跨平台 CI 与用户复验仍未完成，因此当前不标记 Validated 或 Frozen。
+Phase 8 在 319 项冻结回归上新增 fullscreen TUI、InteractionController、多行 Composer、结构化审批与选择、`AskUser` 和工作区输入历史。Phase 8.1 针对真实终端暴露的问题，将扁平 Transcript 改为语义 `ConversationBlock`，启用 Windows 可用的 changed-line 增量提交，加入 source-backed stable/mutable 流式展示、Markdown、活动耗时、语义滚动锚点、sticky 问题和结构化 Skill 提问。本轮继续补齐启动续聊选择、会话/工作区级编辑授权、64K/128K/200K fallback context、本地中英文描述、显式确认输入、客户端强制的 AskUser 自定义答案、直接拖选复制和可拖动滚动条；终端输入层现在会分离同批到达的 SGR 鼠标事件与真实文字，AskUser 不再被点击或滚轮控制码污染。增强键盘改为 fullscreen 首帧前探测，只有终端明确响应才启用 Kitty 协议；旧 Windows Terminal 与 IDE 内嵌终端可通过 `/terminal-setup install` 安装有备份、冲突拒绝的 `ESC+CR` 映射，未设置时使用 `Ctrl+J`。Header 展示工作区与会话 ID，Footer 集中展示 Provider/model、模式/权限、`used/window` context 和工具数。
 
-当前本地完整回归为 **362/362**、TUI 专项 **38/38**、离线 Eval **12/12**；覆盖率为 Lines **82.03%**、Branches **75.73%**、Functions **85.40%**。生产依赖审计为 0 vulnerability，候选包 312 个 allowlist 文件并通过全新 prefix 安装 smoke。
+Phase 8.2 以 `a4e93d4` 为可回退检查点，借鉴 Codex 的稳定区域/可变尾部与源码重排、Claude 的 retained frame 思路，以及 Grok 的显式 viewport 和输入解码边界，继续收紧显示层：完成块按对象、宽度和语言缓存，不再随每个 delta 重算；Transcript 独立 memo；首个正文 delta 立即提交，后续更新按终端 profile 合并；SGR 鼠标序列使用有状态解码器跨读取拼接，避免碎片进入 Composer 或 AskUser；Windows IDE 内嵌终端自动采用 20 FPS 的 conservative profile，标准终端保持 30 FPS，也可通过 `/setting fps auto|30|60` 持久化选择。`/help`、二级选项、高频本地 notice 和状态标签已补齐中英文路径；Transcript 松开拖选后会自动复制并在 Footer 显示短暂成功提示。`/ui status` 可查看主机、键盘、帧节奏与渲染耗时。Ink 已提供 DEC synchronized frame commit，本期不维护第二套终端后端或 fork Ink。实现和本地专项门槛已通过；跨平台 CI 与用户复验仍未完成，因此当前不标记 Validated 或 Frozen。
+
+当前本地完整回归为 **367/367**、TUI 专项 **43/43**、离线 Eval **12/12**；最新正式覆盖率为 Lines **82.18%**、Branches **75.96%**、Functions **85.45%**。生产依赖审计为 0 vulnerability，候选包包含 320 个 allowlist 文件并通过全新 prefix 安装 smoke。
 
 11 项真实终端 dogfood 已全部通过，覆盖项目 trust 复审、MCP 策略与断线重连、Hook、Subagent 预算、取消清理、隐私恢复和撤销信任。公开 Streamable HTTP MCP 的真实握手、工具发现与只读天气调用也已通过，Phase 5 的扩展信任和传输闭环达到冻结条件。
 
@@ -84,11 +88,11 @@ Phase 8 从 `64ecaf2` 的 Ink Spike 建立 `codex/phase8-tui`：
 - Transcript 使用语义块、Markdown 与 stable/mutable 流式 Presenter，支持鼠标滚轮、分页、sticky 问题、新输出提示和 resize 后源文本重排；
 - 同一工作区存在历史时默认结构化选择继续最近会话或新建会话；显式启动参数仍可直接恢复；
 - `acceptEdits` 可跟随已保存对话或工作区，Shell 仍逐次审批；`fullAccess` 永不持久化，`safe` 可撤销已有编辑授权；
-- `/context` 提供 64K/128K/200K fallback 预设，Footer 显示实际 `used/window`；`/language` 本地化内置命令与上下文候选描述；
+- `/context` 提供 64K/128K/200K fallback 预设，Footer 显示实际 `used/window`；`/language` 本地化内置命令、二级选项、高频状态和上下文候选描述；`/setting` 集中管理语言、流式展示、帧率、历史与上下文；
 - `/stream` 立即更新 TUI 流式策略，首个正文 delta 直接可见，长回复按 40ms 稳定行节奏展示并在积压时有界追平；
 - 活动栏展示 phase、spinner、等待状态和有效工作耗时，回答尾部保留最终 token、工具、重试与耗时摘要；
 - `AskUser` 支持单选、多选、短文本和预设外自定义答案；激活 Skill 需要用户作答时明确要求使用结构化面板，答案不进入审计正文或 Composer 历史；
-- 确认与审批先在交互输入区显示 token，按 Enter 后提交；Transcript 支持直接左键拖选并在松开时复制，右侧滚动条支持点击和按住拖动；
+- 确认与审批先在交互输入区显示 token，按 Enter 后提交；Transcript 支持直接左键拖选并在松开时自动复制、显示成功提示，右侧滚动条支持点击和按住拖动；
 - 输入历史按工作区原子保存，可通过 `/history` 控制；
 - inline 与 NDJSON 保持长期兼容，React 不进入 Agent Runtime。
 
@@ -235,8 +239,8 @@ subagents.enabled = true
 当前结果：
 
 - `npm test`：**362/362**
-- `npm run test:tui`：**38/38**，覆盖语义 Transcript、Markdown、真实 ANSI 屏幕回放、增量帧、流式 Presenter、Composer、启动续聊、可见确认、直接拖选复制、滚动条拖动、批量鼠标事件过滤、增强键盘探测、终端映射备份与冲突拒绝、中文界面、`grill-me` 与结构化交互
-- `npm run test:coverage`：综合门槛测得 Lines **82.03%**、Branches **75.73%**、Functions **85.40%**，均高于 82%/74%/84% 门槛
+- `npm run test:tui`：**43/43**，覆盖语义 Transcript、Markdown、真实 ANSI 屏幕回放、增量帧、流式 Presenter、Composer、启动续聊、可见确认、直接拖选自动复制与提示、滚动条拖动、批量鼠标事件过滤、增强键盘探测、终端映射备份与冲突拒绝、中文界面、`grill-me` 与结构化交互
+- `npm run test:coverage`：综合门槛测得 Lines **82.18%**、Branches **75.96%**、Functions **85.45%**，均高于 82%/74%/84% 门槛
 - `npm run eval:offline`：十二项固定任务 **12/12**
 - `npm run test:providers`：五种离线 Provider Profile 与共享 Runner 契约 **46/46**
 - `npm run test:stability`：Windows Shell、会话和 MCP/Hook 生命周期连续三轮通过
