@@ -19,7 +19,7 @@ npm run check
 
 `npm run check` 是本地综合门槛；`smoke:package` 额外安装真实 tarball，耗时更长。Windows 进程、会话锁与 MCP 生命周期可用 `npm run test:stability` 连续执行三轮，任一轮失败都会立即终止。
 
-2026-08-07 的 Phase 8.2 冻结候选基线为：完整回归 367/367、TUI/Interaction 专项 43/43、离线 Eval 12/12；最新正式覆盖率 Lines 82.18%/Branches 75.96%/Functions 85.45%。除 Phase 8.1 的 headless VT/ANSI 屏幕回放、source-backed 流式中间帧、Markdown、sticky 问题、鼠标、grapheme、`/ @ $`、启动续聊、可见确认、活动计时、中文界面和结构化 AskUser 外，本轮新增拆分 SGR 输入、有状态鼠标解码、embedded Windows conservative profile、首个正文 delta 立即显示、后续 delta 帧合并、自动复制提示、`/setting`、30/60 FPS 配置和中英文帮助回归。生产依赖审计、许可证、Secret 扫描、320 文件候选包检查和全新 prefix 安装 smoke 均通过；覆盖率门槛继续保持 Lines 82%、Branches 74%、Functions 84%。
+2026-08-07 的 Phase 8.2 冻结基线为：完整回归 370/370、TUI/Interaction 专项 46/46、离线 Eval 12/12；本地覆盖率 Lines 82.33%/Branches 76.38%/Functions 85.45%，Ubuntu CI 为 82.03%/76.25%/85.84%。除 Phase 8.1 的 headless VT/ANSI 屏幕回放、source-backed 流式中间帧、Markdown、sticky 问题、鼠标、grapheme、`/ @ $`、启动续聊、可见确认、活动计时、中文界面和结构化 AskUser 外，本轮新增拆分 SGR 输入、有状态鼠标解码、embedded Windows conservative profile、首个正文 delta 立即显示、后续 delta 帧合并、自动复制提示、`/setting`、30/60 FPS 配置、中英文帮助、终端配置失败路径和本地化回归。生产依赖审计、许可证、Secret 扫描、320 文件候选包检查和全新 prefix 安装 smoke 均通过；[CI 31142878469](https://github.com/syz0528/Syzzz-Code/actions/runs/31142878469) 的 10 个作业全部通过，覆盖率门槛继续保持 Lines 82%、Branches 74%、Functions 84%。
 
 Windows PowerShell 5.1 手工创建包含中文的 `AGENTS.md` 或 `SKILL.md` 时，必须使用 `Set-Content -Encoding UTF8`；默认 `Set-Content` 会使用当前 ANSI 代码页并被 UTF-8 安全校验拒绝。`@@name` 的模型可见结果是字面量 `@name`，并附带“已显式转义”的组合证据，模型不应把它当作缺失路径继续搜索。
 

@@ -2,7 +2,7 @@
 
 Syzzz Code 是一个使用 TypeScript 构建的实验性命令行 AI 编程 Agent。它提供统一的 Provider 接口、事件化 Agent Runtime、受约束的代码库工具、可靠编辑、上下文压缩、可恢复的本地会话，以及受信任边界约束的 MCP、Hooks、只读 Subagent、显式上下文、开放 Skills 和全屏终端界面。
 
-Phase 1 至 Phase 5.1、Phase 7 与 Phase 7.1 已完成并保持 **Frozen**。Phase 8 正处于 fullscreen TUI 的 dogfood 修正与复验阶段；Phase 6 继续保持 **Release Candidate Accepted**，其 npm、Tag、GitHub Release 与 registry 安装复验仍需单独完成。
+Phase 1 至 Phase 5.1、Phase 7、Phase 7.1 与 Phase 8 已完成并保持 **Frozen**。Phase 6 继续保持 **Release Candidate Accepted**，其 npm、Tag、GitHub Release 与 registry 安装复验仍需单独完成。
 
 > [!WARNING]
 > Syzzz Code 仍处于实验阶段。文件工具受工作区边界、敏感路径和并发 hash 校验保护，但 Shell 不是 OS sandbox。获批或在 `fullAccess` 下自动执行的命令仍可产生工作区外副作用。
@@ -479,7 +479,7 @@ git diff --check
 
 自动化套件覆盖路径与权限安全、事件 Runtime、Provider 可靠性、双 Renderer、Composer、结构化交互、代码库上下文、压缩、会话恢复、Trust V2、MCP、Hooks 和只读 Subagent。当前包含五种离线 Provider Profile 与发布门禁；Phase 7 增加 `@`、分层 AGENTS、Skills、公开 Git 安装及五项任务组合 Eval。
 
-Phase 8.2 当前本地完整回归为 **367/367**，TUI 专项为 **43/43**，离线 Eval 为 **12/12**；最新正式覆盖率为 Lines **82.18%**、Branches **75.96%**、Functions **85.45%**，均高于 82%/74%/84% 门槛。真实 VT/ANSI 屏幕回放还验证了普通按键、spinner、正文 delta 和增强键盘探测不触发重复全屏清除；本轮额外锁定拆分鼠标序列、终端 profile、首包立即显示、后续帧合并、中英文帮助、自动复制提示、`/setting` 和 30/60 FPS 配置。生产依赖审计、许可证、Secret 扫描、320 文件候选包检查和全新 prefix 安装 smoke 均通过。当前状态为 **Implemented**；跨平台 CI 与 Windows Terminal、Codex 内嵌终端的人工复验尚未完成，因此不能标记为 Validated 或 Frozen。Phase 6 的真实 DeepSeek/OpenCode Live Eval 保持 7/7；OpenCode `gpt-5.6-luna` 的 Responses 文本流与 function call 往返 smoke 已通过。
+Phase 8.2 冻结验收包含本地完整回归 **370/370**、TUI 专项 **46/46**、离线 Eval **12/12**；本地覆盖率为 Lines **82.33%**、Branches **76.38%**、Functions **85.45%**，Ubuntu CI 覆盖率为 **82.03% / 76.25% / 85.84%**，均高于 82%/74%/84% 门槛。真实 VT/ANSI 屏幕回放验证普通按键、spinner、正文 delta 和增强键盘探测不触发重复全屏清除；回归还锁定拆分鼠标序列、终端 profile、首包立即显示、后续帧合并、中英文帮助、自动复制提示、`/setting`、30/60 FPS、终端快捷键损坏恢复与本地化回退。生产依赖审计为 0 vulnerability，许可证、Secret 扫描、320 文件候选包检查和全新 prefix 安装 smoke 均通过；[跨平台 CI 运行 31142878469](https://github.com/syz0528/Syzzz-Code/actions/runs/31142878469) 的 10 个作业全部通过。结合已完成的 Windows Terminal 与 Codex 内嵌终端多轮 dogfood，Phase 8 现标记为 **Frozen**。Phase 6 的真实 DeepSeek/OpenCode Live Eval 保持 7/7；OpenCode `gpt-5.6-luna` 的 Responses 文本流与 function call 往返 smoke 已通过。
 
 Phase 5 冻结验收还完成了 11 项真实终端 dogfood，覆盖未信任边界、Trust V2 复审、MCP 策略与惰性重连、Hook 拒绝与生命周期、取消清理、Subagent 预算、隐私恢复和撤销信任。公开 Streamable HTTP MCP 的真实握手、工具发现及只读天气调用同样通过；该外部服务只用于兼容性验证，不是 Syzzz 的运行依赖。
 
@@ -505,4 +505,4 @@ npm 包使用 allowlist，只包含 `dist`、README、SECURITY、LICENSE、CHANG
 
 ## 当前阶段
 
-Phase 1 至 Phase 5.1、Phase 7 与 Phase 7.1 均保持 **Frozen**，Phase 6 保持 **Release Candidate Accepted**。Phase 8.2 位于 `codex/phase8-tui`，当前为 **Implemented / Validation Pending**；回退检查点 `a4e93d4` 已推送，稳定帧、真实流式、语义 Transcript、终端 profile、输入解码、Markdown、活动栏、滚动锚点和结构化 Skill 提问已完成本地专项验收，仍需完整门槛、跨平台 CI 与真实终端 dogfood 后才能进入 Validated 和 Frozen。
+Phase 1 至 Phase 5.1、Phase 7、Phase 7.1 与 Phase 8 均保持 **Frozen**，Phase 6 保持 **Release Candidate Accepted**。Phase 8.2 位于 `codex/phase8-tui`，冻结验收基线为 `7b1d39c`，回退检查点为 `a4e93d4`；稳定帧、真实流式、语义 Transcript、终端 profile、输入解码、Markdown、活动栏、滚动锚点、结构化 Skill 提问、中英文设置和跨平台交付门槛均已完成验收。

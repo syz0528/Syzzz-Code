@@ -1,9 +1,9 @@
 # Syzzz Code 路线图
 
 **制定日期：** 2026-06-16
-**最近更新：** 2026-08-04
+**最近更新：** 2026-08-07
 **适用基线：** `1.0.0` / Phase 7 起始提交 `161391a`
-**当前入口：** Phase 6 保持 **Release Candidate Accepted**；Phase 7 与 Phase 7.1 已标记 **Frozen**；Phase 8.1 已完成本地实现并等待跨平台 CI 与真实终端复验
+**当前入口：** Phase 6 保持 **Release Candidate Accepted**；Phase 7、Phase 7.1 与 Phase 8 已标记 **Frozen**
 
 > 路线图描述实施顺序和验收边界。当前代码事实以 [`README.md`](README.md) 和 [`CURRENT_STATUS.md`](CURRENT_STATUS.md) 为准。
 
@@ -828,7 +828,7 @@ Phase 7.1 冻结基线为 319/319、coverage 82.34%/75.91%/86.41%、offline Eval
 
 **基线：** Phase 7/7.1 Frozen `465f0bf`，TUI Spike `64ecaf2`。
 
-**当前状态：** **Implemented / Validation Pending**；Phase 8.2 本地专项门槛已通过，完整自动门槛、跨平台 CI 和真实终端 dogfood 尚未完成。Phase 8 的可回退检查点为 `a4e93d4`。
+**当前状态：** **Frozen**；Phase 8.2 的完整自动门槛、跨平台 CI 和真实终端 dogfood 已通过。冻结验收基线为 `7b1d39c`，可回退检查点为 `a4e93d4`。
 
 - [x] 使用 Ink 7 + React 19 建立 fullscreen Renderer，并长期保留 inline 与 NDJSON；
 - [x] `auto|tui|inline` 能力路由，非 TTY、CI、dumb terminal 与 screen reader 确定性降级；
@@ -852,11 +852,13 @@ Phase 7.1 冻结基线为 319/319、coverage 82.34%/75.91%/86.41%、offline Eval
 - [x] `/ui status` 展示终端主机、Renderer profile、键盘协议、帧节奏和渲染耗时；
 - [x] `/setting` 集中管理界面语言、流式展示、输入历史、上下文和 `auto|30|60` FPS，帧率在下次启动安全生效；
 - [x] `/help`、二级选项和高频本地状态支持中英文，Transcript 拖选后自动复制并显示短暂反馈；
-- [x] 本地 367/367、TUI 43/43、Eval 12/12、coverage 82.18%/75.96%/85.45%；audit、license、Secret 扫描、320 文件 pack 与 tarball smoke 全部通过；
-- [ ] 用户重新验收无闪烁、真实流式、Markdown、滚动和 `$skill` 问答；
-- [ ] Windows/Ubuntu Node 22/24 CI；
-- [ ] Windows Terminal 中文 IME、长流式、全部选择器、MCP/Hook/Subagent 和异常退出 dogfood；
-- [ ] 用户确认后标记 Frozen。
+- [x] 本地 370/370、TUI 46/46、Eval 12/12、coverage 82.33%/76.38%/85.45%；audit、license、Secret 扫描、320 文件 pack 与 tarball smoke 全部通过；
+- [x] 用户重新验收无闪烁、真实流式、Markdown、滚动和 `$skill` 问答；
+- [x] Windows/Ubuntu Node 22/24 CI；
+- [x] Windows Terminal 中文 IME、长流式、全部选择器、MCP/Hook/Subagent 和异常退出 dogfood；
+- [x] 用户确认后标记 Frozen。
+
+冻结 CI 为 [31142878469](https://github.com/syz0528/Syzzz-Code/actions/runs/31142878469)，10 个作业全部通过；Ubuntu coverage 为 82.03%/76.25%/85.84%。
 
 本阶段不实现通用鼠标控件、主题/插件系统、交互式 Shell、后台任务、LSP、持久索引、并行或可写 Subagent。
 
@@ -933,7 +935,7 @@ Phase 7.1 冻结基线为 319/319、coverage 82.34%/75.91%/86.41%、offline Eval
 
 ### 当前入口
 
-Phase 6 继续保持 **Release Candidate Accepted**，完整 Phase 2–6 历史已 fast-forward 到 `main`。Phase 7 与 Phase 7.1 已冻结；Phase 8 正等待 Windows Terminal 修复复验，不会借后续阶段绕过 Phase 6 的公开发布条件。
+Phase 6 继续保持 **Release Candidate Accepted**，完整 Phase 2–6 历史已 fast-forward 到 `main`。Phase 7、Phase 7.1 与 Phase 8 已冻结；后续工作不会借阶段推进绕过 Phase 6 的公开发布条件。
 
 ## 16. 路线图完成标准
 
