@@ -29,6 +29,7 @@ import {
   createTerminalCapabilityProfile,
   formatTerminalCapabilityProfile
 } from '../dist/tui/terminal-profile.js';
+import { localizeSuggestionDescription, localizeTuiActivity } from '../dist/ui-language.js';
 
 const wait = (milliseconds = 25) => new Promise((resolve) => setTimeout(resolve, milliseconds));
 
@@ -564,6 +565,20 @@ test('terminal capability profile selects a conservative embedded Windows render
   assert.equal(sixtyFps.configuredFrameRate, 60);
   assert.equal(sixtyFps.textFrameIntervalMs, 17);
   assert.match(formatTerminalCapabilityProfile(sixtyFps), /configured: 60/);
+});
+
+test('TUI localization covers contextual suggestions, activities, and safe fallbacks', () => {
+  assert.notEqual(
+    localizeSuggestionDescription('context:src/index.ts', 'Workspace context', 'zh-CN'),
+    'Workspace context'
+  );
+  assert.equal(localizeSuggestionDescription('skill:demo', 'Skill', 'zh-CN'), 'Skill');
+  assert.equal(localizeSuggestionDescription('context:file', 'Context', 'en'), 'Context');
+
+  assert.notEqual(localizeTuiActivity('thinking', 'zh-CN'), 'thinking');
+  assert.match(localizeTuiActivity('Delegate running', 'zh-CN'), /^Delegate\s/u);
+  assert.equal(localizeTuiActivity('custom activity', 'zh-CN'), 'custom activity');
+  assert.equal(localizeTuiActivity('thinking', 'en'), 'thinking');
 });
 
 test('newline detection accepts Shift+Enter terminal encodings without treating Enter as newline', () => {
