@@ -634,6 +634,26 @@ test('terminal keyboard probing completes before rendering and restores raw inpu
   assert.equal(unsupported.isRaw, false);
 });
 
+test('terminal keyboard probing preserves unrelated input when capability detection times out', async () => {
+  const input = new TtyInput();
+  input.isRaw = true;
+  input.pause();
+  const output = {
+    isTTY: true,
+    write() {
+      queueMicrotask(() => input.emit('data', 'typed-during-probe'));
+      return true;
+    }
+  };
+
+  assert.equal(
+    await probeKittyKeyboardSupport(input, output, 2, { TERM_PROGRAM: 'plain-terminal' }),
+    false
+  );
+  assert.equal(input.isRaw, true);
+  assert.equal(input.isPaused(), true);
+});
+
 test('terminal setup installs an idempotent VS Code Shift+Enter mapping with backup', async () => {
   const root = await mkdtemp(join(tmpdir(), 'syzzz-terminal-setup-'));
   const environment = { TERM_PROGRAM: 'vscode', APPDATA: root };
@@ -653,6 +673,51 @@ test('terminal setup installs an idempotent VS Code Shift+Enter mapping with bac
     assert.match(content, /shift\+enter/);
     assert.equal((await inspectTerminalKeyboard(environment)).setupInstalled, true);
     assert.equal((await installTerminalShiftEnter(environment)).changed, false);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test('terminal setup creates missing mappings and rejects malformed or conflicting configuration', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'syzzz-terminal-validation-'));
+  const environment = { TERM_PROGRAM: 'cursor', APPDATA: root };
+  const path = join(root, 'Cursor', 'User', 'keybindings.json');
+  try {
+    assert.equal(detectTerminalHost({ TERM_PROGRAM: 'ghostty' }), 'native-kitty');
+    assert.deepEqual(await inspectTerminalKeyboard({ TERM_PROGRAM: 'plain' }, 'linux'), {
+      host: 'unknown',
+      setupAvailable: false,
+      setupInstalled: false
+    });
+    await assert.rejects(
+      () => installTerminalShiftEnter({ TERM_PROGRAM: 'plain' }, 'linux'),
+      /setup is unavailable/
+    );
+
+    const created = await installTerminalShiftEnter(environment, 'linux');
+    assert.equal(created.changed, true);
+    assert.equal(created.backupPath, undefined);
+    assert.match(await readFile(path, 'utf8'), /workbench\.action\.terminal\.sendSequence/);
+
+    await writeFile(path, '[{"key":"shift+enter","command":"other"}]', 'utf8');
+    const conflict = await inspectTerminalKeyboard(environment, 'linux');
+    assert.match(conflict.conflict, /already assigned/);
+    await assert.rejects(
+      () => installTerminalShiftEnter(environment, 'linux'),
+      /already assigned in the terminal keybindings/
+    );
+
+    await writeFile(path, '{}', 'utf8');
+    await assert.rejects(
+      () => installTerminalShiftEnter(environment, 'linux'),
+      /Expected a JSON array/
+    );
+
+    await writeFile(path, '{ invalid', 'utf8');
+    await assert.rejects(
+      () => inspectTerminalKeyboard(environment, 'linux'),
+      /Cannot update invalid JSON configuration/
+    );
   } finally {
     await rm(root, { recursive: true, force: true });
   }
