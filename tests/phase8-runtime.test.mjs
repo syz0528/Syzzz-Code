@@ -537,9 +537,9 @@ test('TUI startup offers a saved workspace conversation before starting a new on
     engine: freshEngine,
     sessionOptions: {
       session,
-      modelsForProvider: () => ['phase8-model']
+      modelsForProvider: () => ['phase8-model'],
+      uiLanguage: 'zh-CN'
     },
-    uiLanguage: 'zh-CN',
     streamOutput: true,
     persistentHistory: false,
     historyBaseDirectory: baseDirectory
