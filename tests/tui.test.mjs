@@ -658,43 +658,34 @@ test('terminal setup installs an idempotent VS Code Shift+Enter mapping with bac
   }
 });
 
-test(
-  'terminal setup preserves Windows Terminal JSONC and refuses an occupied Shift+Enter binding',
-  { skip: process.platform !== 'win32' },
-  async () => {
-    const root = await mkdtemp(join(tmpdir(), 'syzzz-wt-setup-'));
-    const environment = { WT_SESSION: 'test', LOCALAPPDATA: root };
-    const directory = join(
-      root,
-      'Packages',
-      'Microsoft.WindowsTerminal_8wekyb3d8bbwe',
-      'LocalState'
-    );
-    const path = join(directory, 'settings.json');
-    try {
-      await mkdir(directory, { recursive: true });
-      await writeFile(path, '{\n  // existing\n  "actions": [],\n  "keybindings": []\n}\n');
-      const installed = await installTerminalShiftEnter(environment);
-      assert.equal(installed.changed, true);
-      const content = await readFile(path, 'utf8');
-      assert.match(content, /Syzzz\.SendShiftEnter/);
-      assert.match(content, /sendInput/);
-      assert.match(content, /existing/);
-      assert.equal((await inspectTerminalKeyboard(environment)).setupInstalled, true);
+test('terminal setup preserves Windows Terminal JSONC and refuses an occupied Shift+Enter binding', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'syzzz-wt-setup-'));
+  const environment = { WT_SESSION: 'test', LOCALAPPDATA: root };
+  const directory = join(root, 'Packages', 'Microsoft.WindowsTerminal_8wekyb3d8bbwe', 'LocalState');
+  const path = join(directory, 'settings.json');
+  try {
+    await mkdir(directory, { recursive: true });
+    await writeFile(path, '{\n  // existing\n  "actions": [],\n  "keybindings": []\n}\n');
+    const installed = await installTerminalShiftEnter(environment, 'win32');
+    assert.equal(installed.changed, true);
+    const content = await readFile(path, 'utf8');
+    assert.match(content, /Syzzz\.SendShiftEnter/);
+    assert.match(content, /sendInput/);
+    assert.match(content, /existing/);
+    assert.equal((await inspectTerminalKeyboard(environment, 'win32')).setupInstalled, true);
 
-      await writeFile(
-        path,
-        '{"actions":[{"id":"Other","command":"copy"}],"keybindings":[{"id":"Other","keys":"shift+enter"}]}'
-      );
-      await assert.rejects(
-        () => installTerminalShiftEnter(environment),
-        /already assigned in Windows Terminal/
-      );
-    } finally {
-      await rm(root, { recursive: true, force: true });
-    }
+    await writeFile(
+      path,
+      '{"actions":[{"id":"Other","command":"copy"}],"keybindings":[{"id":"Other","keys":"shift+enter"}]}'
+    );
+    await assert.rejects(
+      () => installTerminalShiftEnter(environment, 'win32'),
+      /already assigned in Windows Terminal/
+    );
+  } finally {
+    await rm(root, { recursive: true, force: true });
   }
-);
+});
 
 test('sticky question preserves the final visible answer row', () => {
   const blocks = [

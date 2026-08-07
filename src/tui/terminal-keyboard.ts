@@ -97,10 +97,11 @@ function windowsTerminalConfigurationPath(environment: NodeJS.ProcessEnv): strin
 }
 
 function setupTarget(
-  environment: NodeJS.ProcessEnv = process.env
+  environment: NodeJS.ProcessEnv = process.env,
+  currentPlatform: NodeJS.Platform = platform()
 ): TerminalSetupTarget | undefined {
   const host = detectTerminalHost(environment);
-  if (host === 'windows-terminal' && platform() === 'win32') {
+  if (host === 'windows-terminal' && currentPlatform === 'win32') {
     return {
       kind: 'windows-terminal',
       host,
@@ -195,10 +196,11 @@ async function readSetupContent(target: TerminalSetupTarget): Promise<string> {
 }
 
 export async function inspectTerminalKeyboard(
-  environment: NodeJS.ProcessEnv = process.env
+  environment: NodeJS.ProcessEnv = process.env,
+  currentPlatform: NodeJS.Platform = platform()
 ): Promise<TerminalKeyboardStatus> {
   const host = detectTerminalHost(environment);
-  const target = setupTarget(environment);
+  const target = setupTarget(environment, currentPlatform);
   if (!target) {
     return {
       host,
@@ -284,9 +286,10 @@ async function writeAtomic(path: string, content: string): Promise<void> {
 }
 
 export async function installTerminalShiftEnter(
-  environment: NodeJS.ProcessEnv = process.env
+  environment: NodeJS.ProcessEnv = process.env,
+  currentPlatform: NodeJS.Platform = platform()
 ): Promise<TerminalSetupResult> {
-  const target = setupTarget(environment);
+  const target = setupTarget(environment, currentPlatform);
   if (!target) {
     throw new Error('Automatic Shift+Enter setup is unavailable for this terminal.');
   }
@@ -296,7 +299,10 @@ export async function installTerminalShiftEnter(
       ? updateWindowsTerminal(content, target.path)
       : updateVscode(content, target.path);
   if (updated === content) {
-    return { status: await inspectTerminalKeyboard(environment), changed: false };
+    return {
+      status: await inspectTerminalKeyboard(environment, currentPlatform),
+      changed: false
+    };
   }
   let backupPath: string | undefined;
   try {
@@ -308,7 +314,7 @@ export async function installTerminalShiftEnter(
   }
   await writeAtomic(target.path, updated);
   return {
-    status: await inspectTerminalKeyboard(environment),
+    status: await inspectTerminalKeyboard(environment, currentPlatform),
     changed: true,
     ...(backupPath ? { backupPath } : {})
   };
