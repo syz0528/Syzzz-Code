@@ -61,7 +61,7 @@ if (!license.includes('Apache License') || !license.includes('Version 2.0')) {
   failures.push('LICENSE is not an Apache-2.0 license text');
 }
 
-const sourceVersionSearch = await git(['grep', '-n', packageJson.version, '--', 'src'], true);
+const sourceVersionSearch = await git(['grep', '-F', '-n', packageJson.version, '--', 'src'], true);
 if (sourceVersionSearch?.stdout.trim()) {
   failures.push('the package version is hard-coded under src instead of package.json');
 }
