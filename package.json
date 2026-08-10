@@ -90,16 +90,16 @@
   "devDependencies": {
     "@eslint/js": "^10.0.1",
     "@modelcontextprotocol/server": "2.0.0",
-    "@types/node": "^22.20.1",
+    "@types/node": "^26.1.2",
     "@types/picomatch": "^4.0.3",
-    "@types/react": "^19.2.14",
+    "@types/react": "^19.2.18",
     "@xterm/headless": "^6.0.0",
     "eslint": "^10.8.0",
-    "globals": "^17.8.0",
+    "globals": "^17.9.0",
     "ink-testing-library": "^4.0.0",
     "prettier": "^3.9.6",
-    "tsx": "^4.7.0",
-    "typescript-eslint": "^8.65.0"
+    "tsx": "^4.23.10",
+    "typescript-eslint": "^8.66.0"
   },
   "overrides": {
     "sharp": "0.35.3"
