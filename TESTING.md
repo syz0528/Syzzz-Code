@@ -20,7 +20,7 @@ npm run check
 
 `npm run check` 是本地综合门槛；`smoke:package` 额外安装真实 tarball，耗时更长。Windows 进程、会话锁与 MCP 生命周期可用 `npm run test:stability` 连续执行三轮，任一轮失败都会立即终止。
 
-`1.0.0` 最终候选在 2026-08-10 的本地基线为：完整回归 398/398、TUI/Interaction 专项 51/51、离线 Agent Eval 12/12、离线 RAG Eval 通过，覆盖率 Lines 82.57% / Branches 75.60% / Functions 86.11%。生产依赖审计为 0 vulnerability，102 文件候选包和全新 prefix 安装 smoke 通过。发布前仍必须在最终提交上通过 Windows/Ubuntu × Node 22/24 CI。
+`1.0.0` 最终候选在 2026-08-10 的本地基线为：完整回归 398/398、TUI/Interaction 专项 51/51、离线 Agent Eval 12/12、离线 RAG Eval 通过，覆盖率 Lines 82.57% / Branches 75.60% / Functions 86.11%。生产依赖审计为 0 vulnerability，102 文件候选包和全新 prefix 安装 smoke 通过。[CI 31379235344](https://github.com/syz0528/Syzzz-Code/actions/runs/31379235344) 的 Windows/Ubuntu × Node 22/24 等 10 个作业全部通过。
 
 Phase 9 的 `npm run eval:rag:offline` 使用独立临时目录、Mock Embedding 和 Mock reranker 验证 10 个固定 case。门槛包括 evidence label resolution 100%、敏感文件负例、hybrid Recall@10/MRR@10 不低于 0.9，并要求 hybrid 至少改善一个 lexical 指标。报告只保存 case ID 和指标。
 

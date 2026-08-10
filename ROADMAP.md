@@ -869,7 +869,7 @@ Phase 7.1 冻结基线为 319/319、coverage 82.34%/75.91%/86.41%、offline Eval
 
 **基线：** Phase 8 Frozen `204fe5b`。
 
-**当前状态：** 本地实现、固定评测和人工验收已通过；等待当前提交的 Windows/Ubuntu Node 22/24 CI 与正式发布链路验证。
+**当前状态：** 本地实现、固定评测、人工验收与 Windows/Ubuntu × Node 22/24 CI 已通过；等待正式发布链路验证。
 
 - [x] 独立 `RagRuntime`、原子 revision、当前/上一版恢复与 lexical-only 降级；
 - [x] Markdown breadcrumb、代码顶层符号、中文 CJK bigram 与稳定 chunk ID；
@@ -886,7 +886,7 @@ Phase 7.1 冻结基线为 319/319、coverage 82.34%/75.91%/86.41%、offline Eval
 - [x] `SaveKnowledge` 的 code 模式、写入审批、证据 receipt 与副作用检查点；
 - [x] 会话快照兼容保存 RAG receipt，并在恢复后验证 revision、hash 与行范围；
 - [x] audit、license、Secret 扫描、102 文件候选包和 tarball smoke；
-- [ ] Windows/Ubuntu Node 22/24 CI；
+- [x] Windows/Ubuntu Node 22/24 CI（[31379235344](https://github.com/syz0528/Syzzz-Code/actions/runs/31379235344)）；
 - [x] 用户完成工作区、知识写入、检索、会话与 TUI 交互 dogfood，并批准进入正式发布；
 - [ ] 当前提交的跨平台 CI、npm、Tag、GitHub Release 与 registry 安装复验通过后标记 Frozen。
 
@@ -980,7 +980,7 @@ Phase 9.2 作为后续独立阶段保留，不能被当前本地能力的完成�
 
 ### 当前入口
 
-Phase 6 建立的发布工程基线已经并入当前 `1.0.0` 最终候选。Phase 7、Phase 7.1 与 Phase 8 已冻结，Phase 9/9.1 已完成本地实现和人工验收；下一步按顺序完成当前提交的跨平台 CI、`main` 推进、仓库公开、npm、Tag、GitHub Release 与 registry 安装复验。
+Phase 6 建立的发布工程基线已经并入当前 `1.0.0` 最终候选。Phase 7、Phase 7.1 与 Phase 8 已冻结，Phase 9/9.1 已完成本地实现、人工验收和跨平台 CI；下一步按顺序完成 `main` 推进、仓库公开、npm、Tag、GitHub Release 与 registry 安装复验。
 
 ## 16. 路线图完成标准
 

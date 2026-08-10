@@ -24,13 +24,13 @@
 
 **Phase 9 起始基线：** `204fe5b`
 
-**当前阶段：** `1.0.0` 最终发布准备。Phase 9/9.1 的实现与本地人工验收已经完成；发布前仍需完成格式门槛、当前提交的跨平台 CI、`main` 推进、公开仓库、npm、Tag、GitHub Release 和 registry 安装复验，因此尚未标记 **Frozen**。
+**当前阶段：** `1.0.0` 最终发布准备。Phase 9/9.1 的实现、本地人工验收、完整本地门槛和跨平台 CI 已经完成；发布前仍需完成 `main` 推进、公开仓库、npm、Tag、GitHub Release 和 registry 安装复验，因此尚未标记 **Frozen**。
 
 ## 1. 当前结论
 
 Phase 9 已完成独立 `RagRuntime`、版本化本地索引、MiniSearch 词法检索、LanceDB 向量降级后端、OpenAI-compatible Embedding、Jina-compatible reranker、RRF 多查询融合、外部集合挂载、渐进式 `RagSearch/RagRead`、确定性 citation 校验与隔离 `RagVerify`。Phase 9.1 进一步加入用户级受管理 `library`、`rag add` 文档导入、经审批的 `SaveKnowledge`、自动/待授权索引刷新，以及会话恢复时的 RAG receipt 复核。默认不自动索引工作区、不发送远程文件、不开启自动预检索；索引和个人库正文保存在本地且不加密。
 
-固定离线 RAG Eval 使用 10 个 case 和 9 个 evidence label，结果为 label resolution 100%、lexical Recall@10/MRR@10 `1.00/0.95`、hybrid `1.00/1.00`，敏感文件负例通过。`JustStudy` 真实外部语料按数据集声明的 15 个 profile 文件隔离评测，22/22 evidence labels 可解析，lexical Recall@10/MRR@10 为 `0.90/0.82`，高于历史 `0.667/0.541` 与计划门槛。当前本地门槛为 398/398、TUI 51/51、coverage `82.57%/75.60%/86.11%`、生产审计 0 vulnerability，102 文件候选包与全新 prefix smoke 通过；当前 Phase 9 提交的 Windows/Ubuntu Node 22/24 CI 与正式 registry 安装仍待发布流程验证，因此不得标记 Frozen。
+固定离线 RAG Eval 使用 10 个 case 和 9 个 evidence label，结果为 label resolution 100%、lexical Recall@10/MRR@10 `1.00/0.95`、hybrid `1.00/1.00`，敏感文件负例通过。`JustStudy` 真实外部语料按数据集声明的 15 个 profile 文件隔离评测，22/22 evidence labels 可解析，lexical Recall@10/MRR@10 为 `0.90/0.82`，高于历史 `0.667/0.541` 与计划门槛。当前本地门槛为 398/398、TUI 51/51、coverage `82.57%/75.60%/86.11%`、生产审计 0 vulnerability，102 文件候选包与全新 prefix smoke 通过；[CI 31379235344](https://github.com/syz0528/Syzzz-Code/actions/runs/31379235344) 的 Windows/Ubuntu × Node 22/24 等 10 个作业全部通过。正式 registry 安装仍待发布流程验证，因此不得标记 Frozen。
 
 Phase 5.0 Core 已完成“可信扩展运行时、MCP Broker 与受限委派”的主体：
 
@@ -309,4 +309,4 @@ Phase 6 使用四级状态：
 3. 用户完成人工 dogfood：**Release Candidate Accepted**。
 4. npm、annotated `v1.0.0` Tag、GitHub Release 和 registry 安装验证完成：**Frozen**。
 
-Phase 6 的发布工程能力已经并入当前 `1.0.0` 最终候选，不再保留一个与现状分离的 RC。Phase 7、Phase 7.1 与 Phase 8 的本地测试、覆盖率、审计、离线 Eval、包检查、tarball smoke、用户 dogfood 和 Windows/Ubuntu Node 22/24 CI 已全部通过并标记为 **Frozen**。Phase 9/9.1 已完成本地实现、固定评测和人工验收，待当前提交的跨平台 CI 与正式发布链路完成后统一冻结。OpenAI Responses 协议与显式 Provider 路由已经实现，并通过离线契约及 OpenCode Luna 真实文本与 function call smoke。Anthropic 真流式、MCP OAuth、云端 RAG、LSP、并行或写入型 Subagent 继续留在后续独立阶段评估。
+Phase 6 的发布工程能力已经并入当前 `1.0.0` 最终候选，不再保留一个与现状分离的 RC。Phase 7、Phase 7.1 与 Phase 8 的本地测试、覆盖率、审计、离线 Eval、包检查、tarball smoke、用户 dogfood 和 Windows/Ubuntu Node 22/24 CI 已全部通过并标记为 **Frozen**。Phase 9/9.1 已完成本地实现、固定评测、人工验收与跨平台 CI，待正式发布链路完成后统一冻结。OpenAI Responses 协议与显式 Provider 路由已经实现，并通过离线契约及 OpenCode Luna 真实文本与 function call smoke。Anthropic 真流式、MCP OAuth、云端 RAG、LSP、并行或写入型 Subagent 继续留在后续独立阶段评估。
