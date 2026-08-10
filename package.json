@@ -59,6 +59,7 @@
     "smoke:package": "npm run build && node scripts/package-smoke.mjs",
     "smoke:context": "npm run build && node scripts/context-smoke.mjs",
     "check": "npm run format:check && npm run lint && npm test && npm run test:tui && npm run test:coverage && npm run eval:offline && npm run eval:rag:offline && npm run license:check && npm run secret:scan && npm run pack:check",
+    "release:publish": "node scripts/publish-package.mjs",
     "release:verify": "npm run check && npm run smoke:package && node scripts/release-verify.mjs",
     "start": "node dist/index.js",
     "dev": "tsx src/index.ts",

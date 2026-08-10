@@ -57,7 +57,7 @@ jobs:
       - name: Publish or verify registry copy
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
-        run: node scripts/publish-package.mjs
+        run: npm run release:publish
       - name: Revoke the one-time npm token
         if: always()
         env:

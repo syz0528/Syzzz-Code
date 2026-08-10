@@ -29,6 +29,7 @@ test('package.json is the single CLI version and release metadata source', async
   assert.equal(packageJson.bin.syzzz, './dist/index.js');
   assert.equal(packageJson.main, undefined);
   assert.equal(packageJson.exports, undefined);
+  assert.equal(packageJson.scripts['release:publish'], 'node scripts/publish-package.mjs');
 
   const { stdout } = await execFileAsync(process.execPath, ['dist/index.js', '--version'], {
     cwd: projectRoot,
@@ -70,13 +71,13 @@ test('CI actions are immutable and release publication is manually gated', async
   assert.match(ci, /node:\s*\n\s+- 22\s*\n\s+- 24/u);
   assert.match(release, /workflow_dispatch:/u);
   assert.match(release, /environment: npm-release/u);
-  assert.match(release, /scripts\/publish-package\.mjs/u);
+  assert.match(release, /npm run release:publish/u);
   assert.match(publisher, /'--provenance'/u);
   assert.match(release, /RELEASE_CONFIRMATION/u);
   assert.ok(
-    release.indexOf('scripts/publish-package.mjs') < release.indexOf('npm logout') &&
+    release.indexOf('npm run release:publish') < release.indexOf('npm logout') &&
       release.indexOf('npm logout') < release.indexOf('git tag -a'),
-    'the one-time npm token must be revoked before creating release metadata'
+    'the one-time npm token must be revoked before creating the tag and release'
   );
   assert.match(secretScan, /--format=%H%x00%B%x00/u);
   assert.match(dependabot, /mcp-sdk:\s*\n\s+patterns:\s*\n\s+- '@modelcontextprotocol\/\*'/u);
