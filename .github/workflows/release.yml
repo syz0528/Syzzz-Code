@@ -64,8 +64,8 @@ jobs:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
         run: |
           if [ -n "${NODE_AUTH_TOKEN}" ]; then
-            npm token revoke "${NODE_AUTH_TOKEN}"
-            echo "::notice::The one-time granular NPM_TOKEN was revoked."
+            npm logout --registry=https://registry.npmjs.org/
+            echo "::notice::The one-time NPM_TOKEN was revoked through npm logout."
           else
             echo "::notice::No granular token was supplied; publication used Trusted Publishing."
           fi

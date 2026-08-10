@@ -2,6 +2,7 @@ import { createHash } from 'node:crypto';
 import { readdir, readFile, writeFile } from 'node:fs/promises';
 import { basename, dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { createAgentEvalSummary, selectLatestAgentEvalReport } from './release-eval-summary.mjs';
 
 const projectRoot = dirname(dirname(fileURLToPath(import.meta.url)));
 const artifacts = join(projectRoot, 'artifacts');
@@ -34,35 +35,13 @@ const evalFiles = (await readdir(evalDirectory))
 if (evalFiles.length === 0) {
   throw new Error('No offline Eval report is available for the release');
 }
-const report = JSON.parse(await readFile(join(evalDirectory, evalFiles.at(-1)), 'utf8'));
-const evalSummary = {
-  schemaVersion: report.schemaVersion,
-  runId: report.runId,
-  suite: report.suite,
-  gitCommit: report.gitCommit,
-  platform: report.platform,
-  arch: report.arch,
-  nodeVersion: report.nodeVersion,
-  providerProtocol: report.providerProtocol,
-  model: report.model,
-  durationMs: report.durationMs,
-  summary: report.summary,
-  tasks: report.tasks.map((task) => ({
-    id: task.id,
-    status: task.status,
-    durationMs: task.durationMs,
-    providerCalls: task.providerCalls,
-    toolCalls: task.toolCalls,
-    approvals: task.approvals,
-    retries: task.retries,
-    compactions: task.compactions,
-    usage: task.usage,
-    changedFiles: task.changedFiles,
-    insertions: task.insertions,
-    deletions: task.deletions,
-    graderChecks: task.graderChecks
+const reports = await Promise.all(
+  evalFiles.map(async (name) => ({
+    name,
+    report: JSON.parse(await readFile(join(evalDirectory, name), 'utf8'))
   }))
-};
+);
+const evalSummary = createAgentEvalSummary(selectLatestAgentEvalReport(reports));
 await writeFile(
   join(artifacts, 'eval-summary.json'),
   `${JSON.stringify(evalSummary, null, 2)}\n`,

@@ -7,6 +7,10 @@ import test from 'node:test';
 import { promisify } from 'node:util';
 import { parseDocument } from 'yaml';
 import { PACKAGE_NAME, PACKAGE_VERSION } from '../dist/version.js';
+import {
+  createAgentEvalSummary,
+  selectLatestAgentEvalReport
+} from '../scripts/release-eval-summary.mjs';
 
 const execFileAsync = promisify(execFile);
 const projectRoot = dirname(dirname(fileURLToPath(import.meta.url)));
@@ -70,8 +74,8 @@ test('CI actions are immutable and release publication is manually gated', async
   assert.match(publisher, /'--provenance'/u);
   assert.match(release, /RELEASE_CONFIRMATION/u);
   assert.ok(
-    release.indexOf('scripts/publish-package.mjs') < release.indexOf('npm token revoke') &&
-      release.indexOf('npm token revoke') < release.indexOf('git tag -a'),
+    release.indexOf('scripts/publish-package.mjs') < release.indexOf('npm logout') &&
+      release.indexOf('npm logout') < release.indexOf('git tag -a'),
     'the one-time npm token must be revoked before creating release metadata'
   );
   assert.match(secretScan, /--format=%H%x00%B%x00/u);
@@ -79,4 +83,44 @@ test('CI actions are immutable and release publication is manually gated', async
   assert.doesNotMatch(dependabot, /ignore:\s*\n\s+- dependency-name: '@modelcontextprotocol/u);
   assert.doesNotMatch(release, /^\s*push:/mu);
   assert.match(codeql, /security-events: write/u);
+});
+
+test('release metadata selects Agent Eval when a newer RAG report exists', () => {
+  const agentReport = {
+    schemaVersion: 1,
+    suite: 'offline',
+    runId: 'agent-run',
+    tasks: [{ id: 'architecture', status: 'passed' }]
+  };
+  const ragReport = {
+    schemaVersion: 1,
+    suite: 'offline',
+    runId: 'rag-run',
+    cases: [{ id: 'retrieval', passed: true }]
+  };
+
+  const selected = selectLatestAgentEvalReport([
+    { name: '2026-08-10T10-22-40.152Z-offline.json', report: agentReport },
+    { name: '2026-08-10T10-22-56.690Z-rag-offline.json', report: ragReport }
+  ]);
+  const summary = createAgentEvalSummary(selected);
+
+  assert.equal(summary.runId, 'agent-run');
+  assert.deepEqual(summary.tasks, [
+    {
+      id: 'architecture',
+      status: 'passed',
+      durationMs: undefined,
+      providerCalls: undefined,
+      toolCalls: undefined,
+      approvals: undefined,
+      retries: undefined,
+      compactions: undefined,
+      usage: undefined,
+      changedFiles: undefined,
+      insertions: undefined,
+      deletions: undefined,
+      graderChecks: undefined
+    }
+  ]);
 });
