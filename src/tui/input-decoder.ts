@@ -8,31 +8,84 @@ export interface NormalizedTerminalInput {
   mouseEvents: MouseInputEvent[];
 }
 
-const COMPLETE_MOUSE_REPORT = /^(?:\u001B)?\[<(\d+);(\d+);(\d+)([Mm])/u;
-const POSSIBLE_MOUSE_REPORT = /^(?:\u001B)?\[<[\d;]*$/u;
+const COMPLETE_SGR_MOUSE_REPORT = /^(?:\u001B)?\[<(\d+);(\d+);(\d+)([Mm])/u;
+const COMPLETE_URXVT_MOUSE_REPORT = /^(?:\u001B)?\[(\d+);(\d+);(\d+)([Mm])/u;
+const COMPLETE_X10_MOUSE_REPORT = /^(?:\u001B)?\[M([\s\S])([\s\S])([\s\S])/u;
+const POSSIBLE_SGR_MOUSE_REPORT = /^(?:\u001B)?\[<[\d;]*$/u;
+const POSSIBLE_URXVT_MOUSE_REPORT = /^(?:\u001B)?\[\d+;\d+;\d*$/u;
+const POSSIBLE_X10_MOUSE_REPORT = /^(?:\u001B)?\[M[\s\S]{0,2}$/u;
 const MAX_PENDING_SEQUENCE = 64;
 
 function mouseReportStart(value: string, offset: number): number {
-  const escaped = value.indexOf('\u001B[<', offset);
-  const bare = value.indexOf('[<', offset);
-  if (escaped < 0) return bare;
-  if (bare < 0) return escaped;
-  return Math.min(escaped, bare);
+  const starts = [
+    value.indexOf('\u001B[<', offset),
+    value.indexOf('[<', offset),
+    value.indexOf('\u001B[M', offset),
+    value.indexOf('[M', offset)
+  ].filter((candidate) => candidate >= 0);
+  const numeric = value.slice(offset).match(/(?:\u001B)?\[\d+;\d+;\d+[Mm]/u);
+  if (numeric?.index !== undefined) starts.push(offset + numeric.index);
+  return starts.length === 0 ? -1 : Math.min(...starts);
 }
 
-function decodeMouseReport(match: RegExpMatchArray): MouseInputEvent {
-  const button = Number.parseInt(match[1] ?? '', 10);
+function decodeMouseReport(
+  buttonValue: string,
+  xValue: string,
+  yValue: string,
+  terminator: string
+): MouseInputEvent {
+  let button = Number.parseInt(buttonValue, 10);
   if (!Number.isFinite(button)) return { type: 'other' };
+  // URXVT wheel values are 32 above SGR. Preserve 32-65 because embedded
+  // terminals have also been observed dropping only SGR's '<'.
+  if (button >= 96) button -= 32;
   if ((button & 64) !== 0) {
     return { type: 'wheel', direction: (button & 1) === 0 ? -1 : 1 };
   }
-  const x = Number.parseInt(match[2] ?? '', 10);
-  const y = Number.parseInt(match[3] ?? '', 10);
+  const x = Number.parseInt(xValue, 10);
+  const y = Number.parseInt(yValue, 10);
   if (!Number.isFinite(x) || !Number.isFinite(y)) return { type: 'other' };
-  if (match[4] === 'm') return { type: 'release', x, y };
+  if (terminator === 'm' || (button & 3) === 3) return { type: 'release', x, y };
   if ((button & 3) === 0 && (button & 32) !== 0) return { type: 'move', x, y };
   if ((button & 3) === 0) return { type: 'press', x, y };
   return { type: 'other' };
+}
+
+function parseMouseReport(value: string): { event: MouseInputEvent; length: number } | undefined {
+  const sgr = value.match(COMPLETE_SGR_MOUSE_REPORT);
+  if (sgr) {
+    return {
+      event: decodeMouseReport(sgr[1] ?? '', sgr[2] ?? '', sgr[3] ?? '', sgr[4] ?? ''),
+      length: sgr[0].length
+    };
+  }
+  const urxvt = value.match(COMPLETE_URXVT_MOUSE_REPORT);
+  if (urxvt) {
+    return {
+      event: decodeMouseReport(urxvt[1] ?? '', urxvt[2] ?? '', urxvt[3] ?? '', urxvt[4] ?? ''),
+      length: urxvt[0].length
+    };
+  }
+  const x10 = value.match(COMPLETE_X10_MOUSE_REPORT);
+  if (!x10) return undefined;
+  return {
+    event: decodeMouseReport(
+      String((x10[1]?.charCodeAt(0) ?? 32) - 32),
+      String((x10[2]?.charCodeAt(0) ?? 32) - 32),
+      String((x10[3]?.charCodeAt(0) ?? 32) - 32),
+      'M'
+    ),
+    length: x10[0].length
+  };
+}
+
+function isPossibleMouseReport(value: string): boolean {
+  return (
+    value.length <= MAX_PENDING_SEQUENCE &&
+    (POSSIBLE_SGR_MOUSE_REPORT.test(value) ||
+      POSSIBLE_URXVT_MOUSE_REPORT.test(value) ||
+      POSSIBLE_X10_MOUSE_REPORT.test(value))
+  );
 }
 
 /**
@@ -58,13 +111,13 @@ export class TerminalInputDecoder {
       }
       text += value.slice(offset, start);
       const candidate = value.slice(start);
-      const match = candidate.match(COMPLETE_MOUSE_REPORT);
-      if (match) {
-        mouseEvents.push(decodeMouseReport(match));
-        offset = start + match[0].length;
+      const report = parseMouseReport(candidate);
+      if (report) {
+        mouseEvents.push(report.event);
+        offset = start + report.length;
         continue;
       }
-      if (candidate.length <= MAX_PENDING_SEQUENCE && POSSIBLE_MOUSE_REPORT.test(candidate)) {
+      if (isPossibleMouseReport(candidate)) {
         this.pending = candidate;
         break;
       }

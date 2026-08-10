@@ -524,12 +524,14 @@ export interface ToolRuntimeServices {
   mcpManager?: McpManager;
   delegateTool?: ToolDefinition;
   compositionTools?: readonly ToolDefinition[];
+  ragTools?: readonly ToolDefinition[];
 }
 
 export function createToolSet(services: ToolRuntimeServices = {}): ToolDefinition[] {
   return [
     ...coreTools,
     ...(services.compositionTools ?? []),
+    ...(services.ragTools ?? []),
     ...(services.mcpManager ? createMcpTools(services.mcpManager) : []),
     ...(services.delegateTool ? [services.delegateTool] : [])
   ];

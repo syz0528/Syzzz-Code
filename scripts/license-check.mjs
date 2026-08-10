@@ -5,12 +5,25 @@ import { fileURLToPath } from 'node:url';
 const projectRoot = dirname(dirname(fileURLToPath(import.meta.url)));
 const lock = JSON.parse(await readFile(join(projectRoot, 'package-lock.json'), 'utf8'));
 const allowedLicenses = new Set([
+  '0BSD',
   '(MIT OR CC0-1.0)',
   'Apache-2.0',
+  'Apache-2.0 AND LGPL-3.0-or-later',
+  'Apache-2.0 AND LGPL-3.0-or-later AND MIT',
   'BSD-2-Clause',
   'BSD-3-Clause',
+  'BlueOak-1.0.0',
   'ISC',
+  'LGPL-3.0-or-later',
   'MIT'
+]);
+// These packages ship a reviewed license file but omit or generalize package.json metadata.
+// Keep the exception tied to the exact package version so an update requires a fresh review.
+const reviewedMetadataExceptions = new Map([
+  ['base-64@0.1.0', 'MIT (LICENSE-MIT.txt)'],
+  ['flatbuffers@1.12.0', 'Apache-2.0 (LICENSE.txt)'],
+  ['flatbuffers@24.12.23', 'Apache-2.0 (LICENSE)'],
+  ['json-bignum@0.0.3', 'MIT (LICENSE)']
 ]);
 const packages = [];
 const failures = [];
@@ -22,7 +35,8 @@ for (const [path, metadata] of Object.entries(lock.packages ?? {})) {
   const name = path.slice(path.lastIndexOf('node_modules/') + 'node_modules/'.length);
   const license = metadata.license;
   packages.push({ name, license });
-  if (typeof license !== 'string' || !allowedLicenses.has(license)) {
+  const reviewedException = reviewedMetadataExceptions.has(`${name}@${metadata.version}`);
+  if (!reviewedException && (typeof license !== 'string' || !allowedLicenses.has(license))) {
     failures.push(`${name}: ${typeof license === 'string' ? license : 'missing license'}`);
   }
 }
@@ -39,5 +53,5 @@ if (failures.length > 0) {
 }
 
 console.log(
-  `License check OK: ${packages.length} production package entries use reviewed permissive licenses`
+  `License check OK: ${packages.length} production package entries use reviewed licenses`
 );

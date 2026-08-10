@@ -50,6 +50,9 @@ import { PACKAGE_VERSION } from './version.js';
 import { SessionStore } from './session-store.js';
 import { isAbortError, OperationAbortedError } from './tools/abort.js';
 import { detectUiCapabilities, resolveUiMode } from './ui-mode.js';
+import { RagRuntime } from './rag/runtime.js';
+import { createProviderRagVerifier } from './rag/verifier.js';
+import { manageRag } from './rag/management.js';
 
 const program = new Command();
 
@@ -142,9 +145,11 @@ function usableProvider(
 function providerCredentialEnvironmentNames(config: Config): string[] {
   return [
     ...new Set(
-      Object.values(config.providers)
-        .map((provider) => provider.env.API_KEY_ENV)
-        .filter((name): name is string => Boolean(name))
+      [
+        ...Object.values(config.providers).map((provider) => provider.env.API_KEY_ENV),
+        config.rag.embedding?.env.API_KEY_ENV,
+        config.rag.reranker?.env.API_KEY_ENV
+      ].filter((name): name is string => Boolean(name))
     )
   ];
 }
@@ -197,6 +202,12 @@ async function createConfiguredEngine(request: SessionEngineRequest): Promise<Se
     sessionId: request.sessionId,
     workspaceRoot: process.cwd()
   });
+  const rag = new RagRuntime({
+    workspaceRoot: process.cwd(),
+    config: config.rag,
+    semanticVerifier: createProviderRagVerifier(provider)
+  });
+  await rag.getStatus();
   const engine = new QueryEngine({
     provider,
     sessionId: request.sessionId,
@@ -205,7 +216,8 @@ async function createConfiguredEngine(request: SessionEngineRequest): Promise<Se
     context: config.context,
     audit,
     extensions,
-    composition
+    composition,
+    rag
   });
   return {
     engine,
@@ -243,6 +255,7 @@ function createInteractiveOptions(controller: SessionController, streamOutput?: 
     persistentHistory: config.ui.persistentHistory,
     uiLanguage: config.ui.language,
     uiFrameRate: config.ui.frameRate,
+    ragAutoRetrieve: config.rag.autoRetrieve,
     contextWindowTokens: config.context.defaultWindowTokens,
     availableModels: provider?.models ?? [controller.engine.getProviderInfo().model],
     session: controller,
@@ -274,6 +287,11 @@ function createInteractiveOptions(controller: SessionController, streamOutput?: 
     persistUiFrameRate(frameRate: UiFrameRate) {
       const latest = loadConfig();
       latest.ui.frameRate = frameRate;
+      saveConfig(latest);
+    },
+    persistRagAutoRetrieve(mode: Config['rag']['autoRetrieve']) {
+      const latest = loadConfig();
+      latest.rag.autoRetrieve = mode;
       saveConfig(latest);
     },
     persistModel(model: string, providerId: string) {
@@ -741,6 +759,50 @@ program
       const reason = error instanceof Error ? error.message : String(error);
       console.error(chalk.red('\nSession command failed:'), `${reason}\n`);
       process.exitCode = 1;
+    }
+  });
+
+program
+  .command('rag')
+  .description('Index and search trusted workspace knowledge')
+  .argument(
+    '<action>',
+    'Action: status, doctor, add, index, refresh, search, inspect, clear, collections, mount, unmount'
+  )
+  .argument('[target]', 'Collection, chunk ID, subaction, or first query word')
+  .argument('[rest...]', 'Additional query words or collection arguments')
+  .option('--path <directory>', 'External collection directory')
+  .option('--name <filename>', 'Target filename for rag add')
+  .option('--collection <name>', 'Target collection for rag add (currently library)')
+  .option('-y, --yes', 'Skip an explicit destructive or remote-ingestion confirmation')
+  .option('--json', 'Emit machine-readable JSON')
+  .action(async (action, target, rest, options) => {
+    const abortController = new AbortController();
+    const handleInterrupt = () => abortController.abort(new OperationAbortedError());
+    process.once('SIGINT', handleInterrupt);
+    const runtime = new RagRuntime({ workspaceRoot: process.cwd(), config: loadConfig().rag });
+    try {
+      const result = await manageRag({
+        runtime,
+        action,
+        target,
+        rest,
+        path: options.path,
+        name: options.name,
+        collection: options.collection,
+        yes: Boolean(options.yes),
+        json: Boolean(options.json),
+        signal: abortController.signal,
+        confirm: async ({ title, message, preview }) =>
+          confirmAction(`${title}\n${message}${preview ? `\n\n${preview}` : ''}`)
+      });
+      console.log(options.json ? JSON.stringify(result.json) : result.text);
+    } catch (error) {
+      const reason = error instanceof Error ? error.message : String(error);
+      console.error(chalk.red('\nRAG command failed:'), `${reason}\n`);
+      process.exitCode = isAbortError(error) ? 130 : 1;
+    } finally {
+      process.removeListener('SIGINT', handleInterrupt);
     }
   });
 

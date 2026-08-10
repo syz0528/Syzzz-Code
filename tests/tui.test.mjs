@@ -17,6 +17,10 @@ import {
 } from '../dist/tui/app.js';
 import { encodeOsc52Clipboard, MAX_CLIPBOARD_CHARACTERS } from '../dist/tui/clipboard.js';
 import { TerminalInputDecoder } from '../dist/tui/input-decoder.js';
+import {
+  compactConservativeTerminalOutput,
+  ConservativeTuiOutput
+} from '../dist/tui/output-adapter.js';
 import { TranscriptView, transcriptLayoutForTest } from '../dist/tui/transcript-view.js';
 import {
   detectTerminalHost,
@@ -327,6 +331,33 @@ test('TUI approval resolves without writing the answer into the composer', async
   view.unmount();
 });
 
+test('TUI select panels follow choices beyond the first visible page', async () => {
+  const controller = new FakeController();
+  const view = render(React.createElement(TuiApp, { controller }), { columns: 80, rows: 24 });
+  controller.setPending({
+    id: 'sessions',
+    type: 'select',
+    selected: 0,
+    request: {
+      title: 'Resume session',
+      message: 'Choose any saved session',
+      choices: Array.from({ length: 12 }, (_, index) => ({
+        value: `session-${index + 1}`,
+        label: `Session ${index + 1}`
+      }))
+    }
+  });
+  await wait();
+  assert.match(view.lastFrame(), /Session 1/u);
+  for (let index = 0; index < 9; index += 1) {
+    view.stdin.write('\u001b[B');
+    await wait(5);
+  }
+  assert.match(view.lastFrame(), /> Session 10/u);
+  assert.doesNotMatch(view.lastFrame(), /Session 1(?:\D|$)/u);
+  view.unmount();
+});
+
 test('alternate screen, raw mode, cursor and resize state restore after unmount', async () => {
   const controller = new FakeController();
   const stdin = new TtyInput();
@@ -399,6 +430,76 @@ test('alternate screen, raw mode, cursor and resize state restore after unmount'
   assert.equal(stdin.isRaw, false);
   assert.match(output, /\u001b\[\?1049h/u);
   assert.match(output, /\u001b\[\?1049l/u);
+});
+
+test('conservative renderer does not rewrite historical answers while typing or approving', async () => {
+  const controller = new FakeController();
+  controller.snapshot = {
+    ...controller.snapshot,
+    transcript: [
+      { id: 'old-user', turnId: 'old-turn', kind: 'user', text: 'old question', submittedAt: 0 },
+      {
+        id: 'old-answer',
+        turnId: 'old-turn',
+        kind: 'assistant',
+        markdown: 'HISTORICAL_ANSWER_MUST_STAY_STABLE',
+        status: 'completed'
+      }
+    ]
+  };
+  const stdin = new TtyInput();
+  const target = ttyOutput(100, 30);
+  const stderr = ttyOutput(100, 30);
+  const stdout = new ConservativeTuiOutput(target);
+  let emitted = '';
+  target.on('data', (chunk) => {
+    emitted += chunk.toString('utf8');
+  });
+  const instance = renderInk(React.createElement(TuiApp, { controller }), {
+    alternateScreen: true,
+    concurrent: false,
+    exitOnCtrlC: false,
+    interactive: true,
+    patchConsole: false,
+    stdin,
+    stdout,
+    stderr,
+    incrementalRendering: true
+  });
+  await instance.waitUntilRenderFlush();
+  emitted = '';
+  stdin.write('x');
+  await wait(80);
+  await instance.waitUntilRenderFlush();
+  assert.doesNotMatch(emitted, /HISTORICAL_ANSWER_MUST_STAY_STABLE/u);
+  assert.doesNotMatch(emitted, /\u001b\[2J/u);
+
+  controller.setPending({
+    id: 'approval-stability',
+    type: 'approval',
+    scroll: 0,
+    request: {
+      toolCallId: 'write-stability',
+      toolName: 'Write',
+      risk: 'write',
+      input: { path: 'stable.txt' },
+      description: 'Create stable.txt',
+      preview: '+stable',
+      choices: ['allow-once', 'allow-edits-session', 'deny']
+    }
+  });
+  await wait(80);
+  await instance.waitUntilRenderFlush();
+  emitted = '';
+  stdin.write('y');
+  await wait(80);
+  await instance.waitUntilRenderFlush();
+  assert.doesNotMatch(emitted, /HISTORICAL_ANSWER_MUST_STAY_STABLE/u);
+  assert.doesNotMatch(emitted, /\u001b\[2J/u);
+
+  instance.unmount();
+  await instance.waitUntilExit();
+  stdout.dispose();
 });
 
 test('left-button drag selects visible transcript text and copies it without a mode switch', async () => {
@@ -476,6 +577,43 @@ test('TUI mouse wheel scrolls bounded transcript history in both directions', as
   view.unmount();
 });
 
+test('unknown Windows terminals treat arrow-translated wheel input as transcript scrolling', async () => {
+  const controller = new FakeController();
+  controller.snapshot = {
+    ...controller.snapshot,
+    transcript: Array.from({ length: 30 }, (_, index) => ({
+      id: `fallback-row-${index}`,
+      kind: 'notice',
+      text: `FALLBACK_ROW_${String(index).padStart(2, '0')}`
+    }))
+  };
+  const profile = createTerminalCapabilityProfile({
+    keyboardStatus: {
+      host: 'unknown',
+      setupAvailable: false,
+      setupInstalled: false
+    },
+    keyboard: { shiftEnterAvailable: false, newlineShortcut: 'Ctrl+J' },
+    kittySupported: false,
+    environment: {},
+    platform: 'win32'
+  });
+  const view = render(React.createElement(TuiApp, { controller, profile }), {
+    columns: 70,
+    rows: 18
+  });
+
+  view.stdin.write('\u001b[A');
+  await wait(80);
+  assert.match(view.lastFrame(), /Viewing history/);
+  assert.doesNotMatch(view.lastFrame(), /> \/status/);
+
+  view.stdin.write('\u0010');
+  await wait(80);
+  assert.match(view.lastFrame(), /> \/status/);
+  view.unmount();
+});
+
 test('terminal input separates batched SGR mouse reports from real text', () => {
   const normalized = normalizeTerminalInput(
     'de\u001b[<0;39;54M[<32;41;54M\u001b[<0;41;54m[<65;48;53M'
@@ -488,6 +626,29 @@ test('terminal input separates batched SGR mouse reports from real text', () => 
     { type: 'wheel', direction: 1 }
   ]);
   assert.equal(parseMouseInput('text\u001b[<0;1;1M'), undefined);
+});
+
+test('terminal input consumes embedded-terminal, URXVT, and X10 mouse variants', () => {
+  const embedded = normalizeTerminalInput('before[0;39;54M[0;39;54m[65;48;53Mafter');
+  assert.equal(embedded.text, 'beforeafter');
+  assert.deepEqual(embedded.mouseEvents, [
+    { type: 'press', x: 39, y: 54 },
+    { type: 'release', x: 39, y: 54 },
+    { type: 'wheel', direction: 1 }
+  ]);
+
+  const urxvt = normalizeTerminalInput('\u001b[96;12;8M\u001b[97;12;8M');
+  assert.equal(urxvt.text, '');
+  assert.deepEqual(urxvt.mouseEvents, [
+    { type: 'wheel', direction: -1 },
+    { type: 'wheel', direction: 1 }
+  ]);
+
+  const x10 = normalizeTerminalInput(
+    `\u001b[M${String.fromCharCode(96)}${String.fromCharCode(44)}${String.fromCharCode(40)}`
+  );
+  assert.equal(x10.text, '');
+  assert.deepEqual(x10.mouseEvents, [{ type: 'wheel', direction: -1 }]);
 });
 
 test('terminal input decoder preserves text while joining fragmented mouse reports', () => {
@@ -522,6 +683,9 @@ test('terminal capability profile selects a conservative embedded Windows render
   });
   assert.equal(conservative.renderer, 'conservative');
   assert.equal(conservative.maxFps, 20);
+  assert.equal(conservative.concurrentRendering, false);
+  assert.equal(conservative.synchronizedOutput, 'coalesced');
+  assert.equal(conservative.wheelInput, 'mouse-reports');
   assert.match(formatTerminalCapabilityProfile(conservative), /vscode \(embedded\)/);
 
   const overridden = createTerminalCapabilityProfile({
@@ -533,6 +697,8 @@ test('terminal capability profile selects a conservative embedded Windows render
   });
   assert.equal(overridden.renderer, 'standard');
   assert.equal(overridden.override, 'standard');
+  assert.equal(overridden.concurrentRendering, true);
+  assert.equal(overridden.synchronizedOutput, 'ink-managed');
 
   const codexStatus = {
     host: detectTerminalHost({
@@ -551,6 +717,24 @@ test('terminal capability profile selects a conservative embedded Windows render
   });
   assert.equal(codex.host, 'codex');
   assert.equal(codex.renderer, 'conservative');
+  assert.equal(codex.wheelInput, 'arrow-fallback');
+
+  const unknownWindows = createTerminalCapabilityProfile({
+    keyboardStatus: {
+      host: 'unknown',
+      setupAvailable: false,
+      setupInstalled: false
+    },
+    keyboard,
+    kittySupported: false,
+    environment: {},
+    platform: 'win32'
+  });
+  assert.equal(unknownWindows.renderer, 'conservative');
+  assert.equal(unknownWindows.concurrentRendering, false);
+  assert.equal(unknownWindows.synchronizedOutput, 'coalesced');
+  assert.equal(unknownWindows.wheelInput, 'arrow-fallback');
+  assert.match(formatTerminalCapabilityProfile(unknownWindows), /history Ctrl\+P\/Ctrl\+N/);
 
   const sixtyFps = createTerminalCapabilityProfile({
     keyboardStatus,
@@ -565,6 +749,28 @@ test('terminal capability profile selects a conservative embedded Windows render
   assert.equal(sixtyFps.configuredFrameRate, 60);
   assert.equal(sixtyFps.textFrameIntervalMs, 17);
   assert.match(formatTerminalCapabilityProfile(sixtyFps), /configured: 60/);
+});
+
+test('conservative TUI output coalesces synchronized frames and skips unchanged rows', async () => {
+  const target = ttyOutput();
+  const writes = [];
+  target.on('data', (chunk) => writes.push(chunk.toString('utf8')));
+  const output = new ConservativeTuiOutput(target);
+  const begin = '\u001b[?2026h';
+  const end = '\u001b[?2026l';
+  const traversal = '\u001b[?25l\u001b[12B\u001b[1G\u001b[20A' + '\u001b[E'.repeat(8);
+  output.write(begin);
+  output.write(`${traversal}> changed\u001b[K`);
+  assert.equal(writes.length, 0);
+  output.write(end);
+  await wait();
+  assert.equal(writes.length, 1);
+  assert.doesNotMatch(writes[0], /(?:\u001b\[E){2,}/u);
+  assert.match(writes[0], /\u001b\[1G> changed/u);
+  output.dispose();
+
+  const compacted = compactConservativeTerminalOutput(traversal);
+  assert.equal(compacted, '\u001b[?25l\u001b[1G');
 });
 
 test('TUI localization covers contextual suggestions, activities, and safe fallbacks', () => {

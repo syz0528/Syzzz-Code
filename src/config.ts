@@ -71,6 +71,35 @@ export interface SkillsConfig {
   disabled: string[];
 }
 
+export type RagAutoRetrieve = 'off' | 'ask-plan' | 'all';
+
+export interface RagRemoteEnvironmentConfig {
+  BASE_URL: string;
+  API_KEY: string;
+  API_KEY_ENV?: string;
+}
+
+export interface RagEmbeddingConfig {
+  type: 'openai-compatible';
+  model: string;
+  dimensions?: number;
+  env: RagRemoteEnvironmentConfig;
+}
+
+export interface RagRerankerConfig {
+  type: 'jina-compatible';
+  model: string;
+  env: RagRemoteEnvironmentConfig;
+}
+
+export interface RagConfig {
+  enabled: boolean;
+  autoRetrieve: RagAutoRetrieve;
+  autoRefresh: boolean;
+  embedding?: RagEmbeddingConfig;
+  reranker?: RagRerankerConfig;
+}
+
 export interface Config {
   schemaVersion: typeof CONFIG_SCHEMA_VERSION;
   currentProvider: string;
@@ -81,6 +110,7 @@ export interface Config {
   sessions: SessionsConfig;
   subagents: SubagentsConfig;
   skills: SkillsConfig;
+  rag: RagConfig;
 }
 
 export type ConfigInspection =
@@ -139,6 +169,12 @@ export const DEFAULT_SKILLS_CONFIG: Readonly<SkillsConfig> = Object.freeze({
   disabled: []
 });
 
+export const DEFAULT_RAG_CONFIG: Readonly<RagConfig> = Object.freeze({
+  enabled: true,
+  autoRetrieve: 'off',
+  autoRefresh: true
+});
+
 const DEFAULT_CONFIG: Config = {
   schemaVersion: CONFIG_SCHEMA_VERSION,
   currentProvider: 'deepseek',
@@ -148,6 +184,7 @@ const DEFAULT_CONFIG: Config = {
   sessions: { ...DEFAULT_SESSIONS_CONFIG },
   subagents: { ...DEFAULT_SUBAGENTS_CONFIG },
   skills: { enabled: true, allowImplicit: true, disabled: [] },
+  rag: { ...DEFAULT_RAG_CONFIG },
   providers: {
     deepseek: {
       name: 'Deepseek',
@@ -335,6 +372,84 @@ function validateSkillsConfig(value: unknown): SkillsConfig {
   };
 }
 
+function validateRagRemoteEnvironment(
+  value: unknown,
+  fieldPath: string
+): RagRemoteEnvironmentConfig {
+  if (!isRecord(value)) {
+    throw new Error(`${fieldPath} must be an object`);
+  }
+  const apiKeyEnvironment = validateEnvironmentVariable(
+    value.API_KEY_ENV,
+    `${fieldPath}.API_KEY_ENV`
+  );
+  return {
+    BASE_URL: validateBaseURL(value.BASE_URL, `${fieldPath}.BASE_URL`),
+    API_KEY: typeof value.API_KEY === 'string' ? value.API_KEY : '',
+    ...(apiKeyEnvironment ? { API_KEY_ENV: apiKeyEnvironment } : {})
+  };
+}
+
+function validateRagConfig(value: unknown): RagConfig {
+  if (value === undefined) {
+    return { ...DEFAULT_RAG_CONFIG };
+  }
+  if (!isRecord(value)) {
+    throw new Error('rag must be an object');
+  }
+  if (typeof value.enabled !== 'boolean') {
+    throw new Error('rag.enabled must be a boolean');
+  }
+  const autoRetrieve = value.autoRetrieve ?? DEFAULT_RAG_CONFIG.autoRetrieve;
+  if (autoRetrieve !== 'off' && autoRetrieve !== 'ask-plan' && autoRetrieve !== 'all') {
+    throw new Error('rag.autoRetrieve must be "off", "ask-plan", or "all"');
+  }
+  const autoRefresh = value.autoRefresh ?? DEFAULT_RAG_CONFIG.autoRefresh;
+  if (typeof autoRefresh !== 'boolean') {
+    throw new Error('rag.autoRefresh must be a boolean');
+  }
+
+  let embedding: RagEmbeddingConfig | undefined;
+  if (value.embedding !== undefined) {
+    if (!isRecord(value.embedding) || value.embedding.type !== 'openai-compatible') {
+      throw new Error('rag.embedding.type must be "openai-compatible"');
+    }
+    const dimensions = value.embedding.dimensions;
+    if (
+      dimensions !== undefined &&
+      (!Number.isSafeInteger(dimensions) || Number(dimensions) < 1 || Number(dimensions) > 65_536)
+    ) {
+      throw new Error('rag.embedding.dimensions must be an integer between 1 and 65536');
+    }
+    embedding = {
+      type: 'openai-compatible',
+      model: requireNonEmptyString(value.embedding.model, 'rag.embedding.model'),
+      ...(dimensions === undefined ? {} : { dimensions: Number(dimensions) }),
+      env: validateRagRemoteEnvironment(value.embedding.env, 'rag.embedding.env')
+    };
+  }
+
+  let reranker: RagRerankerConfig | undefined;
+  if (value.reranker !== undefined) {
+    if (!isRecord(value.reranker) || value.reranker.type !== 'jina-compatible') {
+      throw new Error('rag.reranker.type must be "jina-compatible"');
+    }
+    reranker = {
+      type: 'jina-compatible',
+      model: requireNonEmptyString(value.reranker.model, 'rag.reranker.model'),
+      env: validateRagRemoteEnvironment(value.reranker.env, 'rag.reranker.env')
+    };
+  }
+
+  return {
+    enabled: value.enabled,
+    autoRetrieve,
+    autoRefresh,
+    ...(embedding ? { embedding } : {}),
+    ...(reranker ? { reranker } : {})
+  };
+}
+
 export function validateConfig(value: unknown): Config {
   if (!isRecord(value)) {
     throw new Error('configuration root must be an object');
@@ -429,7 +544,8 @@ export function validateConfig(value: unknown): Config {
     context: validateContextConfig(value.context),
     sessions: validateSessionsConfig(value.sessions),
     subagents: validateSubagentsConfig(value.subagents),
-    skills: validateSkillsConfig(value.skills)
+    skills: validateSkillsConfig(value.skills),
+    rag: validateRagConfig(value.rag)
   };
 }
 

@@ -495,6 +495,7 @@ test('TUI startup offers a saved workspace conversation before starting a new on
   const baseDirectory = await mkdtemp(join(tmpdir(), 'syzzz-phase8-startup-'));
   const freshEngine = displayEngine('fresh-session', 'fresh');
   const savedEngine = displayEngine('saved-session', 'saved');
+  const olderEngine = displayEngine('older-session', 'older');
   let resumeCalls = 0;
   const session = {
     engine: freshEngine,
@@ -518,16 +519,28 @@ test('TUI startup offers a saved workspace conversation before starting a new on
           title: 'Previous work',
           updatedAt: '2026-08-06T00:00:00.000Z',
           available: true
+        },
+        {
+          sessionId: 'older-session',
+          title: 'Earlier work',
+          updatedAt: '2026-08-05T00:00:00.000Z',
+          available: true
+        },
+        {
+          sessionId: 'fresh-session',
+          title: 'Current blank session',
+          updatedAt: '2026-08-07T00:00:00.000Z',
+          available: true
         }
       ];
     },
     async resume(sessionId) {
-      assert.equal(sessionId, 'saved-session');
+      assert.equal(sessionId, 'older-session');
       resumeCalls += 1;
-      this.engine = savedEngine;
+      this.engine = sessionId === 'saved-session' ? savedEngine : olderEngine;
       return {
         sessionId,
-        title: 'Previous work',
+        title: sessionId === 'saved-session' ? 'Previous work' : 'Earlier work',
         providerId: 'provider'
       };
     },
@@ -552,14 +565,14 @@ test('TUI startup offers a saved workspace conversation before starting a new on
   assert.equal(pending.request.title, '打开会话');
   assert.deepEqual(
     pending.request.choices.map((choice) => choice.value),
-    ['saved-session', 'new']
+    ['saved-session', 'older-session', 'new']
   );
-  controller.resolvePending('saved-session');
+  controller.resolvePending('older-session');
   await startup;
 
   assert.equal(resumeCalls, 1);
-  assert.equal(session.engine, savedEngine);
-  assert.match(controller.getSnapshot().transcript.map(conversationText).join('\n'), /saved user/u);
+  assert.equal(session.engine, olderEngine);
+  assert.match(controller.getSnapshot().transcript.map(conversationText).join('\n'), /older user/u);
   await controller.close();
   await rm(baseDirectory, { recursive: true, force: true });
 });

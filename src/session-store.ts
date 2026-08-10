@@ -69,12 +69,29 @@ const conversationDisplayMessageSchema = z
   })
   .strict();
 
+const ragContextReceiptSchema = z
+  .object({
+    turnId: z.string().min(1),
+    chunkId: z.string().regex(/^[a-f0-9]{16,64}$/),
+    collectionId: z.string().min(1),
+    virtualPath: z.string().min(1),
+    lineStart: z.number().int().positive(),
+    lineEnd: z.number().int().positive(),
+    sourceHash: z.string().regex(/^[a-f0-9]{64}$/),
+    revision: z.string().min(1)
+  })
+  .strict()
+  .refine((receipt) => receipt.lineEnd >= receipt.lineStart, {
+    message: 'lineEnd must be greater than or equal to lineStart'
+  });
+
 const engineStateSchema = z
   .object({
     schemaVersion: z.literal(1),
     messages: z.array(conversationMessageSchema),
     displayMessages: z.array(conversationDisplayMessageSchema).optional(),
     pendingFileChangeReceipts: z.array(fileChangeReceiptSchema),
+    ragContextReceipts: z.array(ragContextReceiptSchema).max(100).optional(),
     compactionCount: z.number().int().nonnegative(),
     totalUsage: usageSchema,
     lastReportedModel: z.string().min(1).optional()

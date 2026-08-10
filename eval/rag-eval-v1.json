@@ -1,0 +1,60 @@
+{
+  "schemaVersion": 1,
+  "datasetId": "syzzz-phase9-rag-eval-v1",
+  "cases": [
+    {
+      "id": "storage-atomic-current",
+      "query": "atomic CURRENT revision cancelled build",
+      "evidence": [{ "path": "README.md", "anchor": "failed or cancelled build never replaces" }]
+    },
+    {
+      "id": "mode-read-boundary",
+      "query": "ask plan 模式的 RAG 权限边界",
+      "evidence": [{ "path": "docs/permissions.md", "anchor": "RAG 工具属于 `read/never`" }]
+    },
+    {
+      "id": "remote-consent",
+      "query": "远程 embedding 首次发送正文前显示哪些信息",
+      "evidence": [{ "path": "docs/permissions.md", "anchor": "endpoint、model、文件数和字节数" }]
+    },
+    {
+      "id": "progressive-evidence",
+      "query": "RagSearch RagRead 渐进证据 revision hash 行号",
+      "evidence": [{ "path": "docs/context.md", "anchor": "RagSearch 只返回摘要和 chunk ID" }]
+    },
+    {
+      "id": "multi-query-fusion",
+      "queries": ["reciprocal rank fusion", "reranker 是否扩大召回"],
+      "evidence": [{ "path": "docs/retrieval.md", "anchor": "reranker 只重新排列候选" }]
+    },
+    {
+      "id": "semantic-lifecycle",
+      "query": "durable semantic memory retrieval lifecycle",
+      "evidence": [{ "path": "docs/retrieval.md", "anchor": "持久化知识召回依靠版本化本地索引" }]
+    },
+    {
+      "id": "cjk-tokenizer",
+      "query": "中文相邻双字 token 和代码标识符拆分",
+      "evidence": [
+        { "path": "docs/retrieval.md", "anchor": "中文文本使用汉字单字和相邻双字 token" }
+      ]
+    },
+    {
+      "id": "citation-contract",
+      "query": "RAG 引用如何检查旧 hash 和错误行号",
+      "evidence": [{ "path": "docs/citations.md", "anchor": "hash 未过期且行范围一致" }]
+    },
+    {
+      "id": "symbol-receipt",
+      "query": "createEvidenceReceipt sourceHash revision",
+      "path": "src",
+      "evidence": [{ "path": "src/receipts.ts", "anchor": "export function createEvidenceReceipt" }]
+    },
+    {
+      "id": "sensitive-negative",
+      "query": "PRIVATE_RAG_MARKER must-never-be-indexed",
+      "negative": true,
+      "evidence": []
+    }
+  ]
+}

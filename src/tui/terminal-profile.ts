@@ -2,6 +2,7 @@ import type { UiFrameRate } from '../config.js';
 import type { TerminalKeyboardPresentation, TerminalKeyboardStatus } from './terminal-keyboard.js';
 
 export type TuiRendererProfile = 'standard' | 'conservative';
+export type TerminalWheelInput = 'mouse-reports' | 'arrow-fallback';
 
 export interface TerminalCapabilityProfile {
   host: TerminalKeyboardStatus['host'];
@@ -10,11 +11,13 @@ export interface TerminalCapabilityProfile {
   kittyKeyboard: boolean;
   shiftEnter: TerminalKeyboardPresentation['newlineShortcut'];
   mouseTracking: boolean;
+  wheelInput: TerminalWheelInput;
   maxFps: number;
   configuredFrameRate: UiFrameRate;
   textFrameIntervalMs: number;
   resizeDebounceMs: number;
-  synchronizedOutput: 'ink-managed';
+  concurrentRendering: boolean;
+  synchronizedOutput: 'ink-managed' | 'coalesced';
   override?: TuiRendererProfile;
 }
 
@@ -53,7 +56,13 @@ export function createTerminalCapabilityProfile(options: {
   const platform = options.platform ?? process.platform;
   const embedded = ['vscode', 'cursor', 'windsurf', 'codex'].includes(options.keyboardStatus.host);
   const override = profileOverride(environment);
-  const renderer = override ?? (platform === 'win32' && embedded ? 'conservative' : 'standard');
+  const conservativeWindowsHost =
+    platform === 'win32' && (embedded || options.keyboardStatus.host === 'unknown');
+  const wheelInput =
+    platform === 'win32' && ['codex', 'unknown'].includes(options.keyboardStatus.host)
+      ? 'arrow-fallback'
+      : 'mouse-reports';
+  const renderer = override ?? (conservativeWindowsHost ? 'conservative' : 'standard');
   const configuredFrameRate = options.configuredFrameRate ?? 'auto';
   const maxFps =
     configuredFrameRate === 'auto' ? (renderer === 'conservative' ? 20 : 30) : configuredFrameRate;
@@ -64,6 +73,7 @@ export function createTerminalCapabilityProfile(options: {
     kittyKeyboard: options.kittySupported,
     shiftEnter: options.keyboard.newlineShortcut,
     mouseTracking: true,
+    wheelInput,
     maxFps,
     configuredFrameRate,
     textFrameIntervalMs:
@@ -73,7 +83,8 @@ export function createTerminalCapabilityProfile(options: {
           : 33
         : Math.max(16, Math.round(1000 / maxFps)),
     resizeDebounceMs: renderer === 'conservative' ? 120 : 75,
-    synchronizedOutput: 'ink-managed',
+    concurrentRendering: renderer === 'standard',
+    synchronizedOutput: renderer === 'conservative' ? 'coalesced' : 'ink-managed',
     ...(override ? { override } : {})
   };
 }
@@ -89,9 +100,11 @@ export function formatTerminalCapabilityProfile(
     `  Frame rate:    ${profile.maxFps} FPS maximum (configured: ${profile.configuredFrameRate})`,
     `  Text cadence:  ${profile.textFrameIntervalMs} ms`,
     `  Resize settle: ${profile.resizeDebounceMs} ms`,
+    `  React commit:  ${profile.concurrentRendering ? 'concurrent' : 'synchronous'}`,
     `  Keyboard:      ${profile.kittyKeyboard ? 'Kitty protocol' : 'legacy'}; newline ${profile.shiftEnter}`,
     `  Mouse:         ${profile.mouseTracking ? 'SGR tracking enabled' : 'disabled'}`,
-    '  Sync output:   Ink-managed DEC synchronized frame commits',
+    `  Wheel input:   ${profile.wheelInput === 'arrow-fallback' ? 'arrow fallback; history Ctrl+P/Ctrl+N' : 'mouse reports'}`,
+    `  Sync output:   ${profile.synchronizedOutput === 'coalesced' ? 'coalesced embedded-terminal frames' : 'Ink-managed DEC synchronized frame commits'}`,
     '  Override:      set SYZZZ_TUI_PROFILE=standard|conservative before launch'
   ];
   if (diagnostics) {

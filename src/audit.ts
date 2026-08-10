@@ -243,6 +243,63 @@ export function toAuditRecord(event: AgentEvent, workspaceId: string): AuditEnve
         activation: event.activation,
         code: event.code
       };
+    case 'rag_index_started':
+      return { ...base, collection: event.collection, operation: event.operation };
+    case 'rag_index_progress':
+      return {
+        ...base,
+        collection: event.collection,
+        stage: event.stage,
+        completed: event.completed,
+        ...(event.total === undefined ? {} : { total: event.total })
+      };
+    case 'rag_index_completed':
+      return {
+        ...base,
+        collection: event.collection,
+        revision: event.revision,
+        fileCount: event.fileCount,
+        chunkCount: event.chunkCount,
+        vectorState: event.vectorState,
+        durationMs: event.durationMs
+      };
+    case 'rag_index_failed':
+      return {
+        ...base,
+        collection: event.collection,
+        operation: event.operation,
+        code: event.code,
+        durationMs: event.durationMs
+      };
+    case 'rag_retrieval_started':
+      return {
+        ...base,
+        queryCount: event.queryCount,
+        collectionCount: event.collectionCount
+      };
+    case 'rag_retrieval_completed':
+      return {
+        ...base,
+        candidateCount: event.candidateCount,
+        resultCount: event.resultCount,
+        channels: event.channels,
+        staleCollections: event.staleCollections,
+        durationMs: event.durationMs
+      };
+    case 'rag_retrieval_failed':
+      return { ...base, code: event.code, durationMs: event.durationMs };
+    case 'rag_verification_started':
+      return { ...base, citationCount: event.citationCount };
+    case 'rag_verification_completed':
+      return {
+        ...base,
+        outcome: event.outcome,
+        citationCount: event.citationCount,
+        invalidCitationCount: event.invalidCitationCount,
+        durationMs: event.durationMs
+      };
+    case 'rag_verification_failed':
+      return { ...base, code: event.code, durationMs: event.durationMs };
     case 'compaction_started':
       return {
         ...base,

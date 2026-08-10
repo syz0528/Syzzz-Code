@@ -41,7 +41,7 @@ import {
   validateSkillPath
 } from './composition/skill-authoring.js';
 import { runSkillActivationEval } from './composition/skill-eval.js';
-import type { UiFrameRate, UiLanguage } from './config.js';
+import type { RagAutoRetrieve, UiFrameRate, UiLanguage } from './config.js';
 import type { AIProvider } from './providers/base.js';
 import type { SessionController } from './session-controller.js';
 import { isAbortError, OperationAbortedError } from './tools/abort.js';
@@ -52,6 +52,7 @@ import {
   resolveUiLanguage
 } from './ui-language.js';
 import { inspectTerminalKeyboard, installTerminalShiftEnter } from './tui/terminal-keyboard.js';
+import { manageRag } from './rag/management.js';
 
 const DOUBLE_INTERRUPT_WINDOW_MS = 2_000;
 const COMMAND_PRIORITIES = {
@@ -64,14 +65,15 @@ const COMMAND_PRIORITIES = {
   provider: 70,
   stream: 80,
   context: 81,
-  skills: 82,
-  language: 83,
-  extensions: 84,
-  mcp: 85,
-  hooks: 86,
-  agents: 87,
-  trust: 88,
-  untrust: 89,
+  rag: 82,
+  skills: 83,
+  language: 84,
+  extensions: 85,
+  mcp: 86,
+  hooks: 87,
+  agents: 88,
+  trust: 89,
+  untrust: 90,
   new: 90,
   resume: 100,
   save: 110,
@@ -141,6 +143,8 @@ export interface InteractiveSessionOptions {
   uiFrameRate?: UiFrameRate;
   persistUiFrameRate?: (frameRate: UiFrameRate) => void | Promise<void>;
   uiDiagnostics?: () => string;
+  ragAutoRetrieve?: RagAutoRetrieve;
+  persistRagAutoRetrieve?: (mode: RagAutoRetrieve) => void | Promise<void>;
 }
 
 export interface InteractiveTerminalReader {
@@ -172,6 +176,8 @@ export interface InteractiveCommandContext {
   uiFrameRate: UiFrameRate;
   persistUiFrameRate?: (frameRate: UiFrameRate) => void | Promise<void>;
   uiDiagnostics?: () => string;
+  ragAutoRetrieve: RagAutoRetrieve;
+  persistRagAutoRetrieve?: (mode: RagAutoRetrieve) => void | Promise<void>;
 }
 
 export interface InteractiveCommandRuntime {
@@ -483,7 +489,7 @@ function streamChoices(context: InteractiveCommandContext): readonly CommandChoi
   ];
 }
 
-type SettingSection = 'language' | 'stream' | 'fps' | 'history' | 'context';
+type SettingSection = 'language' | 'stream' | 'fps' | 'history' | 'context' | 'rag';
 
 function settingSectionChoices(context: InteractiveCommandContext): readonly CommandChoice[] {
   return [
@@ -526,6 +532,15 @@ function settingSectionChoices(context: InteractiveCommandContext): readonly Com
         context,
         'Fallback budget for models without an override',
         '未单独配置模型的默认上下文预算'
+      )
+    },
+    {
+      value: 'rag',
+      label: localText(context, 'RAG retrieval', 'RAG 自动检索'),
+      description: localText(
+        context,
+        'Automatic retrieval from already-built indexes',
+        '从已经建立的索引中自动预检索'
       )
     }
   ];
@@ -570,6 +585,40 @@ function settingValueChoices(
       { value: 'off', label: localText(context, 'Off', '关闭'), current: !enabled }
     ];
   }
+  if (section === 'rag') {
+    return [
+      {
+        value: 'off',
+        label: localText(context, 'Off', '关闭'),
+        description: localText(
+          context,
+          'Agent calls RAG tools explicitly',
+          '仅由 Agent 显式调用 RAG 工具'
+        ),
+        current: context.ragAutoRetrieve === 'off'
+      },
+      {
+        value: 'ask-plan',
+        label: localText(context, 'Ask and Plan', 'Ask 与 Plan'),
+        description: localText(
+          context,
+          'Pre-retrieve only in read-only modes',
+          '仅在只读模式中自动预检索'
+        ),
+        current: context.ragAutoRetrieve === 'ask-plan'
+      },
+      {
+        value: 'all',
+        label: localText(context, 'All modes', '所有模式'),
+        description: localText(
+          context,
+          'Pre-retrieve for every work mode',
+          '在所有工作模式中自动预检索'
+        ),
+        current: context.ragAutoRetrieve === 'all'
+      }
+    ];
+  }
   return CONTEXT_WINDOW_PRESETS.map((tokens) => ({
     value: formatTokenWindow(tokens).toLowerCase(),
     label: formatTokenWindow(tokens),
@@ -592,6 +641,7 @@ function formatStatus(context: InteractiveCommandContext): string {
   const sessionStatus = context.session?.getStatus();
   const extensions = (status as { extensions?: typeof status.extensions }).extensions;
   const composition = (status as { composition?: typeof status.composition }).composition;
+  const rag = status.rag;
   const contextPercent =
     status.context.contextWindowTokens > 0
       ? Math.min(
@@ -623,6 +673,14 @@ function formatStatus(context: InteractiveCommandContext): string {
           `  References:   ${composition.context.lastReferenceCount} last turn`,
           `  Skills:       ${composition.skills.available} available / ` +
             `${composition.skills.disabled} disabled`
+        ]
+      : []),
+    ...(rag
+      ? [
+          `  RAG:          ${rag.collections.filter((item) => item.health === 'fresh').length} ready / ` +
+            `${rag.collections.length} mounted; lexical ${rag.lexicalAvailable ? 'ready' : 'off'}; ` +
+            `vector ${rag.vectorAvailable ? 'ready' : 'off'}`,
+          `  RAG auto:     ${rag.autoRetrieve}; refresh ${rag.autoRefresh ? 'on' : 'off'}`
         ]
       : []),
     ...(extensions
@@ -1306,6 +1364,117 @@ export function createCommandRegistry(): CommandRegistry<InteractiveCommandConte
         }
       }
       console.log('');
+      return 'continue';
+    }
+  });
+
+  register({
+    name: 'rag',
+    category: 'runtime',
+    priority: COMMAND_PRIORITIES.rag,
+    description: 'Index, search, and manage trusted workspace knowledge.',
+    argumentHint:
+      '[status|doctor|add|index|refresh|search|inspect|clear|collections|mount|unmount] [target]',
+    isEnabled: (commandContext) => Boolean(commandContext.engine.getRagRuntime?.()),
+    choices: (commandContext) => [
+      {
+        value: 'status',
+        label: localText(commandContext, 'Status', '状态'),
+        description: localText(commandContext, 'Show RAG index health', '查看 RAG 索引健康状态')
+      },
+      {
+        value: 'add',
+        label: localText(commandContext, 'Add document', '添加文档'),
+        description: localText(
+          commandContext,
+          'Copy a document into the managed personal library',
+          '将文档复制到受管理的个人知识库'
+        )
+      },
+      {
+        value: 'index workspace',
+        label: localText(commandContext, 'Index workspace', '索引工作区'),
+        description: localText(
+          commandContext,
+          'Build the local workspace index',
+          '建立本地工作区索引'
+        )
+      },
+      {
+        value: 'refresh workspace',
+        label: localText(commandContext, 'Refresh workspace', '刷新工作区'),
+        description: localText(
+          commandContext,
+          'Refresh changed workspace content',
+          '刷新工作区中的变化内容'
+        )
+      },
+      {
+        value: 'search',
+        label: localText(commandContext, 'Search', '检索'),
+        description: localText(
+          commandContext,
+          'Search ready RAG collections',
+          '检索已就绪的 RAG 集合'
+        )
+      },
+      {
+        value: 'collections list',
+        label: localText(commandContext, 'Collections', '集合'),
+        description: localText(
+          commandContext,
+          'List registered external collections',
+          '列出已注册的外部集合'
+        )
+      },
+      {
+        value: 'doctor',
+        label: localText(commandContext, 'Doctor', '诊断'),
+        description: localText(
+          commandContext,
+          'Probe lexical and vector backends',
+          '检测词法与向量后端'
+        )
+      }
+    ],
+    async execute(argument, commandContext, signal): Promise<CommandExecutionResult> {
+      const runtime = commandContext.engine.getRagRuntime?.();
+      if (!runtime) {
+        console.log(chalk.yellow('\nRAG is unavailable.\n'));
+        return 'continue';
+      }
+      const tokens = (argument?.trim() || 'status').match(/"[^"]*"|'[^']*'|\S+/g) ?? [];
+      const action = (tokens.shift() ?? 'status').toLowerCase();
+      const target = tokens.shift()?.replace(/^['"]|['"]$/g, '');
+      if (action === 'auto') {
+        if (target !== 'off' && target !== 'ask-plan' && target !== 'all') {
+          console.log(chalk.red('\nUse: /rag auto off|ask-plan|all\n'));
+          return 'continue';
+        }
+        runtime.setAutoRetrieve(target);
+        commandContext.ragAutoRetrieve = target;
+        await commandContext.persistRagAutoRetrieve?.(target);
+        console.log(chalk.green(`\nRAG automatic retrieval set to ${target}.\n`));
+        return 'continue';
+      }
+      const result = await manageRag({
+        runtime,
+        action,
+        target,
+        rest: tokens.map((token) => token.replace(/^['"]|['"]$/g, '')),
+        signal,
+        confirm: ({ title, message, preview }) =>
+          commandContext.interaction.confirm(
+            {
+              title,
+              message,
+              ...(preview ? { preview } : {}),
+              confirmToken: 'y'
+            },
+            signal
+          )
+      });
+      console.log(chalk.cyan(`\n${result.text}\n`));
       return 'continue';
     }
   });
@@ -2404,7 +2573,7 @@ export function createCommandRegistry(): CommandRegistry<InteractiveCommandConte
     category: 'runtime',
     priority: COMMAND_PRIORITIES.setting,
     description: 'Configure local interface and terminal preferences.',
-    argumentHint: '[language|stream|fps|history|context] [value]',
+    argumentHint: '[language|stream|fps|history|context|rag] [value]',
     choices: settingSectionChoices,
     async execute(argument, commandContext, signal): Promise<CommandExecutionResult> {
       const [rawSection, rawValue] = argument?.trim().split(/\s+/, 2) ?? [];
@@ -2417,18 +2586,18 @@ export function createCommandRegistry(): CommandRegistry<InteractiveCommandConte
         console.log(
           localText(
             commandContext,
-            `  Language: ${commandContext.uiLanguage}\n  Streaming: ${commandContext.streamOutput ? 'on' : 'off'}\n  Frame rate: ${commandContext.uiFrameRate}\n  History: ${historyEnabled ? 'on' : 'off'}\n  Context: ${formatTokenWindow(commandContext.contextWindowTokens)}\n`,
+            `  Language: ${commandContext.uiLanguage}\n  Streaming: ${commandContext.streamOutput ? 'on' : 'off'}\n  Frame rate: ${commandContext.uiFrameRate}\n  History: ${historyEnabled ? 'on' : 'off'}\n  Context: ${formatTokenWindow(commandContext.contextWindowTokens)}\n  RAG auto: ${commandContext.ragAutoRetrieve}\n`,
             `  语言：${commandContext.uiLanguage}\n  流式展示：${commandContext.streamOutput ? '开启' : '关闭'}\n  帧率：${commandContext.uiFrameRate === 'auto' ? '自动' : `${commandContext.uiFrameRate} FPS`}\n  输入历史：${historyEnabled ? '开启' : '关闭'}\n  上下文：${formatTokenWindow(commandContext.contextWindowTokens)}\n`
           )
         );
         return 'continue';
       }
-      if (!['language', 'stream', 'fps', 'history', 'context'].includes(section)) {
+      if (!['language', 'stream', 'fps', 'history', 'context', 'rag'].includes(section)) {
         console.log(
           chalk.red(
             localText(
               commandContext,
-              '\nUse: /setting language|stream|fps|history|context [value]\n',
+              '\nUse: /setting language|stream|fps|history|context|rag [value]\n',
               '\n用法：/setting language|stream|fps|history|context [值]\n'
             )
           )
@@ -2540,6 +2709,18 @@ export function createCommandRegistry(): CommandRegistry<InteractiveCommandConte
             )
           )
         );
+        return 'continue';
+      }
+
+      if (section === 'rag') {
+        if (value !== 'off' && value !== 'ask-plan' && value !== 'all') {
+          console.log(chalk.red('\nUse: /setting rag off|ask-plan|all\n'));
+          return 'continue';
+        }
+        commandContext.engine.getRagRuntime?.()?.setAutoRetrieve(value);
+        commandContext.ragAutoRetrieve = value;
+        await commandContext.persistRagAutoRetrieve?.(value);
+        console.log(chalk.green(`\nRAG automatic retrieval set to ${value}.\n`));
         return 'continue';
       }
 
@@ -2683,6 +2864,8 @@ export function createInteractiveCommandRuntime(
     persistUiLanguage: options.persistUiLanguage,
     uiFrameRate: options.uiFrameRate ?? 'auto',
     persistUiFrameRate: options.persistUiFrameRate,
+    ragAutoRetrieve: options.ragAutoRetrieve ?? 'off',
+    persistRagAutoRetrieve: options.persistRagAutoRetrieve,
     uiDiagnostics: options.uiDiagnostics
   };
   const registry = createCommandRegistry();

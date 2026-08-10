@@ -61,9 +61,17 @@ export function createDelegateTool(): ToolDefinition {
   });
 }
 
-export function createSubagentToolSet(role: SubagentRole): ToolDefinition[] {
+export function createSubagentToolSet(
+  role: SubagentRole,
+  ragTools: readonly ToolDefinition[] = []
+): ToolDefinition[] {
   const common = [globTool, grepTool, listDirectoryTool, readRangeTool, gitStatusTool, repoMapTool];
-  return role === 'review' ? [...common, gitDiffTool, diagnosticsTool] : common;
+  const allowedRagTools = ragTools.filter(
+    (tool) => tool.name === 'RagSearch' || tool.name === 'RagRead'
+  );
+  return role === 'review'
+    ? [...common, gitDiffTool, diagnosticsTool, ...allowedRagTools]
+    : [...common, ...allowedRagTools];
 }
 
 export function createBoundedSubagentProvider(provider: AIProvider): AIProvider {

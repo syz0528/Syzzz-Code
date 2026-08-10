@@ -44,6 +44,18 @@ CLI / Slash commands / NDJSON
 - `src/events.ts` 定义 `AgentEvent`；终端、NDJSON 和审计消费同一事件源。
 - `src/context-manager.ts` 负责预算估算、自动/手动压缩与失败回滚。
 
+### RAG Runtime
+
+- `src/rag/runtime.ts` 是独立的 RAG 编排边界，通过 `createToolSet(runtimeServices)` 注入 Engine；Provider、Engine 和 React 不依赖具体索引实现。
+- `src/rag/chunker.ts` 为 Markdown heading breadcrumb、TS/JS/Python 顶层符号和普通文本窗口生成稳定 chunk ID。
+- `src/rag/store.ts` 管理 workspace/external collection、工作区挂载、远程摄取授权和原子 `CURRENT` revision。
+- 用户级 `library` 是 Syzzz 管理的保留集合；`rag add` 复制原文，`SaveKnowledge` 经普通写入审批保存整理后的 Markdown，二者复用 SHA-256 快照和原子替换。
+- MiniSearch 提供始终可用的词法检索；LanceDB 通过动态加载提供本地向量查询，原生后端不可用时降级为 lexical-only。
+- `RagSearch` 组合单查询/多查询的 lexical 与 vector 排名并用 RRF 融合；可选 reranker 只重排前 20 个候选。`RagRead` 才把正文和 citation token 放入模型上下文。
+- `RagVerify` 使用 Provider `fork()` 做隔离验证，不获得工具；确定性 citation 校验仍由本地 Runtime 完成。
+- 外部路径在模型侧统一表示为 `rag://<collection>/<relativePath>`；审计与 Eval 报告不保存 query、正文、draft 或绝对路径。
+- 会话只保存有界 RAG receipt；恢复后先复核 revision、source hash 和行范围，失效证据必须重新检索。
+
 ### Task Composition
 
 - `src/composition/runtime.ts` 在首次 Provider 请求前解析显式 `@` 证据、分层 `AGENTS.md` 与 `$skill`，按回合签名自动刷新 Skill，并按模型窗口生成有界 catalog。

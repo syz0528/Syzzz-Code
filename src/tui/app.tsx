@@ -185,6 +185,20 @@ function InteractionPanel({
           ? 'Agent 提问'
           : 'Agent questions'
         : localizeTuiPanelText(pending.request.title, language);
+  const selectVisibleCount =
+    pending.type === 'select'
+      ? Math.max(1, Math.min(MAX_SUGGESTIONS, height - 2 - (pending.request.message ? 1 : 0)))
+      : 0;
+  const selectStart =
+    pending.type === 'select'
+      ? Math.max(
+          0,
+          Math.min(
+            pending.selected - Math.floor(selectVisibleCount / 2),
+            pending.request.choices.length - selectVisibleCount
+          )
+        )
+      : 0;
   return (
     <Box
       aria-label={title}
@@ -217,19 +231,24 @@ function InteractionPanel({
           {pending.request.message ? (
             <Text dimColor>{localizeTuiPanelText(pending.request.message, language)}</Text>
           ) : null}
-          {pending.request.choices.slice(0, MAX_SUGGESTIONS).map((choice, index) => (
-            <Text
-              key={choice.value}
-              wrap="truncate-end"
-              bold={index === pending.selected}
-              color={index === pending.selected ? toneColor('info') : undefined}
-            >
-              {index === pending.selected ? '> ' : '  '}
-              {choice.label}
-              {choice.current ? (zh ? ' [当前]' : ' [current]') : ''}
-              {choice.description ? ` - ${choice.description}` : ''}
-            </Text>
-          ))}
+          {pending.request.choices
+            .slice(selectStart, selectStart + selectVisibleCount)
+            .map((choice, visibleIndex) => {
+              const index = selectStart + visibleIndex;
+              return (
+                <Text
+                  key={choice.value}
+                  wrap="truncate-end"
+                  bold={index === pending.selected}
+                  color={index === pending.selected ? toneColor('info') : undefined}
+                >
+                  {index === pending.selected ? '> ' : '  '}
+                  {choice.label}
+                  {choice.current ? (zh ? ' [当前]' : ' [current]') : ''}
+                  {choice.description ? ` - ${choice.description}` : ''}
+                </Text>
+              );
+            })}
         </>
       ) : null}
       {pending.type === 'text' ? (
@@ -785,6 +804,27 @@ export function TuiApp({ controller, copyToClipboard, keyboard, profile }: TuiAp
     redraw((value) => value + 1);
   };
 
+  const navigateInputHistory = (direction: -1 | 1) => {
+    if (direction < 0) {
+      if (controller.inputHistory.length === 0) return;
+      if (historyIndex >= controller.inputHistory.length) setHistoryDraft(composer.current.value);
+      const next = Math.max(0, Math.min(historyIndex - 1, controller.inputHistory.length - 1));
+      setHistoryIndex(next);
+      mutateComposer(() => composer.current.set(controller.inputHistory[next] ?? ''));
+      return;
+    }
+    if (historyIndex >= controller.inputHistory.length) return;
+    const next = historyIndex + 1;
+    setHistoryIndex(next);
+    mutateComposer(() =>
+      composer.current.set(
+        next === controller.inputHistory.length
+          ? historyDraft
+          : (controller.inputHistory[next] ?? '')
+      )
+    );
+  };
+
   const acceptSuggestion = (submit: boolean): boolean => {
     const item = suggestions[suggestionSelected];
     if (!item) {
@@ -1040,6 +1080,14 @@ export function TuiApp({ controller, copyToClipboard, keyboard, profile }: TuiAp
       controller.toggleLatestToolDetail();
       return;
     }
+    if (key.ctrl && input.toLowerCase() === 'p') {
+      navigateInputHistory(-1);
+      return;
+    }
+    if (key.ctrl && input.toLowerCase() === 'n') {
+      navigateInputHistory(1);
+      return;
+    }
     if (key.pageUp) {
       moveTranscript(-Math.max(3, availableTranscriptHeight - 1));
       return;
@@ -1106,25 +1154,18 @@ export function TuiApp({ controller, copyToClipboard, keyboard, profile }: TuiAp
     else if (key.upArrow) {
       if (composer.current.value.includes('\n')) {
         mutateComposer(() => composer.current.moveVertical(-1));
-      } else if (controller.inputHistory.length > 0) {
-        if (historyIndex >= controller.inputHistory.length) setHistoryDraft(composer.current.value);
-        const next = Math.max(0, Math.min(historyIndex - 1, controller.inputHistory.length - 1));
-        setHistoryIndex(next);
-        mutateComposer(() => composer.current.set(controller.inputHistory[next] ?? ''));
+      } else if (profile?.wheelInput === 'arrow-fallback') {
+        moveTranscript(-3);
+      } else {
+        navigateInputHistory(-1);
       }
     } else if (key.downArrow) {
       if (composer.current.value.includes('\n')) {
         mutateComposer(() => composer.current.moveVertical(1));
-      } else if (historyIndex < controller.inputHistory.length) {
-        const next = historyIndex + 1;
-        setHistoryIndex(next);
-        mutateComposer(() =>
-          composer.current.set(
-            next === controller.inputHistory.length
-              ? historyDraft
-              : (controller.inputHistory[next] ?? '')
-          )
-        );
+      } else if (profile?.wheelInput === 'arrow-fallback') {
+        moveTranscript(3);
+      } else {
+        navigateInputHistory(1);
       }
     } else if (input && !key.ctrl && !key.meta) {
       mutateComposer(() => {

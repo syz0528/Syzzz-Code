@@ -1,9 +1,9 @@
 # Syzzz Code 路线图
 
 **制定日期：** 2026-06-16
-**最近更新：** 2026-08-07
-**适用基线：** `1.0.0` / Phase 7 起始提交 `161391a`
-**当前入口：** Phase 6 保持 **Release Candidate Accepted**；Phase 7、Phase 7.1 与 Phase 8 已标记 **Frozen**
+**最近更新：** 2026-08-10
+**适用基线：** `1.0.0` / Phase 9 最终候选
+**当前入口：** Phase 9/9.1 已完成本地实现与人工验收，项目正在执行 `1.0.0` 最终发布门禁；Phase 7、Phase 7.1 与 Phase 8 已标记 **Frozen**
 
 > 路线图描述实施顺序和验收边界。当前代码事实以 [`README.md`](README.md) 和 [`CURRENT_STATUS.md`](CURRENT_STATUS.md) 为准。
 
@@ -154,6 +154,9 @@ Phase 7  显式上下文、开放 Skills 与项目指令
    |
    v
 Phase 8  全屏 TUI、结构化交互与终端产品化
+   |
+   v
+Phase 9  可信工作区 RAG、混合检索与证据闭环
 ```
 
 后续阶段可以提前研究，但不能绕过前置阶段直接进入生产路径。
@@ -862,6 +865,46 @@ Phase 7.1 冻结基线为 319/319、coverage 82.34%/75.91%/86.41%、offline Eval
 
 本阶段不实现通用鼠标控件、主题/插件系统、交互式 Shell、后台任务、LSP、持久索引、并行或可写 Subagent。
 
+## 13A. Phase 9/9.1：可信工作区 RAG、混合检索与知识写入闭环
+
+**基线：** Phase 8 Frozen `204fe5b`。
+
+**当前状态：** 本地实现、固定评测和人工验收已通过；等待当前提交的 Windows/Ubuntu Node 22/24 CI 与正式发布链路验证。
+
+- [x] 独立 `RagRuntime`、原子 revision、当前/上一版恢复与 lexical-only 降级；
+- [x] Markdown breadcrumb、代码顶层符号、中文 CJK bigram 与稳定 chunk ID；
+- [x] MiniSearch 词法召回、LanceDB 向量召回、多查询 RRF 和可选 reranker；
+- [x] 工作区集合、命名外部集合、显式挂载、远程发送复审和虚拟路径；
+- [x] 渐进式 `RagSearch` / `RagRead`、确定性 citation 校验与隔离 `RagVerify`；
+- [x] freshness、增量 embedding 复用、取消、并发锁、敏感路径和审计隐私边界；
+- [x] `syzzz rag`、`/rag`、`/setting` 自动检索开关及 TUI/inline/NDJSON 状态；
+- [x] 398/398 回归、TUI 51/51、coverage 82.57%/75.60%/86.11%；
+- [x] 离线 RAG Eval 100% label resolution、hybrid `1.00/1.00` 与敏感负例；
+- [x] `JustStudy` 22/22 labels、Recall@10 `0.90`、MRR@10 `0.82`；
+- [x] Phase 9.1 用户级受管理 `library` 与保留集合生命周期；
+- [x] `syzzz rag add`、`/rag add` 的预览、确认、原子导入和索引刷新；
+- [x] `SaveKnowledge` 的 code 模式、写入审批、证据 receipt 与副作用检查点；
+- [x] 会话快照兼容保存 RAG receipt，并在恢复后验证 revision、hash 与行范围；
+- [x] audit、license、Secret 扫描、102 文件候选包和 tarball smoke；
+- [ ] Windows/Ubuntu Node 22/24 CI；
+- [x] 用户完成工作区、知识写入、检索、会话与 TUI 交互 dogfood，并批准进入正式发布；
+- [ ] 当前提交的跨平台 CI、npm、Tag、GitHub Release 与 registry 安装复验通过后标记 Frozen。
+
+本阶段不实现 PDF、Office、图片、网页抓取、知识图谱、云向量库、LSP、后台 Agent 或第二套生成 Runtime。
+
+## 13B. Phase 9.2：云端 RAG 后端与同步治理（已记录，未实现）
+
+Phase 9.2 作为后续独立阶段保留，不能被当前本地能力的完成状态隐式覆盖。计划评估：
+
+- 统一 `RagBackend`，保持现有 `RagSearch/RagRead/RagVerify` 与 Agent Runtime 契约；
+- OpenAI Vector Stores/File Search、xAI Collections 或兼容托管服务的显式适配；
+- 通过受信 MCP 暴露的远程知识源，而不是把远端管理逻辑塞入本地索引；
+- 上传、增量同步、远端删除、授权撤销、数据保留、配额、成本与 Provider 故障降级；
+- Keychain/凭证治理、SSRF、防重放、租户隔离和远程内容审计隐私；
+- 本地/云端检索结果的来源标识、revision 一致性、引用验证和离线可用性。
+
+进入实现前必须先确定真实供应商、数据驻留要求和删除一致性契约。Phase 9.1 不实现云向量库、自动上传、跨设备同步或不完整 OAuth。
+
 ## 14. 暂不进入近期范围
 
 以下能力可能有长期价值，但在 Tool Runtime、上下文和会话稳定前不进入近期开发：
@@ -884,9 +927,9 @@ Phase 7.1 冻结基线为 319/319、coverage 82.34%/75.91%/86.41%、offline Eval
 
 版本号表达交付边界，不代表日期承诺：
 
-### v1.0.0：六阶段可信 CLI 基线
+### v1.0.0：可信 Agent CLI 首发版
 
-- Phase 1–5.1 的工具、事件、上下文、会话与扩展边界；
+- Phase 1–9.1 的工具、事件、上下文、会话、扩展、任务组合、TUI 与本地 RAG 边界；
 - OpenAI-compatible Chat Completions、OpenAI Responses 流式和 Anthropic 非流式协议；
 - 固定 Coding Agent Eval 与跨平台候选包验证；
 - Apache-2.0 公开仓库和公开 npm CLI 包；
@@ -916,12 +959,14 @@ Phase 7.1 冻结基线为 319/319、coverage 82.34%/75.91%/86.41%、offline Eval
 - [x] 完成 Phase 7.1 Skills 产品化与本地自动门禁。
 - [x] 新增 OpenAI Responses Provider、无状态工具续接和显式 Provider 协议路由。
 
-### Phase 6 待验收
+### 1.0.0 发布待验收
 
 - [x] 完整本地自动化通过并标记 Implemented；
 - [x] Windows/Linux CI 和候选包通过并标记 Validated；
 - [x] 用户完成 RC dogfood 并标记 Release Candidate Accepted；
-- [x] fast-forward `main`；
+- [x] Phase 6 历史候选曾 fast-forward 到 `main`；
+- [ ] 将 Phase 7 至 Phase 9.1 最终候选 fast-forward 到 `main`；
+- [ ] 将 GitHub 仓库设为公开并启用可用的安全设置；
 - [ ] 发布 npm、annotated Tag 和 GitHub Release；
 - [ ] registry 安装复验后标记 Frozen。
 
@@ -935,7 +980,7 @@ Phase 7.1 冻结基线为 319/319、coverage 82.34%/75.91%/86.41%、offline Eval
 
 ### 当前入口
 
-Phase 6 继续保持 **Release Candidate Accepted**，完整 Phase 2–6 历史已 fast-forward 到 `main`。Phase 7、Phase 7.1 与 Phase 8 已冻结；后续工作不会借阶段推进绕过 Phase 6 的公开发布条件。
+Phase 6 建立的发布工程基线已经并入当前 `1.0.0` 最终候选。Phase 7、Phase 7.1 与 Phase 8 已冻结，Phase 9/9.1 已完成本地实现和人工验收；下一步按顺序完成当前提交的跨平台 CI、`main` 推进、仓库公开、npm、Tag、GitHub Release 与 registry 安装复验。
 
 ## 16. 路线图完成标准
 

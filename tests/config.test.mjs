@@ -258,6 +258,59 @@ test('Skills configuration defaults compatibly and validates disabled names', ()
   assert.throws(() => validateConfig(duplicate), /must not contain duplicates/);
 });
 
+test('RAG configuration defaults compatibly and validates remote retrieval settings', () => {
+  const legacyConfig = validateConfig(createValidConfig());
+  assert.deepEqual(legacyConfig.rag, {
+    enabled: true,
+    autoRetrieve: 'off',
+    autoRefresh: true
+  });
+
+  const configured = createValidConfig();
+  configured.rag = {
+    enabled: true,
+    autoRetrieve: 'ask-plan',
+    autoRefresh: false,
+    embedding: {
+      type: 'openai-compatible',
+      model: 'text-embedding-test',
+      dimensions: 768,
+      env: {
+        BASE_URL: 'https://embedding.example.test/v1/',
+        API_KEY: '',
+        API_KEY_ENV: 'RAG_EMBEDDING_KEY'
+      }
+    },
+    reranker: {
+      type: 'jina-compatible',
+      model: 'reranker-test',
+      env: {
+        BASE_URL: 'https://rerank.example.test/v1',
+        API_KEY: 'stored-placeholder'
+      }
+    }
+  };
+  const validated = validateConfig(configured);
+  assert.equal(validated.rag.embedding.env.BASE_URL, 'https://embedding.example.test/v1');
+  assert.equal(validated.rag.reranker.model, 'reranker-test');
+
+  const invalidMode = createValidConfig();
+  invalidMode.rag = { enabled: true, autoRetrieve: 'always' };
+  assert.throws(() => validateConfig(invalidMode), /rag\.autoRetrieve/);
+
+  const invalidDimensions = createValidConfig();
+  invalidDimensions.rag = {
+    enabled: true,
+    embedding: {
+      type: 'openai-compatible',
+      model: 'test',
+      dimensions: 0,
+      env: { BASE_URL: 'https://example.test/v1', API_KEY: '' }
+    }
+  };
+  assert.throws(() => validateConfig(invalidDimensions), /rag\.embedding\.dimensions/);
+});
+
 test('environment credentials take precedence without mutating process.env', () => {
   const provider = createValidConfig().providers.local;
   provider.env.API_KEY = 'stored-secret';

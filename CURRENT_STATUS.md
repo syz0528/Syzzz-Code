@@ -1,8 +1,8 @@
 # Syzzz Code 当前项目状态
 
-**更新时间：** 2026-08-07
+**更新时间：** 2026-08-10
 
-**当前分支：** `codex/phase8-tui`
+**当前分支：** `codex/phase9-rag`
 
 **Phase 4 冻结基线：** `3d2b8e6`
 
@@ -22,9 +22,15 @@
 
 **Phase 8 冻结验收基线：** `7b1d39c`
 
-**当前阶段：** Phase 8 已 **Frozen**；Phase 7 与 Phase 7.1 已 **Frozen**；Phase 6 保持 **Release Candidate Accepted**
+**Phase 9 起始基线：** `204fe5b`
+
+**当前阶段：** `1.0.0` 最终发布准备。Phase 9/9.1 的实现与本地人工验收已经完成；发布前仍需完成格式门槛、当前提交的跨平台 CI、`main` 推进、公开仓库、npm、Tag、GitHub Release 和 registry 安装复验，因此尚未标记 **Frozen**。
 
 ## 1. 当前结论
+
+Phase 9 已完成独立 `RagRuntime`、版本化本地索引、MiniSearch 词法检索、LanceDB 向量降级后端、OpenAI-compatible Embedding、Jina-compatible reranker、RRF 多查询融合、外部集合挂载、渐进式 `RagSearch/RagRead`、确定性 citation 校验与隔离 `RagVerify`。Phase 9.1 进一步加入用户级受管理 `library`、`rag add` 文档导入、经审批的 `SaveKnowledge`、自动/待授权索引刷新，以及会话恢复时的 RAG receipt 复核。默认不自动索引工作区、不发送远程文件、不开启自动预检索；索引和个人库正文保存在本地且不加密。
+
+固定离线 RAG Eval 使用 10 个 case 和 9 个 evidence label，结果为 label resolution 100%、lexical Recall@10/MRR@10 `1.00/0.95`、hybrid `1.00/1.00`，敏感文件负例通过。`JustStudy` 真实外部语料按数据集声明的 15 个 profile 文件隔离评测，22/22 evidence labels 可解析，lexical Recall@10/MRR@10 为 `0.90/0.82`，高于历史 `0.667/0.541` 与计划门槛。当前本地门槛为 398/398、TUI 51/51、coverage `82.57%/75.60%/86.11%`、生产审计 0 vulnerability，102 文件候选包与全新 prefix smoke 通过；当前 Phase 9 提交的 Windows/Ubuntu Node 22/24 CI 与正式 registry 安装仍待发布流程验证，因此不得标记 Frozen。
 
 Phase 5.0 Core 已完成“可信扩展运行时、MCP Broker 与受限委派”的主体：
 
@@ -51,9 +57,9 @@ Phase 6 不增加 Agent 自治能力，当前改造集中在：
 - npm tarball allowlist、全新 prefix 安装、配置迁移、文本与 NDJSON smoke；
 - Apache-2.0、架构/测试/变更日志以及人工门控发布工作流。
 
-Phase 6 本地自动化、真实 DeepSeek/OpenCode Live Eval、候选 tarball、GitHub 跨平台 CI 和人工 dogfood 已经通过，当前标记为 **Release Candidate Accepted**。Live Eval 完成全部七项隔离任务，结果为 7/7、功能成功率 100%、安全项通过且无基础设施错误；提交 `014e182` 的 CI 共 10 个 job 全绿，覆盖 Windows/Ubuntu 与 Node 22/24。人工验收使用真实 tarball 的隔离安装，覆盖 Node 22/24、doctor、模式与权限、会话恢复、取消、NDJSON、MCP、Hook 和只读 Subagent；npm、Tag 与 GitHub Release 尚未创建，因此不能标记为 Frozen。
+Phase 6 建立的发布工程基线已经通过本地自动化、真实 DeepSeek/OpenCode Live Eval、候选 tarball、GitHub 跨平台 CI 和人工 dogfood。Live Eval 完成全部七项隔离任务，结果为 7/7、功能成功率 100%、安全项通过且无基础设施错误；提交 `014e182` 的 CI 共 10 个 job 全绿，覆盖 Windows/Ubuntu 与 Node 22/24。该阶段的旧 **Release Candidate Accepted** 是历史里程碑，现已由包含 Phase 7 至 Phase 9.1 的 `1.0.0` 最终候选整体接替，不再作为独立发布状态推进。
 
-完整 Phase 2–6 历史已于 2026-07-31 fast-forward 到远程 `main`，`main` 与 Phase 6 分支指向同一发布准备提交。仓库继续保持 Private；当前个人 GitHub Free 套餐不支持私有仓库的 protected branches、required checks、Environment 保护、Secret Scanning 或 Push Protection，因此这些设置保留到公开前的最后一步。私有阶段可用的 Dependabot vulnerability alerts、自动安全修复和分组更新已经启用。
+完整 Phase 2–6 历史已于 2026-07-31 fast-forward 到远程 `main`；当前 Phase 7 至 Phase 9.1 历史仍位于开发分支。仓库继续保持 Private；公开前将先把最终候选以 fast-forward 推进到 `main`，再启用可用的 required checks、Secret Scanning、Push Protection、Dependabot 和 CodeQL 设置。
 
 Phase 7 从 `161391a` 新建 `codex/phase7-task-composition`，聚焦无权限的任务组合层：
 
@@ -240,43 +246,21 @@ subagents.enabled = true
 
 当前结果：
 
-- `npm test`：**370/370**
-- `npm run test:tui`：**46/46**，覆盖语义 Transcript、Markdown、真实 ANSI 屏幕回放、增量帧、流式 Presenter、Composer、启动续聊、可见确认、直接拖选自动复制与提示、滚动条拖动、批量鼠标事件过滤、增强键盘探测、终端映射备份与冲突拒绝、失败路径、中文界面、`grill-me` 与结构化交互
-- `npm run test:coverage`：本地综合门槛测得 Lines **82.33%**、Branches **76.38%**、Functions **85.45%**，Ubuntu CI 测得 **82.03% / 76.25% / 85.84%**，均高于 82%/74%/84% 门槛
-- `npm run eval:offline`：十二项固定任务 **12/12**
-- `npm run test:providers`：五种离线 Provider Profile 与共享 Runner 契约 **46/46**
-- `npm run test:stability`：Windows Shell、会话和 MCP/Hook 生命周期连续三轮通过
-- 官方 MCP v2 stdio：legacy 与 modern 均完成真实握手
-- Streamable HTTP：真实 loopback 握手、显式认证头和不跟随重定向
-- 环境脱敏：MCP 与 Hook 均不继承、也不能通过显式模板重新引入测试 Provider Key
-- MCP：惰性连接、分页、list_changed、schema 隔离、目录上限、策略合并、disabled 硬拒绝、调用不重试、异常断线、惰性重连、超时/取消、Windows 后代进程清理及带空格路径的真实 `.cmd` 握手
-- 动态风险：annotation 冲突按 execute 处理、ask/plan 拒绝副作用、fullAccess 不绕过模式或 disabled 策略、safe 逐次审批
-- Hooks：顺序、matcher、deny、四个被动生命周期事件、失败策略、payload 隐私、输出限制、超时、取消和唯一终态
-- Subagent：工具白名单、深度/数量/轮次/工具数/Provider 请求/软硬 token/软收束/上下文/报告上限、partial、usage、父取消、失败后无重复调查和无 transcript 持久化
-- 扩展配置：用户/项目覆盖、Trust V2 摘要稳定性、V1 复审、变化立即失效、确认期 TOCTOU、损坏 fail closed 和管理输出脱敏
-
-人工冻结验收：
-
-- Phase 5.1 清单：**11/11**
-- 真实 Provider 与 Windows Terminal：Trust V2、策略、Hook、Explore/Review、恢复与取消均通过
-- 真实远程 Streamable HTTP：协商 MCP `2025-11-25`，发现 11 个只读工具，地理编码与天气预报调用成功
-- 风险闭环：未受信项目扩展不启动，配置变化进入 `review-required`，`disabled` 与 Hook deny 均不能被 `fullAccess` 绕过
-- 隐私闭环：NDJSON、审计与会话恢复未泄露认证头、Hook payload 或 Subagent transcript
-
-Phase 6/7 本地发布前卫生已通过：
-
+- `npm test`：**398/398**
+- `npm run test:tui`：**51/51**，覆盖语义 Transcript、流式 Markdown、Composer、会话选择、结构化审批与提问、滚动、鼠标输入解码、中英文界面和终端恢复
+- `npm run test:coverage`：Lines **82.57%**、Branches **75.60%**、Functions **86.11%**，高于 82%/74%/84% 门槛
+- `npm run eval:offline`：十二项固定 Agent 任务 **12/12**
+- `npm run eval:rag:offline`：label resolution 100%，hybrid Recall@10/MRR@10 `1.00/1.00`，敏感文件负例通过
+- 真实外部语料评测：22/22 evidence labels，Recall@10 `0.90`，MRR@10 `0.82`
+- `npm run test:providers`：OpenAI Chat Completions、OpenAI Responses、DeepSeek reasoning 与 Anthropic Messages 离线协议契约通过
 - `npm audit --omit=dev --audit-level=high`：`0 vulnerabilities`
-- `npm run license:check`：127 个生产依赖条目均为已审查的宽松许可证
-- `npm run secret:scan`：189 个工作树文件、完整可达补丁历史与提交信息通过高置信扫描
-- `npm run pack:check`：312 个条目，allowlist 外文件 0，packed/unpacked size 均低于发布门槛
+- `npm run license:check`：231 个生产依赖条目通过许可证检查
+- `npm run secret:scan`：216 个工作树文件、完整可达补丁历史与提交信息通过高置信扫描
+- `npm run pack:check`：102 个 allowlist 文件，packed/unpacked size 低于发布门槛
 - `npm run smoke:package`：真实 tarball 在全新 prefix 中完成全局 CLI、配置迁移、文本、NDJSON 与 doctor 验证
-- `syzzz doctor`：Node 22 要求、配置、Provider、模型、扩展配置、ripgrep 与 TypeScript Worker 均通过；仅保留 Windows ACL 无法自动验证的提醒
-- `git diff --check`：退出码 0；仅有 Windows 工作树 LF→CRLF 提示，无空白错误
-- 当前 DeepSeek/OpenCode Live Eval：**7/7**，功能成功率 100%，安全项通过，0 个基础设施错误；完整套件一次运行通过
-- OpenCode `gpt-5.6-luna` Responses 真实 smoke：文本流以 `response.completed` 正常结束；function call、私有 output items 续接与最终回答往返通过
-- GitHub Actions：提交 `014e182` 的完整流水线 **10/10 jobs** 通过，包括 Windows/Ubuntu × Node 22/24、quality、Provider contracts、offline Eval、双平台 package smoke 与 security
-- Phase 7/7.1 GitHub Actions：提交 `75c3967` 在两个同步分支上的流水线均为 **10/10 jobs** 通过；Ubuntu 覆盖率、Windows canonical path、Node 22/24 与双平台 package smoke 全绿
-- Phase 6 候选包人工验收：真实 tarball 隔离安装、Node 22/24、doctor、会话恢复、取消、NDJSON、MCP、Hook 与只读 Subagent 均通过；上游 Provider 的瞬时 503 按有限重试和结构化失败规则处理，后续请求恢复成功
+- 当前 DeepSeek/OpenCode Live Eval：**7/7**，功能成功率 100%，安全项通过，0 个基础设施错误
+- OpenCode Responses 真实 smoke：文本流、function call、私有 output items 续接与最终回答往返通过
+- Phase 8 冻结提交的 GitHub Actions 在 Windows/Ubuntu × Node 22/24 等 10 个作业全部通过；Phase 9 最终提交仍需重新运行同一矩阵
 
 ## 8. 已知边界
 
@@ -289,11 +273,13 @@ Phase 6/7 本地发布前卫生已通过：
 - 当前不支持写入型、并行、后台或嵌套 Subagent。
 - `@` 不支持工作区外路径、URL、图片、PDF 或多模态附件。
 - Skill 不支持私有 Git 凭证、市场、自动更新、安装后自动执行或 `allowed-tools` 授权。
-- 当前 TUI 的鼠标交互覆盖滚轮、可拖动滚动条、正文拖选复制和 sticky 问题，不支持通用点击控件、主题/插件系统、交互式 Shell、后台任务、LSP 或持久化索引；Tag 与 npm 发布仍未进行。
+- 当前 TUI 的鼠标交互覆盖滚轮、可拖动滚动条、正文拖选复制和 sticky 问题，不支持通用点击控件、主题/插件系统、交互式 Shell、后台任务或 LSP。
+- RAG 提供本地持久化索引，但暂不支持云端 RAG、PDF/Office/图片摄取、网页抓取、跨设备同步或任意历史 as-of 查询。
+- Tag 与 npm 发布仍未进行。
 
 ## 9. Git 状态
 
-- 当前分支：`codex/phase8-tui`
+- 当前分支：`codex/phase9-rag`
 - Phase 4 冻结提交：`3d2b8e6`
 - Phase 5.0 Core 非冻结检查点：`000bcaa`
 - Phase 5.1 实现验证基线：`85b2558`
@@ -306,12 +292,11 @@ Phase 6/7 本地发布前卫生已通过：
 - Phase 7/7.1 跨平台验证提交：`75c3967`
 - Phase 7/7.1 冻结提交：`465f0bf`
 - Phase 8 TUI Spike：`64ecaf2`
-- 远程 `codex/phase7-task-composition` 与 `codex/phase7.1-skills` 已同步到同一历史
+- Phase 8 冻结提交：`204fe5b`
 - 版本号保持 `1.0.0`
 - 未发布 npm 包，未创建 Tag
-- 本地 `main`、远程 `main` 与 Phase 6 分支指向同一发布准备提交
+- 远程 `main` 当前仍停留在 Phase 6 发布工程基线，Phase 7 至 Phase 9.1 尚未推进
 - GitHub 仓库仍为 Private；尚未创建 `npm-release` Environment
-- 既有 archive 行尾状态、`hook-should-not-exist-2.txt`、`phase3-manual.ts`、`phase2-events.jsonl` 和 `temp.txt` 不属于 Phase 7，不纳入本阶段提交
 
 ## 10. 冻结条件
 
@@ -324,4 +309,4 @@ Phase 6 使用四级状态：
 3. 用户完成人工 dogfood：**Release Candidate Accepted**。
 4. npm、annotated `v1.0.0` Tag、GitHub Release 和 registry 安装验证完成：**Frozen**。
 
-Phase 6 继续停留在 **Release Candidate Accepted**，不越过公开发布门槛。Phase 7、Phase 7.1 与 Phase 8 的本地测试、覆盖率、审计、离线 Eval、包检查、tarball smoke、用户 dogfood 和 Windows/Ubuntu Node 22/24 CI 已全部通过，现标记为 **Frozen**。OpenAI Responses 协议与显式 Provider 路由已经实现，并通过离线契约及 OpenCode Luna 真实文本与 function call smoke。Anthropic 真流式、MCP OAuth、通用鼠标与主题系统、LSP、持久索引、并行或写入型 Subagent 继续留在后续独立阶段评估。
+Phase 6 的发布工程能力已经并入当前 `1.0.0` 最终候选，不再保留一个与现状分离的 RC。Phase 7、Phase 7.1 与 Phase 8 的本地测试、覆盖率、审计、离线 Eval、包检查、tarball smoke、用户 dogfood 和 Windows/Ubuntu Node 22/24 CI 已全部通过并标记为 **Frozen**。Phase 9/9.1 已完成本地实现、固定评测和人工验收，待当前提交的跨平台 CI 与正式发布链路完成后统一冻结。OpenAI Responses 协议与显式 Provider 路由已经实现，并通过离线契约及 OpenCode Luna 真实文本与 function call smoke。Anthropic 真流式、MCP OAuth、云端 RAG、LSP、并行或写入型 Subagent 继续留在后续独立阶段评估。

@@ -11,6 +11,7 @@ npm run test:tui
 npm run test:coverage
 npm run test:providers
 npm run eval:offline
+npm run eval:rag:offline
 npm run pack:check
 npm run smoke:package
 npm audit --omit=dev --audit-level=high
@@ -18,6 +19,14 @@ npm run check
 ```
 
 `npm run check` 是本地综合门槛；`smoke:package` 额外安装真实 tarball，耗时更长。Windows 进程、会话锁与 MCP 生命周期可用 `npm run test:stability` 连续执行三轮，任一轮失败都会立即终止。
+
+`1.0.0` 最终候选在 2026-08-10 的本地基线为：完整回归 398/398、TUI/Interaction 专项 51/51、离线 Agent Eval 12/12、离线 RAG Eval 通过，覆盖率 Lines 82.57% / Branches 75.60% / Functions 86.11%。生产依赖审计为 0 vulnerability，102 文件候选包和全新 prefix 安装 smoke 通过。发布前仍必须在最终提交上通过 Windows/Ubuntu × Node 22/24 CI。
+
+Phase 9 的 `npm run eval:rag:offline` 使用独立临时目录、Mock Embedding 和 Mock reranker 验证 10 个固定 case。门槛包括 evidence label resolution 100%、敏感文件负例、hybrid Recall@10/MRR@10 不低于 0.9，并要求 hybrid 至少改善一个 lexical 指标。报告只保存 case ID 和指标。
+
+真实集合评测使用 `npm run eval:rag:live`，通过 `SYZZZ_RAG_LIVE_ROOT` 指定集合。默认只运行本地词法路径；只有显式传入 `--approve-remote` 才使用当前 RAG 远程配置。若数据集提供 `corpus_profiles.source_paths`，Runner 会在隔离临时目录中只物化这些声明文件，防止评测题和旧答案日志污染检索。`JustStudy` 历史原始基线是 Recall@10 `0.6667`、MRR@10 `0.5407`；Phase 9 本地结果为 22/22 evidence labels、Recall@10 `0.90`、MRR@10 `0.82`，敏感负例通过。
+
+Phase 9.1 专项覆盖个人 `library` 的保留名称、原子文档导入、CLI 检索闭环、`SaveKnowledge` 审批快照、持久副作用检查点，以及恢复会话后对 RAG revision、source hash 和行范围的复核。远程未授权场景必须保持本地保存并明确报告索引待刷新。
 
 2026-08-07 的 Phase 8.2 冻结基线为：完整回归 370/370、TUI/Interaction 专项 46/46、离线 Eval 12/12；本地覆盖率 Lines 82.33%/Branches 76.38%/Functions 85.45%，Ubuntu CI 为 82.03%/76.25%/85.84%。除 Phase 8.1 的 headless VT/ANSI 屏幕回放、source-backed 流式中间帧、Markdown、sticky 问题、鼠标、grapheme、`/ @ $`、启动续聊、可见确认、活动计时、中文界面和结构化 AskUser 外，本轮新增拆分 SGR 输入、有状态鼠标解码、embedded Windows conservative profile、首个正文 delta 立即显示、后续 delta 帧合并、自动复制提示、`/setting`、30/60 FPS 配置、中英文帮助、终端配置失败路径和本地化回归。生产依赖审计、许可证、Secret 扫描、320 文件候选包检查和全新 prefix 安装 smoke 均通过；[CI 31142878469](https://github.com/syz0528/Syzzz-Code/actions/runs/31142878469) 的 10 个作业全部通过，覆盖率门槛继续保持 Lines 82%、Branches 74%、Functions 84%。
 
@@ -31,6 +40,7 @@ Windows PowerShell 5.1 手工创建包含中文的 `AGENTS.md` 或 `SKILL.md` �
 4. 固定 Agent Eval：真实 QueryEngine、工具、审批和外部 grader。
 5. tarball smoke：从 npm 生成的 `.tgz` 安装到全新 prefix 后运行 CLI。
 6. Live Eval 与人工 dogfood：只在明确配置凭证时执行。
+7. RAG Eval：固定 label resolution、lexical/hybrid 对照、安全负例和真实外部集合 dogfood。
 
 ## TUI 验证
 
@@ -130,4 +140,4 @@ GitHub Actions 包含以下 required job 候选：
 - **Release Candidate Accepted**：产品所有者完成人工 dogfood。
 - **Frozen**：npm、annotated Tag、GitHub Release 和 registry 安装复验全部完成。
 
-在最后一级之前，不应在 README 或状态文档中宣称 Phase 6 Frozen。
+在最后一级之前，不应在 README 或状态文档中宣称 `1.0.0` 已正式发布或整体 Frozen。

@@ -145,6 +145,8 @@ export class HumanEventRenderer {
           this.startSpinner('Compacting context...');
         } else if (event.phase === 'subagent') {
           this.startSpinner('Delegating read-only work...');
+        } else if (event.phase === 'rag') {
+          this.startSpinner('Retrieving indexed evidence...');
         }
         break;
       case 'context_resolved':
@@ -159,6 +161,58 @@ export class HumanEventRenderer {
       case 'skill_failed':
         this.stopForStatus();
         this.writeLine(chalk.yellow(`Skill ${event.skill} failed (${event.code})`));
+        break;
+      case 'rag_index_started':
+        this.stopForStatus();
+        this.startSpinner(
+          `${event.operation === 'refresh' ? 'Refreshing' : 'Indexing'} RAG ${event.collection}...`
+        );
+        break;
+      case 'rag_index_progress':
+        this.setSpinnerText(
+          `RAG ${event.collection}: ${event.stage} ${event.completed}${event.total === undefined ? '' : `/${event.total}`}...`
+        );
+        break;
+      case 'rag_index_completed':
+        this.stopForStatus();
+        this.writeLine(
+          chalk.gray(
+            `RAG ${event.collection} ready: ${event.chunkCount} chunks (${event.vectorState})`
+          )
+        );
+        break;
+      case 'rag_index_failed':
+        this.stopForStatus();
+        this.writeLine(chalk.yellow(`RAG ${event.collection} indexing failed (${event.code})`));
+        break;
+      case 'rag_retrieval_started':
+        this.stopForStatus();
+        this.startSpinner('Retrieving indexed evidence...');
+        break;
+      case 'rag_retrieval_completed':
+        this.stopForStatus();
+        break;
+      case 'rag_retrieval_failed':
+        this.stopForStatus();
+        this.writeLine(chalk.yellow(`RAG retrieval failed (${event.code})`));
+        break;
+      case 'rag_verification_started':
+        this.stopForStatus();
+        this.startSpinner('Verifying RAG citations...');
+        break;
+      case 'rag_verification_completed':
+        this.stopForStatus();
+        if (event.invalidCitationCount > 0 || event.outcome === 'unsupported') {
+          this.writeLine(
+            chalk.yellow(
+              `RAG citation warning: ${event.invalidCitationCount} invalid; ${event.outcome}`
+            )
+          );
+        }
+        break;
+      case 'rag_verification_failed':
+        this.stopForStatus();
+        this.writeLine(chalk.yellow(`RAG verification failed (${event.code})`));
         break;
       case 'compaction_started':
         this.stopForStatus();

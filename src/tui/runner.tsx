@@ -5,6 +5,7 @@ import { InteractionController } from '../interaction/controller.js';
 import type { InteractiveSessionOptions } from '../interactive.js';
 import { DISABLE_MOUSE_TRACKING, ENABLE_MOUSE_TRACKING, TuiApp } from './app.js';
 import { encodeOsc52Clipboard } from './clipboard.js';
+import { ConservativeTuiOutput } from './output-adapter.js';
 import {
   inspectTerminalKeyboard,
   probeKittyKeyboardSupport,
@@ -46,6 +47,10 @@ export async function runTuiSession(
     configuredFrameRate: options.uiFrameRate ?? 'auto'
   });
   const renderDiagnostics = createTuiRenderDiagnostics();
+  const outputAdapter =
+    profile.synchronizedOutput === 'coalesced'
+      ? new ConservativeTuiOutput(process.stdout)
+      : undefined;
   const controller = await InteractionController.create({
     engine,
     sessionOptions: {
@@ -81,12 +86,13 @@ export async function runTuiSession(
       />,
       {
         alternateScreen: true,
-        concurrent: true,
+        concurrent: profile.concurrentRendering,
         exitOnCtrlC: false,
         incrementalRendering: true,
         maxFps: profile.maxFps,
         onRender: ({ renderTime }) => recordTuiRender(renderDiagnostics, renderTime),
         patchConsole: false,
+        ...(outputAdapter ? { stdout: outputAdapter as unknown as NodeJS.WriteStream } : {}),
         ...(kittySupported
           ? {
               kittyKeyboard: {
@@ -120,6 +126,7 @@ export async function runTuiSession(
     if (process.stdout.isTTY && profile.mouseTracking) {
       process.stdout.write(DISABLE_MOUSE_TRACKING);
     }
+    outputAdapter?.dispose();
     process.removeListener('SIGTERM', handleTerminate);
     process.removeListener('SIGINT', handleInterrupt);
     await controller.close();

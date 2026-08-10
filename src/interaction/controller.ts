@@ -249,31 +249,32 @@ export class InteractionController implements InteractionPort {
   async promptSessionStartup(signal: AbortSignal): Promise<void> {
     const session = this.commandRuntime.context.session;
     if (!session) return;
-    const latest = (await session.list()).find((candidate) => candidate.available);
+    const sessions = (await session.list()).filter(
+      (candidate) =>
+        candidate.available &&
+        candidate.sessionId !== this.commandRuntime.context.engine.getSessionId()
+    );
+    const latest = sessions[0];
     if (!latest) return;
+    const chinese = this.getSnapshot().language === 'zh-CN';
     const choice = await this.select(
       {
-        title: this.getSnapshot().language === 'zh-CN' ? '打开会话' : 'Open session',
-        message:
-          this.getSnapshot().language === 'zh-CN'
-            ? '当前文件夹存在已保存的对话。'
-            : 'A saved conversation exists for this workspace.',
+        title: chinese ? '打开会话' : 'Open session',
+        message: chinese
+          ? `当前工作区有 ${sessions.length} 个可恢复会话。`
+          : `${sessions.length} saved conversation(s) are available for this workspace.`,
         choices: [
-          {
-            value: latest.sessionId,
-            label:
-              this.getSnapshot().language === 'zh-CN'
-                ? `继续 ${latest.title}`
-                : `Continue ${latest.title}`,
-            description: `${latest.updatedAt} · ${latest.sessionId.slice(0, 8)}`
-          },
+          ...sessions.map((candidate, index) => ({
+            value: candidate.sessionId,
+            label: `${index === 0 ? (chinese ? '继续 ' : 'Continue ') : ''}${candidate.title}`,
+            description: `${candidate.updatedAt} | ${candidate.sessionId.slice(0, 8)}`
+          })),
           {
             value: 'new',
-            label: this.getSnapshot().language === 'zh-CN' ? '新建对话' : 'Start new',
-            description:
-              this.getSnapshot().language === 'zh-CN'
-                ? '保留已保存对话并开始空白会话'
-                : 'Keep the saved conversation and start empty'
+            label: chinese ? '新建对话' : 'Start new',
+            description: chinese
+              ? '保留所有已保存会话并开始空白会话'
+              : 'Keep every saved conversation and start empty'
           }
         ],
         initialValue: latest.sessionId
@@ -289,10 +290,9 @@ export class InteractionController implements InteractionPort {
     this.loadConversationSnapshot(session.engine);
     this.notice({
       tone: 'success',
-      text:
-        this.getSnapshot().language === 'zh-CN'
-          ? `已继续 ${result.title} [${result.sessionId.slice(0, 8)}]。`
-          : `Resumed ${result.title} [${result.sessionId.slice(0, 8)}].`
+      text: chinese
+        ? `已继续 ${result.title} [${result.sessionId.slice(0, 8)}]。`
+        : `Resumed ${result.title} [${result.sessionId.slice(0, 8)}].`
     });
   }
 
@@ -509,6 +509,71 @@ export class InteractionController implements InteractionPort {
           text: chinese
             ? `Skill ${event.skill} 激活失败（${event.code}）。`
             : `Skill ${event.skill} failed (${event.code}).`
+        });
+        return;
+      case 'rag_index_started':
+        if (this.activity && typeof this.activity !== 'string') {
+          this.activity = {
+            ...this.activity,
+            phase: 'rag',
+            detail: chinese ? `正在索引 ${event.collection}` : `Indexing ${event.collection}`
+          };
+        }
+        break;
+      case 'rag_index_progress':
+        if (this.activity && typeof this.activity !== 'string') {
+          this.activity = {
+            ...this.activity,
+            phase: 'rag',
+            detail: `${event.collection}: ${event.stage} ${event.completed}${event.total === undefined ? '' : `/${event.total}`}`
+          };
+        }
+        break;
+      case 'rag_retrieval_started':
+        if (this.activity && typeof this.activity !== 'string') {
+          this.activity = {
+            ...this.activity,
+            phase: 'rag',
+            detail: chinese ? '检索索引证据' : 'Retrieving indexed evidence'
+          };
+        }
+        break;
+      case 'rag_retrieval_completed':
+        if (this.activity && typeof this.activity !== 'string') {
+          this.activity = {
+            ...this.activity,
+            detail: chinese
+              ? `找到 ${event.resultCount} 条证据`
+              : `${event.resultCount} evidence results`
+          };
+        }
+        break;
+      case 'rag_verification_started':
+        if (this.activity && typeof this.activity !== 'string') {
+          this.activity = {
+            ...this.activity,
+            phase: 'rag',
+            detail: chinese ? '校验 RAG 引用' : 'Verifying RAG citations'
+          };
+        }
+        break;
+      case 'rag_verification_completed':
+        if (event.invalidCitationCount > 0 || event.outcome === 'unsupported') {
+          this.notice({
+            tone: 'warning',
+            text: chinese
+              ? `RAG 引用警告：${event.invalidCitationCount} 个无效引用，结论 ${event.outcome}`
+              : `RAG citation warning: ${event.invalidCitationCount} invalid, ${event.outcome}`
+          });
+          return;
+        }
+        break;
+      case 'rag_index_failed':
+      case 'rag_retrieval_failed':
+      case 'rag_verification_failed':
+        this.notice({
+          tone: 'warning',
+          text: `RAG ${event.type.replace(/^rag_|_failed$/g, '').replaceAll('_', ' ')} failed (${event.code})`
         });
         return;
       case 'retry_scheduled':

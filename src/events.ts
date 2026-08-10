@@ -19,6 +19,7 @@ export type AgentPhase =
   | 'compaction'
   | 'extension'
   | 'subagent'
+  | 'rag'
   | 'approval'
   | 'interaction'
   | 'tool'
@@ -103,7 +104,79 @@ export interface UsageUpdatedEvent extends AgentEventEnvelope {
   purpose?: ProviderPurpose;
 }
 
-export type ProviderPurpose = 'turn' | 'compaction' | 'subagent';
+export type ProviderPurpose = 'turn' | 'compaction' | 'subagent' | 'rag-verification';
+
+export interface RagIndexStartedEvent extends AgentEventEnvelope {
+  type: 'rag_index_started';
+  collection: string;
+  operation: 'index' | 'refresh';
+}
+
+export interface RagIndexProgressEvent extends AgentEventEnvelope {
+  type: 'rag_index_progress';
+  collection: string;
+  stage: 'scan' | 'chunk' | 'embed' | 'persist';
+  completed: number;
+  total?: number;
+}
+
+export interface RagIndexCompletedEvent extends AgentEventEnvelope {
+  type: 'rag_index_completed';
+  collection: string;
+  revision: string;
+  fileCount: number;
+  chunkCount: number;
+  vectorState: 'ready' | 'unconfigured' | 'unavailable' | 'error';
+  durationMs: number;
+}
+
+export interface RagIndexFailedEvent extends AgentEventEnvelope {
+  type: 'rag_index_failed';
+  collection: string;
+  operation: 'index' | 'refresh';
+  code: string;
+  durationMs: number;
+}
+
+export interface RagRetrievalStartedEvent extends AgentEventEnvelope {
+  type: 'rag_retrieval_started';
+  queryCount: number;
+  collectionCount: number;
+}
+
+export interface RagRetrievalCompletedEvent extends AgentEventEnvelope {
+  type: 'rag_retrieval_completed';
+  candidateCount: number;
+  resultCount: number;
+  channels: Array<'lexical' | 'vector' | 'rerank'>;
+  staleCollections: number;
+  durationMs: number;
+}
+
+export interface RagRetrievalFailedEvent extends AgentEventEnvelope {
+  type: 'rag_retrieval_failed';
+  code: string;
+  durationMs: number;
+}
+
+export interface RagVerificationStartedEvent extends AgentEventEnvelope {
+  type: 'rag_verification_started';
+  citationCount: number;
+}
+
+export interface RagVerificationCompletedEvent extends AgentEventEnvelope {
+  type: 'rag_verification_completed';
+  outcome: 'supported' | 'partial' | 'unsupported' | 'unverifiable';
+  citationCount: number;
+  invalidCitationCount: number;
+  durationMs: number;
+}
+
+export interface RagVerificationFailedEvent extends AgentEventEnvelope {
+  type: 'rag_verification_failed';
+  code: string;
+  durationMs: number;
+}
 
 export interface ContextUsageUpdatedEvent extends AgentEventEnvelope {
   type: 'context_usage_updated';
@@ -345,6 +418,16 @@ export type AgentEvent =
   | InstructionsLoadedEvent
   | SkillActivatedEvent
   | SkillFailedEvent
+  | RagIndexStartedEvent
+  | RagIndexProgressEvent
+  | RagIndexCompletedEvent
+  | RagIndexFailedEvent
+  | RagRetrievalStartedEvent
+  | RagRetrievalCompletedEvent
+  | RagRetrievalFailedEvent
+  | RagVerificationStartedEvent
+  | RagVerificationCompletedEvent
+  | RagVerificationFailedEvent
   | CompactionStartedEvent
   | CompactionCompletedEvent
   | CompactionFailedEvent
