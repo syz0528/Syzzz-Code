@@ -6,6 +6,12 @@
 
 `1.0.0` 汇总了 Phase 1 至 Phase 9.1 的可信 Agent CLI 改造，形成首个面向公开安装的稳定版本。
 
+### Release Verification
+
+- 发布源码提交为 `5a7db60`，annotated `v1.0.0` Tag 与 GitHub Release 均指向该提交。
+- npm 包启用 provenance；npm registry tarball、GitHub Release tarball 与 `SHA256SUMS` 校验一致。
+- 从干净环境安装 registry 包后，版本、帮助、doctor、NDJSON 与 OpenCode Responses 真实任务均通过。
+
 ### Added
 
 - Phase 9 工作区 RAG：版本化本地索引、词法/向量混合检索、RRF、可选 reranker、外部集合挂载、citation 校验、隔离验证和固定评测。

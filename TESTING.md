@@ -20,7 +20,9 @@ npm run check
 
 `npm run check` 是本地综合门槛；`smoke:package` 额外安装真实 tarball，耗时更长。Windows 进程、会话锁与 MCP 生命周期可用 `npm run test:stability` 连续执行三轮，任一轮失败都会立即终止。
 
-`1.0.0` 最终候选在 2026-08-10 的本地基线为：完整回归 398/398、TUI/Interaction 专项 51/51、离线 Agent Eval 12/12、离线 RAG Eval 通过，覆盖率 Lines 82.57% / Branches 75.60% / Functions 86.11%。生产依赖审计为 0 vulnerability，102 文件候选包和全新 prefix 安装 smoke 通过。[CI 31379235344](https://github.com/syz0528/Syzzz-Code/actions/runs/31379235344) 的 Windows/Ubuntu × Node 22/24 等 10 个作业全部通过。
+`1.0.0` 在 2026-08-10 的冻结基线为：完整回归 398/398、TUI/Interaction 专项 51/51、离线 Agent Eval 12/12、离线 RAG Eval 通过，覆盖率 Lines 82.57% / Branches 75.60% / Functions 86.11%。生产依赖审计为 0 vulnerability，102 文件发布包和全新 prefix 安装 smoke 通过。发布源码提交 `5a7db60` 的 [CI 31389385032](https://github.com/syz0528/Syzzz-Code/actions/runs/31389385032) 与 [CodeQL 31389386201](https://github.com/syz0528/Syzzz-Code/actions/runs/31389386201) 全绿，[正式发布工作流 31398653903](https://github.com/syz0528/Syzzz-Code/actions/runs/31398653903) 成功完成 npm provenance、Tag、GitHub Release 和发布凭证撤销。
+
+registry 复验从干净 prefix 安装 `syzzz-code@1.0.0`，确认 `syzzz --version`、`--help`、`doctor` 和逐行 NDJSON 正常；随后使用 OpenCode Responses Provider 完成真实文本任务并以退出码 0 结束。npm registry tarball、GitHub Release tarball 与 `SHA256SUMS` 的内容哈希一致。
 
 Phase 9 的 `npm run eval:rag:offline` 使用独立临时目录、Mock Embedding 和 Mock reranker 验证 10 个固定 case。门槛包括 evidence label resolution 100%、敏感文件负例、hybrid Recall@10/MRR@10 不低于 0.9，并要求 hybrid 至少改善一个 lexical 指标。报告只保存 case ID 和指标。
 
@@ -140,4 +142,4 @@ GitHub Actions 包含以下 required job 候选：
 - **Release Candidate Accepted**：产品所有者完成人工 dogfood。
 - **Frozen**：npm、annotated Tag、GitHub Release 和 registry 安装复验全部完成。
 
-在最后一级之前，不应在 README 或状态文档中宣称 `1.0.0` 已正式发布或整体 Frozen。
+`1.0.0` 已完成全部四级门槛，当前状态为 **Frozen**。后续提交不得移动或重写 `v1.0.0` Tag；任何新版本都必须重新执行对应发布门槛。

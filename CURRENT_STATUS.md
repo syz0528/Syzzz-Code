@@ -2,7 +2,7 @@
 
 **更新时间：** 2026-08-10
 
-**当前分支：** `codex/phase9-rag`
+**当前分支：** `main`
 
 **Phase 4 冻结基线：** `3d2b8e6`
 
@@ -24,13 +24,15 @@
 
 **Phase 9 起始基线：** `204fe5b`
 
-**当前阶段：** `1.0.0` 最终发布准备。Phase 9/9.1 的实现、本地人工验收、完整本地门槛和跨平台 CI 已经完成；发布前仍需完成 `main` 推进、公开仓库、npm、Tag、GitHub Release 和 registry 安装复验，因此尚未标记 **Frozen**。
+**`v1.0.0` 发布与 Phase 9 冻结基线：** `5a7db60`
+
+**当前阶段：** `syzzz-code@1.0.0` 已正式发布。公开仓库、npm provenance、annotated Tag、GitHub Release、registry 独立安装和真实 Provider smoke 均已通过；Phase 1 至 Phase 9.1 统一标记为 **Frozen**。
 
 ## 1. 当前结论
 
 Phase 9 已完成独立 `RagRuntime`、版本化本地索引、MiniSearch 词法检索、LanceDB 向量降级后端、OpenAI-compatible Embedding、Jina-compatible reranker、RRF 多查询融合、外部集合挂载、渐进式 `RagSearch/RagRead`、确定性 citation 校验与隔离 `RagVerify`。Phase 9.1 进一步加入用户级受管理 `library`、`rag add` 文档导入、经审批的 `SaveKnowledge`、自动/待授权索引刷新，以及会话恢复时的 RAG receipt 复核。默认不自动索引工作区、不发送远程文件、不开启自动预检索；索引和个人库正文保存在本地且不加密。
 
-固定离线 RAG Eval 使用 10 个 case 和 9 个 evidence label，结果为 label resolution 100%、lexical Recall@10/MRR@10 `1.00/0.95`、hybrid `1.00/1.00`，敏感文件负例通过。`JustStudy` 真实外部语料按数据集声明的 15 个 profile 文件隔离评测，22/22 evidence labels 可解析，lexical Recall@10/MRR@10 为 `0.90/0.82`，高于历史 `0.667/0.541` 与计划门槛。当前本地门槛为 398/398、TUI 51/51、coverage `82.57%/75.60%/86.11%`、生产审计 0 vulnerability，102 文件候选包与全新 prefix smoke 通过；[CI 31379235344](https://github.com/syz0528/Syzzz-Code/actions/runs/31379235344) 的 Windows/Ubuntu × Node 22/24 等 10 个作业全部通过。正式 registry 安装仍待发布流程验证，因此不得标记 Frozen。
+固定离线 RAG Eval 使用 10 个 case 和 9 个 evidence label，结果为 label resolution 100%、lexical Recall@10/MRR@10 `1.00/0.95`、hybrid `1.00/1.00`，敏感文件负例通过。`JustStudy` 真实外部语料按数据集声明的 15 个 profile 文件隔离评测，22/22 evidence labels 可解析，lexical Recall@10/MRR@10 为 `0.90/0.82`，高于历史 `0.667/0.541` 与计划门槛。最终本地门槛为 398/398、TUI 51/51、coverage `82.57%/75.60%/86.11%`、生产审计 0 vulnerability，102 文件发布包与全新 prefix smoke 通过；发布提交的 [CI 31389385032](https://github.com/syz0528/Syzzz-Code/actions/runs/31389385032) 和 [CodeQL 31389386201](https://github.com/syz0528/Syzzz-Code/actions/runs/31389386201) 全绿，[正式发布工作流 31398653903](https://github.com/syz0528/Syzzz-Code/actions/runs/31398653903) 成功完成 npm、provenance、Tag、Release 与凭证撤销。
 
 Phase 5.0 Core 已完成“可信扩展运行时、MCP Broker 与受限委派”的主体：
 
@@ -57,9 +59,9 @@ Phase 6 不增加 Agent 自治能力，当前改造集中在：
 - npm tarball allowlist、全新 prefix 安装、配置迁移、文本与 NDJSON smoke；
 - Apache-2.0、架构/测试/变更日志以及人工门控发布工作流。
 
-Phase 6 建立的发布工程基线已经通过本地自动化、真实 DeepSeek/OpenCode Live Eval、候选 tarball、GitHub 跨平台 CI 和人工 dogfood。Live Eval 完成全部七项隔离任务，结果为 7/7、功能成功率 100%、安全项通过且无基础设施错误；提交 `014e182` 的 CI 共 10 个 job 全绿，覆盖 Windows/Ubuntu 与 Node 22/24。该阶段的旧 **Release Candidate Accepted** 是历史里程碑，现已由包含 Phase 7 至 Phase 9.1 的 `1.0.0` 最终候选整体接替，不再作为独立发布状态推进。
+Phase 6 建立的发布工程基线已经通过本地自动化、真实 DeepSeek/OpenCode Live Eval、候选 tarball、GitHub 跨平台 CI 和人工 dogfood。Live Eval 完成全部七项隔离任务，结果为 7/7、功能成功率 100%、安全项通过且无基础设施错误；提交 `014e182` 的 CI 共 10 个 job 全绿，覆盖 Windows/Ubuntu 与 Node 22/24。该阶段的旧 **Release Candidate Accepted** 是历史里程碑，现已由包含 Phase 7 至 Phase 9.1 的正式 `1.0.0` 发布整体接替，不再作为独立发布状态推进。
 
-完整 Phase 2–6 历史已于 2026-07-31 fast-forward 到远程 `main`；当前 Phase 7 至 Phase 9.1 历史仍位于开发分支。仓库继续保持 Private；公开前将先把最终候选以 fast-forward 推进到 `main`，再启用可用的 required checks、Secret Scanning、Push Protection、Dependabot 和 CodeQL 设置。
+Phase 1 至 Phase 9.1 的完整历史已 fast-forward 到远程 `main`，未 squash 或改写历史。仓库已公开，并启用 Dependabot、自动安全修复、Private Vulnerability Reporting、Secret Scanning、Push Protection 与 CodeQL；`v1.0.0` Tag 保持指向实际发布源码提交 `5a7db60`。
 
 Phase 7 从 `161391a` 新建 `codex/phase7-task-composition`，聚焦无权限的任务组合层：
 
@@ -260,7 +262,8 @@ subagents.enabled = true
 - `npm run smoke:package`：真实 tarball 在全新 prefix 中完成全局 CLI、配置迁移、文本、NDJSON 与 doctor 验证
 - 当前 DeepSeek/OpenCode Live Eval：**7/7**，功能成功率 100%，安全项通过，0 个基础设施错误
 - OpenCode Responses 真实 smoke：文本流、function call、私有 output items 续接与最终回答往返通过
-- Phase 8 冻结提交的 GitHub Actions 在 Windows/Ubuntu × Node 22/24 等 10 个作业全部通过；Phase 9 最终提交仍需重新运行同一矩阵
+- 发布提交的 GitHub Actions 在 Windows/Ubuntu × Node 22/24 等 10 个作业全部通过，CodeQL 与人工门控发布工作流同样通过
+- 从 npm registry 安装 `syzzz-code@1.0.0` 后，`--version`、`--help`、`doctor` 和 OpenCode Responses 真实任务均通过
 
 ## 8. 已知边界
 
@@ -275,11 +278,11 @@ subagents.enabled = true
 - Skill 不支持私有 Git 凭证、市场、自动更新、安装后自动执行或 `allowed-tools` 授权。
 - 当前 TUI 的鼠标交互覆盖滚轮、可拖动滚动条、正文拖选复制和 sticky 问题，不支持通用点击控件、主题/插件系统、交互式 Shell、后台任务或 LSP。
 - RAG 提供本地持久化索引，但暂不支持云端 RAG、PDF/Office/图片摄取、网页抓取、跨设备同步或任意历史 as-of 查询。
-- Tag 与 npm 发布仍未进行。
+- 首发使用的 Granular Access Token 已撤销，并已从 GitHub Environment 与本地 npm 配置中移除；后续发布仍需重新建立短期凭证或迁移到 npm Trusted Publishing。
 
 ## 9. Git 状态
 
-- 当前分支：`codex/phase9-rag`
+- 当前分支：`main`
 - Phase 4 冻结提交：`3d2b8e6`
 - Phase 5.0 Core 非冻结检查点：`000bcaa`
 - Phase 5.1 实现验证基线：`85b2558`
@@ -293,10 +296,11 @@ subagents.enabled = true
 - Phase 7/7.1 冻结提交：`465f0bf`
 - Phase 8 TUI Spike：`64ecaf2`
 - Phase 8 冻结提交：`204fe5b`
-- 版本号保持 `1.0.0`
-- 未发布 npm 包，未创建 Tag
-- 远程 `main` 当前仍停留在 Phase 6 发布工程基线，Phase 7 至 Phase 9.1 尚未推进
-- GitHub 仓库仍为 Private；尚未创建 `npm-release` Environment
+- Phase 9 与 `1.0.0` 发布源码提交：`5a7db60`
+- npm：[`syzzz-code@1.0.0`](https://www.npmjs.com/package/syzzz-code/v/1.0.0)
+- annotated Tag 与 GitHub Release：[`v1.0.0`](https://github.com/syz0528/Syzzz-Code/releases/tag/v1.0.0)
+- `main` 已包含 Phase 1 至 Phase 9.1 完整历史；发布后的文档提交可以继续推进 `main`，但不会移动不可变的 `v1.0.0` Tag
+- GitHub 仓库已公开，`npm-release` Environment 保留且当前不保存发布 Token
 
 ## 10. 冻结条件
 
@@ -309,4 +313,4 @@ Phase 6 使用四级状态：
 3. 用户完成人工 dogfood：**Release Candidate Accepted**。
 4. npm、annotated `v1.0.0` Tag、GitHub Release 和 registry 安装验证完成：**Frozen**。
 
-Phase 6 的发布工程能力已经并入当前 `1.0.0` 最终候选，不再保留一个与现状分离的 RC。Phase 7、Phase 7.1 与 Phase 8 的本地测试、覆盖率、审计、离线 Eval、包检查、tarball smoke、用户 dogfood 和 Windows/Ubuntu Node 22/24 CI 已全部通过并标记为 **Frozen**。Phase 9/9.1 已完成本地实现、固定评测、人工验收与跨平台 CI，待正式发布链路完成后统一冻结。OpenAI Responses 协议与显式 Provider 路由已经实现，并通过离线契约及 OpenCode Luna 真实文本与 function call smoke。Anthropic 真流式、MCP OAuth、云端 RAG、LSP、并行或写入型 Subagent 继续留在后续独立阶段评估。
+Phase 6 的发布工程能力已经由正式 `1.0.0` 发布完成闭环并标记为 **Frozen**。Phase 7、Phase 7.1、Phase 8 与 Phase 9/9.1 的本地测试、覆盖率、审计、离线 Eval、包检查、tarball smoke、用户 dogfood、跨平台 CI 和 registry 安装复验均已通过，统一标记为 **Frozen**。OpenAI Responses 协议与显式 Provider 路由已经实现，并通过离线契约及 OpenCode Luna 真实文本与 function call smoke。Anthropic 真流式、MCP OAuth、云端 RAG、LSP、并行或写入型 Subagent 继续留在后续独立阶段评估。

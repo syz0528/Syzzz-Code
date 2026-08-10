@@ -2,8 +2,8 @@
 
 **制定日期：** 2026-06-16
 **最近更新：** 2026-08-10
-**适用基线：** `1.0.0` / Phase 9 最终候选
-**当前入口：** Phase 9/9.1 已完成本地实现与人工验收，项目正在执行 `1.0.0` 最终发布门禁；Phase 7、Phase 7.1 与 Phase 8 已标记 **Frozen**
+**适用基线：** `v1.0.0` / Phase 9.1 Frozen
+**当前入口：** `syzzz-code@1.0.0` 已正式发布；Phase 1 至 Phase 9.1 已统一标记 **Frozen**，后续进入基于真实使用反馈的 `v1.x` 小步维护
 
 > 路线图描述实施顺序和验收边界。当前代码事实以 [`README.md`](README.md) 和 [`CURRENT_STATUS.md`](CURRENT_STATUS.md) 为准。
 
@@ -176,8 +176,8 @@ Phase 9  可信工作区 RAG、混合检索与证据闭环
 - [x] 创建 `ROADMAP.md`；
 - [x] 用户审阅当前三份活跃文档；
 - [x] 提交并推送文档；
-- [ ] 创建 annotated `v1.0.0` Git Tag；
-- [ ] 确认远程 `main` 和 `v1.0.0` 指向同一文档基线提交。
+- [x] 创建 annotated `v1.0.0` Git Tag；
+- [x] 确认发布时远程 `main` 和 `v1.0.0` 指向同一源码基线提交。
 
 ### 退出条件
 
@@ -739,7 +739,7 @@ RepoMap 按需调用，不自动注入每个 prompt。
 - [x] 扫描当前跟踪树和完整可达 Git 历史中的高置信凭证模式；
 - [x] GitHub Actions 在远程仓库实际运行并全部通过：提交 `014e182` 的 10 个 job 覆盖 Windows/Ubuntu × Node 22/24、quality、Provider contracts、offline Eval、package smoke 与 security；
 - [x] 在私有仓库阶段启用 Dependabot vulnerability alerts、自动安全修复和 npm/Actions 分组更新；
-- [ ] 仓库公开后启用 Secret Scanning、Push Protection、CodeQL 安全事件与 required checks；个人 GitHub Free 不向私有仓库提供这些保护。
+- [x] 仓库公开后启用 Secret Scanning、Push Protection、CodeQL 安全事件与可用的安全检查。
 
 ### 11.4 Phase 6.3：文档与人工发布
 
@@ -749,8 +749,8 @@ RepoMap 按需调用，不自动注入每个 prompt。
 - [x] 发布后创建 annotated Tag、GitHub Release、SHA-256 与脱敏 Eval 摘要；
 - [x] 完成 Windows Node 22/24 候选包与完整能力 dogfood；
 - [x] 将完整 Phase 2–6 历史 fast-forward 到 `main`；
-- [ ] 确认 npm 名称/版本、使用一次性最小权限 token 发布并立即撤销；
-- [ ] 从 npm registry 安装 `syzzz-code@1.0.0` 并复验。
+- [x] 确认 npm 名称/版本、使用短期 Granular Access Token 发布并立即撤销；
+- [x] 从 npm registry 安装 `syzzz-code@1.0.0` 并复验版本、帮助、doctor 与真实 Provider 任务。
 
 ### Phase 6 状态门槛
 
@@ -759,7 +759,7 @@ RepoMap 按需调用，不自动注入每个 prompt。
 - **Release Candidate Accepted**：用户完成人工 dogfood。
 - **Frozen**：npm、Tag、GitHub Release 与 registry 安装复验完成。
 
-在最后一级之前，不得把 Phase 6 标记为 Frozen。
+四级门槛均已通过，Phase 6 现为 **Frozen**。
 
 ## 12. Phase 7：显式上下文、开放 Skills 与项目指令
 
@@ -869,7 +869,7 @@ Phase 7.1 冻结基线为 319/319、coverage 82.34%/75.91%/86.41%、offline Eval
 
 **基线：** Phase 8 Frozen `204fe5b`。
 
-**当前状态：** 本地实现、固定评测、人工验收与 Windows/Ubuntu × Node 22/24 CI 已通过；等待正式发布链路验证。
+**当前状态：** 本地实现、固定评测、人工验收、Windows/Ubuntu × Node 22/24 CI、npm、Tag、GitHub Release 与 registry 安装复验均已通过，状态为 **Frozen**。
 
 - [x] 独立 `RagRuntime`、原子 revision、当前/上一版恢复与 lexical-only 降级；
 - [x] Markdown breadcrumb、代码顶层符号、中文 CJK bigram 与稳定 chunk ID；
@@ -886,9 +886,9 @@ Phase 7.1 冻结基线为 319/319、coverage 82.34%/75.91%/86.41%、offline Eval
 - [x] `SaveKnowledge` 的 code 模式、写入审批、证据 receipt 与副作用检查点；
 - [x] 会话快照兼容保存 RAG receipt，并在恢复后验证 revision、hash 与行范围；
 - [x] audit、license、Secret 扫描、102 文件候选包和 tarball smoke；
-- [x] Windows/Ubuntu Node 22/24 CI（[31379235344](https://github.com/syz0528/Syzzz-Code/actions/runs/31379235344)）；
+- [x] Windows/Ubuntu Node 22/24 CI（[31389385032](https://github.com/syz0528/Syzzz-Code/actions/runs/31389385032)）与 CodeQL（[31389386201](https://github.com/syz0528/Syzzz-Code/actions/runs/31389386201)）；
 - [x] 用户完成工作区、知识写入、检索、会话与 TUI 交互 dogfood，并批准进入正式发布；
-- [ ] 当前提交的跨平台 CI、npm、Tag、GitHub Release 与 registry 安装复验通过后标记 Frozen。
+- [x] npm、provenance、annotated Tag、GitHub Release 与 registry 安装复验通过并标记 Frozen。
 
 本阶段不实现 PDF、Office、图片、网页抓取、知识图谱、云向量库、LSP、后台 Agent 或第二套生成 Runtime。
 
@@ -959,16 +959,16 @@ Phase 9.2 作为后续独立阶段保留，不能被当前本地能力的完成�
 - [x] 完成 Phase 7.1 Skills 产品化与本地自动门禁。
 - [x] 新增 OpenAI Responses Provider、无状态工具续接和显式 Provider 协议路由。
 
-### 1.0.0 发布待验收
+### 1.0.0 发布完成
 
 - [x] 完整本地自动化通过并标记 Implemented；
 - [x] Windows/Linux CI 和候选包通过并标记 Validated；
 - [x] 用户完成 RC dogfood 并标记 Release Candidate Accepted；
 - [x] Phase 6 历史候选曾 fast-forward 到 `main`；
-- [ ] 将 Phase 7 至 Phase 9.1 最终候选 fast-forward 到 `main`；
-- [ ] 将 GitHub 仓库设为公开并启用可用的安全设置；
-- [ ] 发布 npm、annotated Tag 和 GitHub Release；
-- [ ] registry 安装复验后标记 Frozen。
+- [x] 将 Phase 7 至 Phase 9.1 最终候选 fast-forward 到 `main`；
+- [x] 将 GitHub 仓库设为公开并启用可用的安全设置；
+- [x] 发布 npm、annotated Tag 和 GitHub Release；
+- [x] registry 安装复验后标记 Frozen。
 
 ### Phase 7 验收
 
@@ -980,7 +980,7 @@ Phase 9.2 作为后续独立阶段保留，不能被当前本地能力的完成�
 
 ### 当前入口
 
-Phase 6 建立的发布工程基线已经并入当前 `1.0.0` 最终候选。Phase 7、Phase 7.1 与 Phase 8 已冻结，Phase 9/9.1 已完成本地实现、人工验收和跨平台 CI；下一步按顺序完成 `main` 推进、仓库公开、npm、Tag、GitHub Release 与 registry 安装复验。
+`syzzz-code@1.0.0` 已在公开仓库和 npm 正式发布，Phase 1 至 Phase 9.1 均已冻结。下一步以真实用户反馈为依据进入 `v1.x` 维护；Phase 9.2 云端 RAG、Anthropic 真流式、MCP OAuth、LSP 与更强 Subagent 仍需分别立项，不自动进入当前版本。
 
 ## 16. 路线图完成标准
 
