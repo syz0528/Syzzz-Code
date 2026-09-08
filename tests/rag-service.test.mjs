@@ -204,8 +204,8 @@ test('Engine completes remote search/read/citation and exports recoverable recei
   await fixture(async ({ runtime }) => {
     let step = 0;
     const provider = {
-      getInfo: () => ({ name: 'Mock', type: 'mock', model: 'mock' }),
-      async chat() {
+      getInfo: () => ({ name: 'Mock', type: 'mock', model: 'mock', contextWindowTokens: 16_384 }),
+      async chat(request) {
         step += 1;
         if (step <= 2)
           return {
@@ -224,6 +224,15 @@ test('Engine completes remote search/read/citation and exports recoverable recei
               ]
             }
           };
+        assert.equal(request.maxOutputTokens, 128);
+        assert.ok(
+          request.messages.some(
+            (message) =>
+              message.role === 'tool' &&
+              message.toolName === 'RagRead' &&
+              message.content.includes(chunk.text)
+          )
+        );
         return {
           message: {
             role: 'assistant',
@@ -253,9 +262,24 @@ test('Engine completes remote search/read/citation and exports recoverable recei
     }
     assert.match(response, /Use TestClient/);
     assert.ok(events.some((event) => event.type === 'rag_retrieval_completed'));
+    const estimates = events.filter(
+      (event) => event.type === 'context_usage_updated' && event.source === 'estimated'
+    );
+    assert.equal(estimates[0].triggerTokens, 12_288);
+    assert.equal(estimates.at(-1).triggerTokens, 13_926);
+    const lastRequest = engine.getStatus().context.lastRequest;
+    assert.deepEqual(lastRequest, {
+      estimatedInputTokens: estimates.at(-1).inputTokens,
+      contextWindowTokens: 16_384,
+      triggerTokens: 13_926
+    });
+    lastRequest.triggerTokens = 0;
+    assert.equal(engine.getStatus().context.lastRequest.triggerTokens, 13_926);
     const state = engine.exportState();
+    assert.equal('lastContextRequest' in state, false);
     assert.equal(state.ragContextReceipts[0].serviceId, 'server1');
     engine.restoreState(state);
+    assert.equal(engine.getStatus().context.lastRequest, undefined);
     assert.equal(engine.exportState().ragContextReceipts[0].serviceId, 'server1');
   });
 });

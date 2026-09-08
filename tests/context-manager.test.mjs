@@ -73,6 +73,22 @@ test('small model windows scale the output reserve without changing large-window
   assert.equal(large.triggerTokens, Math.floor(65_536 * 0.85));
 });
 
+test('a known request output cap changes the reserve, not the model window or safety ratio', () => {
+  const manager = new ContextManager();
+  const info = { ...providerInfo, contextWindowTokens: 16_384 };
+  const ordinary = manager.measure([], 'system', [], info);
+  const shortAnswer = manager.measure([], 'system', [], info, 128);
+  assert.equal(ordinary.triggerTokens, 12_288);
+  assert.equal(shortAnswer.contextWindowTokens, 16_384);
+  assert.equal(shortAnswer.triggerTokens, Math.floor(16_384 * 0.85));
+  assert.equal(manager.measure([], 'system', [], info, 8192).triggerTokens, 8192);
+  const messages = [{ role: 'user', content: 'x'.repeat(22_000) }];
+  assert.ok(
+    manager.toolResultBudgetBytes(messages, 'system', [], info, 'r', 'RagRead', 128) >
+      manager.toolResultBudgetBytes(messages, 'system', [], info, 'r', 'RagRead')
+  );
+});
+
 test('small model windows can compact useful history below the large-window minimum', () => {
   const manager = new ContextManager({ defaultWindowTokens: 16_384 });
   const info = { ...providerInfo, contextWindowTokens: 16_384 };

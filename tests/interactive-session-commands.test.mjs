@@ -44,7 +44,8 @@ test('interactive session lifecycle commands remain local and compose', () => {
               contextWindowTokens: 65536,
               triggerTokens: 55705,
               compactions: 1,
-              compactionCircuitOpen: false
+              compactionCircuitOpen: false,
+              lastRequest: { estimatedInputTokens: 13164, triggerTokens: 13926, contextWindowTokens: 16384 }
             }
           };
         },
@@ -181,8 +182,27 @@ test('interactive session lifecycle commands remain local and compose', () => {
   assert.match(result.stdout, /MARK:new:Fresh/);
   assert.match(result.stdout, /MARK:resume:dddddddd/);
   assert.match(result.stdout, /Work mode:\s+plan/);
+  assert.match(
+    result.stdout,
+    /Last request:\s+13164 \/ 13926 tokens \(estimated \/ safe input limit\); model window 16384/
+  );
   assert.match(result.stdout, /MARK:close/);
   assert.doesNotMatch(result.stdout, /HANDLED:.*\//);
+  const chinese = spawnSync(
+    process.execPath,
+    ['--input-type=module', '--eval', script.replace("uiLanguage: 'en'", "uiLanguage: 'zh-CN'")],
+    {
+      cwd: projectDirectory,
+      encoding: 'utf8',
+      input: '/status\n/exit\n',
+      timeout: 5_000
+    }
+  );
+  assert.equal(chinese.status, 0, chinese.stderr || chinese.error?.message);
+  assert.match(
+    chinese.stdout,
+    /上次完整请求：13164 \/ 13926 tokens（估算 \/ 安全输入上限）; 模型窗口 16384/
+  );
 });
 
 test('autosave-off session switching requires explicit discard confirmation', () => {

@@ -88,6 +88,7 @@ import {
 
 const DEFAULT_MAX_TOOL_ROUNDS = 10;
 const MAX_COMPACTIONS_PER_PROVIDER_CALL = 3;
+const RAG_ANSWER_MAX_OUTPUT_TOKENS = 128;
 
 const COMPACTION_SYSTEM_PROMPT = [
   'Compress the supplied conversation transcript into a concise continuation summary.',
@@ -482,6 +483,10 @@ export interface EngineStatus {
     triggerTokens: number;
     compactions: number;
     compactionCircuitOpen: boolean;
+    lastRequest?: Pick<
+      ContextMeasurement,
+      'estimatedInputTokens' | 'triggerTokens' | 'contextWindowTokens'
+    >;
   };
 }
 
@@ -575,6 +580,7 @@ export class QueryEngine {
   private now: () => number;
   private audit?: AgentEventSink;
   private contextManager: ContextManager;
+  private lastContextRequest?: EngineStatus['context']['lastRequest'];
   private pendingCompactionReason?: CompactionReason;
   private pendingFileChangeReceipts: FileChangeReceipt[] = [];
   private activeFileChangeReceipts: FileChangeReceipt[] = [];
@@ -736,6 +742,7 @@ export class QueryEngine {
       throw new Error('Context window must be an integer between 16384 and 2000000');
     }
     this.contextManager.setDefaultWindowTokens(tokens);
+    this.lastContextRequest = undefined;
   }
 
   getMode(): AgentMode {
@@ -747,6 +754,7 @@ export class QueryEngine {
       throw new Error('Cannot switch work modes while a turn is processing');
     }
     this.mode = mode;
+    this.lastContextRequest = undefined;
   }
 
   getSessionId(): string {
@@ -798,6 +806,7 @@ export class QueryEngine {
     }
 
     this.provider.setModel(model);
+    this.lastContextRequest = undefined;
     this.pendingCompactionReason = 'model_switch';
     this.messages = portableMessages(this.messages);
   }
@@ -807,6 +816,7 @@ export class QueryEngine {
       throw new Error('Cannot switch providers while a turn is processing');
     }
     this.provider = provider;
+    this.lastContextRequest = undefined;
     this.extensions?.setSubagentsAvailable?.(Boolean(provider.fork));
     this.pendingCompactionReason = 'model_switch';
     this.messages = portableMessages(this.messages);
@@ -911,7 +921,8 @@ export class QueryEngine {
         contextWindowTokens: measurement.contextWindowTokens,
         triggerTokens: measurement.triggerTokens,
         compactions: this.contextManager.compactions,
-        compactionCircuitOpen: this.contextManager.circuitOpen
+        compactionCircuitOpen: this.contextManager.circuitOpen,
+        ...(this.lastContextRequest ? { lastRequest: { ...this.lastContextRequest } } : {})
       }
     };
   }
@@ -938,6 +949,7 @@ export class QueryEngine {
       throw new Error('Cannot restore engine state while a turn is processing');
     }
     validateEngineState(state);
+    this.lastContextRequest = undefined;
     this.messages = structuredClone(portableMessages(state.messages));
     this.displayMessages = structuredClone(
       state.displayMessages ?? this.deriveDisplayMessages(state.messages)
@@ -1264,7 +1276,8 @@ export class QueryEngine {
     force: boolean,
     cumulativeUsage: ProviderUsage | undefined,
     providerCallBudget?: ProviderCallBudget,
-    prefixMessages: readonly ConversationMessage[] = []
+    prefixMessages: readonly ConversationMessage[] = [],
+    maximumOutputTokens?: number
   ): AsyncGenerator<AgentEventData, ContextPreparationResult> {
     let workingMessages = messages;
     let usage = cumulativeUsage;
@@ -1272,8 +1285,14 @@ export class QueryEngine {
       [...prefixMessages, ...workingMessages],
       systemPrompt,
       tools,
-      this.getProviderInfo()
+      this.getProviderInfo(),
+      maximumOutputTokens
     );
+    this.lastContextRequest = {
+      estimatedInputTokens: measurement.estimatedInputTokens,
+      triggerTokens: measurement.triggerTokens,
+      contextWindowTokens: measurement.contextWindowTokens
+    };
     let compactions = 0;
     let targetingCompactionGoal = false;
     const enforceSafeThreshold = force || this.contextManager.autoCompact;
@@ -1331,7 +1350,11 @@ export class QueryEngine {
           return { messages: workingMessages, usage, measurement, compactions };
         }
         const error = new ContextCompactionError(
-          'The context is too large, but no safely compactable message group is available'
+          'The context is too large, but no safely compactable message group is available. ' +
+            `Estimated request: ${measurement.estimatedInputTokens} tokens; ` +
+            `safe input limit: ${measurement.triggerTokens}; model window: ${measurement.contextWindowTokens}. ` +
+            'The request includes tool definitions and active instructions, not only saved conversation text. ' +
+            'Narrow tool results or use ask mode for read-only questions.'
         );
         yield {
           type: 'compaction_failed',
@@ -1472,8 +1495,14 @@ export class QueryEngine {
           [...prefixMessages, ...workingMessages],
           systemPrompt,
           tools,
-          this.getProviderInfo()
+          this.getProviderInfo(),
+          maximumOutputTokens
         );
+        this.lastContextRequest = {
+          estimatedInputTokens: measurement.estimatedInputTokens,
+          triggerTokens: measurement.triggerTokens,
+          contextWindowTokens: measurement.contextWindowTokens
+        };
         const durationMs = Math.max(0, this.now() - startedAt);
         yield {
           type: 'compaction_completed',
@@ -1703,6 +1732,7 @@ export class QueryEngine {
         { role: 'user', content: composedUserMessage }
       ];
       const responseParts: string[] = [];
+      const pendingToolResults = new Set<ToolResultMessage>();
       const providerTools = this.getProviderTools(Boolean(options.requestUserInput));
       const confirmedFileSideEffects = new Set<string>();
       let ragSearchSucceeded = false;
@@ -1810,6 +1840,28 @@ export class QueryEngine {
         }
         const systemPrompt = this.getSystemPrompt(runtimeInstructions);
         const providerToolsForRound = finalizationReason ? [] : providerTools;
+        const maximumOutputTokens =
+          this.activeRagContextReceipts.length > 0 ? RAG_ANSWER_MAX_OUTPUT_TOKENS : undefined;
+        // Successful tools can add RAG rules or nested instructions after the initial output cap.
+        // Rebudget only fresh tool results against the exact next request, preserving call/result pairs.
+        for (const message of pendingToolResults) {
+          const resultBudget = this.contextManager.toolResultBudgetBytes(
+            [...currentPrefixMessages, ...workingMessages.filter((item) => item !== message)],
+            systemPrompt,
+            providerToolsForRound,
+            this.getProviderInfo(),
+            message.toolCallId,
+            message.toolName,
+            maximumOutputTokens
+          );
+          message.content = this.contextManager.limitToolResult(
+            message.toolName,
+            message.content,
+            Boolean(message.isError),
+            resultBudget
+          ).content;
+        }
+        pendingToolResults.clear();
         const preparation = this.prepareContextBudget(
           workingMessages,
           systemPrompt,
@@ -1820,7 +1872,8 @@ export class QueryEngine {
           false,
           cumulativeUsage,
           providerCallBudget,
-          currentPrefixMessages
+          currentPrefixMessages,
+          maximumOutputTokens
         );
         let preparationCompleted = false;
         try {
@@ -1863,8 +1916,8 @@ export class QueryEngine {
               messages: [...currentPrefixMessages, ...workingMessages],
               tools: providerToolsForRound,
               systemPrompt,
-              ...(this.activeRagContextReceipts.length > 0
-                ? { maxOutputTokens: 128, stopSequences: ['\n\n'] }
+              ...(maximumOutputTokens !== undefined
+                ? { maxOutputTokens: maximumOutputTokens, stopSequences: ['\n\n'] }
                 : {}),
               signal
             },
@@ -1911,7 +1964,8 @@ export class QueryEngine {
                 true,
                 cumulativeUsage,
                 providerCallBudget,
-                currentPrefixMessages
+                currentPrefixMessages,
+                maximumOutputTokens
               );
               let forcedPreparationCompleted = false;
               try {
@@ -2333,7 +2387,10 @@ export class QueryEngine {
             providerTools,
             this.getProviderInfo(),
             toolCall.id,
-            toolCall.name
+            toolCall.name,
+            this.activeRagContextReceipts.length > 0 || (this.rag && toolCall.name === 'RagRead')
+              ? RAG_ANSWER_MAX_OUTPUT_TOKENS
+              : undefined
           );
           const toolRun = this.executeToolCall(
             turnId,
@@ -2357,6 +2414,7 @@ export class QueryEngine {
                 toolRunCompleted = true;
                 toolResultMessage = next.value;
                 workingMessages.push(toolResultMessage);
+                pendingToolResults.add(toolResultMessage);
                 break;
               }
               if (next.value.type === 'tool_completed') {
@@ -3912,6 +3970,7 @@ export class QueryEngine {
   }
 
   clearMessages(): void {
+    this.lastContextRequest = undefined;
     this.messages = [];
     this.displayMessages = [];
     this.pendingFileChangeReceipts = [];

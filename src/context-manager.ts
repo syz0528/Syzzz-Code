@@ -335,17 +335,19 @@ export class ContextManager {
     messages: readonly ConversationMessage[],
     systemPrompt: string,
     tools: readonly ProviderTool[],
-    providerInfo: ProviderInfo
+    providerInfo: ProviderInfo,
+    maximumOutputTokens?: number
   ): ContextMeasurement {
     const contextWindowTokens = this.contextWindowTokens(providerInfo);
     const messageTokens = estimateMessagesTokens(messages);
     const fixedTokens =
       estimateUtf8Tokens(systemPrompt) + estimateUtf8Tokens(JSON.stringify(tools)) + 64;
     const estimatedInputTokens = fixedTokens + messageTokens;
-    const reservedOutputTokens = Math.min(
+    const defaultReserve = Math.min(
       this.options.reservedOutputTokens,
       Math.max(1, Math.floor(contextWindowTokens * MAX_RESERVED_OUTPUT_RATIO))
     );
+    const reservedOutputTokens = positiveInteger(maximumOutputTokens, defaultReserve);
     const triggerTokens = Math.max(
       1,
       Math.min(
@@ -484,9 +486,16 @@ export class ContextManager {
     tools: readonly ProviderTool[],
     providerInfo: ProviderInfo,
     toolCallId: string,
-    toolName: string
+    toolName: string,
+    maximumOutputTokens?: number
   ): number {
-    const measurement = this.measure(messages, systemPrompt, tools, providerInfo);
+    const measurement = this.measure(
+      messages,
+      systemPrompt,
+      tools,
+      providerInfo,
+      maximumOutputTokens
+    );
     const emptyToolResultTokens = estimateMessageTokens({
       role: 'tool',
       toolCallId,

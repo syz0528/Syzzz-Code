@@ -642,6 +642,8 @@ function formatStatus(context: InteractiveCommandContext): string {
   const extensions = (status as { extensions?: typeof status.extensions }).extensions;
   const composition = (status as { composition?: typeof status.composition }).composition;
   const rag = status.rag;
+  const lastRequest = status.context.lastRequest;
+  const chinese = resolveUiLanguage(context.uiLanguage) === 'zh-CN';
   const contextPercent =
     status.context.contextWindowTokens > 0
       ? Math.min(
@@ -663,6 +665,13 @@ function formatStatus(context: InteractiveCommandContext): string {
       `${sessionStatus ? ` (${sessionStatus.permissionScope})` : ''}`,
     `  Context:      ${status.context.estimatedInputTokens} / ` +
       `${status.context.contextWindowTokens} tokens (${contextPercent}%)`,
+    ...(lastRequest
+      ? [
+          `  Last request: ${lastRequest.estimatedInputTokens} / ${lastRequest.triggerTokens} ` +
+            (chinese ? 'tokens（估算 / 安全输入上限）' : 'tokens (estimated / safe input limit)') +
+            `; ${chinese ? '模型窗口' : 'model window'} ${lastRequest.contextWindowTokens}`
+        ]
+      : []),
     `  Compactions:  ${status.context.compactions}`,
     `  Usage:        ${status.totalUsage.inputTokens} in / ` +
       `${status.totalUsage.outputTokens} out`,
@@ -738,6 +747,7 @@ function formatStatus(context: InteractiveCommandContext): string {
     ['Work mode', '工作模式'],
     ['Permissions', '权限'],
     ['Context', '上下文'],
+    ['Last request', '上次完整请求'],
     ['Compactions', '压缩次数'],
     ['Usage', '用量'],
     ['Messages', '消息'],

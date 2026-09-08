@@ -806,6 +806,82 @@ test('a 16K model dynamically budgets a large tool result before the next reques
   );
 });
 
+for (const seedTurns of [0, 2]) {
+  test(`16K RAG rebudgets new tool output after rule growth with ${seedTurns} earlier turns`, async () => {
+    const info = providerInfo(16_384);
+    let searchRequested = false;
+    let finalRequest;
+    const provider = {
+      getInfo: () => info,
+      async chat(request) {
+        assert.doesNotMatch(request.systemPrompt, /Compress the supplied conversation/);
+        if (request.messages.at(-1)?.role === 'tool') {
+          finalRequest = structuredClone(request);
+          assert.match(request.systemPrompt, /Search result IDs are not citations/);
+          return { message: { role: 'assistant', content: 'No sufficient evidence.' } };
+        }
+        if (request.messages.at(-1)?.content === 'retrieve') {
+          searchRequested = true;
+          return {
+            message: {
+              role: 'assistant',
+              content: '',
+              toolCalls: [{ id: 'search-small-window', name: 'RagSearch', input: {} }]
+            }
+          };
+        }
+        return { message: { role: 'assistant', content: 'Brief earlier answer.' } };
+      }
+    };
+    const tools = [
+      {
+        name: 'RagSearch',
+        description: 'Search evidence',
+        inputSchema: z.object({}).strict(),
+        risk: 'read',
+        approval: 'never',
+        execute: async () => ({ content: 'Evidence candidate. '.repeat(2000) })
+      }
+    ];
+    const baseline = new QueryEngine({ provider, tools, audit: false });
+    const fixed = baseline.getStatus().context.estimatedInputTokens;
+    const engine = new QueryEngine({
+      provider,
+      tools,
+      audit: false,
+      systemPromptSuffix: 'x'.repeat(Math.max(0, 11200 - fixed) * 2)
+    });
+    for (let index = 0; index < seedTurns; index++) await engine.chat(`hello ${index}`);
+    const earlier = structuredClone(engine.getMessages());
+    const { events, result } = await collectTurn(engine.runTurn('retrieve'));
+    assert.equal(searchRequested, true);
+    assert.equal(result.status, 'completed');
+    assert.deepEqual(engine.getMessages().slice(0, earlier.length), earlier);
+    assert.equal(
+      events.some((event) => event.type === 'compaction_started'),
+      false
+    );
+    const measured = new ContextManager().measure(
+      finalRequest.messages,
+      finalRequest.systemPrompt,
+      finalRequest.tools,
+      info
+    );
+    assert.ok(measured.estimatedInputTokens < measured.triggerTokens);
+    const toolResult = finalRequest.messages.at(-1);
+    assert.equal(toolResult.toolCallId, 'search-small-window');
+    assert.match(toolResult.content, /Tool output truncated/);
+    assert.ok(
+      finalRequest.messages.some(
+        (message) =>
+          message.role === 'assistant' && message.toolCalls?.[0]?.id === toolResult.toolCallId
+      )
+    );
+    const originallyLimited = events.find((event) => event.type === 'tool_completed').result;
+    assert.ok(Buffer.byteLength(toolResult.content) < Buffer.byteLength(originallyLimited));
+  });
+}
+
 test('an oversized newest tool group is compacted atomically before reuse', async () => {
   let normalCalls = 0;
   let summaryRequest;
@@ -1038,11 +1114,21 @@ test('an uncompactable oversized user message fails before provider sampling', a
 
   assert.equal(result.status, 'failed');
   assert.equal(result.error.code, 'context_compaction_failed');
+  const estimate = events.find((event) => event.type === 'context_usage_updated');
+  assert.match(
+    result.error.message,
+    new RegExp(`Estimated request: ${estimate.inputTokens} tokens`)
+  );
+  assert.match(result.error.message, new RegExp(`safe input limit: ${estimate.triggerTokens}`));
+  assert.match(result.error.message, /model window: 2500/);
+  assert.equal(engine.getStatus().context.lastRequest.estimatedInputTokens, estimate.inputTokens);
   assert.equal(providerCalls, 0);
   assert.ok(
     events.some((event) => event.type === 'compaction_failed' && event.recoverable === false)
   );
   assert.deepEqual(engine.getMessages(), []);
+  engine.clearMessages();
+  assert.equal(engine.getStatus().context.lastRequest, undefined);
 });
 
 test('disabling auto compaction preserves explicit best-effort provider calls', async () => {
