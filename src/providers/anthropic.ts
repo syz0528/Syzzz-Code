@@ -102,9 +102,12 @@ export class AnthropicProvider implements AIProvider {
       const requestPromise = this.client.messages.create(
         {
           model: this.model,
-          max_tokens: 8192,
+          max_tokens: request.maxOutputTokens ?? 8192,
           system: request.systemPrompt,
           messages: convertMessagesToAnthropic(request.messages) as any,
+          ...(request.stopSequences?.length
+            ? { stop_sequences: request.stopSequences }
+            : {}),
           tools: convertToolsToAnthropic(request.tools) as any
         },
         { signal: request.signal }

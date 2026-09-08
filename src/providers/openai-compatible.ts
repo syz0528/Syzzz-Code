@@ -159,7 +159,9 @@ export class OpenAICompatibleProvider implements AIProvider {
       const completionRequest: Record<string, unknown> = {
         model: this.model,
         messages: convertMessagesToOpenAI(request.messages, request.systemPrompt),
-        tools: convertToolsToOpenAI(request.tools)
+        ...(request.maxOutputTokens ? { max_tokens: request.maxOutputTokens } : {}),
+        ...(request.stopSequences?.length ? { stop: request.stopSequences } : {}),
+        ...(request.tools.length > 0 ? { tools: convertToolsToOpenAI(request.tools) } : {})
       };
 
       let completion = await this.createCompletion(completionRequest, request.signal);
@@ -242,7 +244,9 @@ export class OpenAICompatibleProvider implements AIProvider {
       const completionRequest: Record<string, unknown> = {
         model: this.model,
         messages: convertMessagesToOpenAI(request.messages, request.systemPrompt),
-        tools: convertToolsToOpenAI(request.tools),
+        ...(request.maxOutputTokens ? { max_tokens: request.maxOutputTokens } : {}),
+        ...(request.stopSequences?.length ? { stop: request.stopSequences } : {}),
+        ...(request.tools.length > 0 ? { tools: convertToolsToOpenAI(request.tools) } : {}),
         stream: true,
         ...(attemptOptions.includeUsage ? { stream_options: { include_usage: true } } : {}),
         ...(attemptOptions.disableReasoning ? { thinking: { type: 'disabled' } } : {})
@@ -354,7 +358,14 @@ export class OpenAICompatibleProvider implements AIProvider {
         );
       }
       if (finishReason === undefined) {
-        throw this.malformed('Provider stream ended before a finish reason was received');
+        // Some OpenAI-compatible gateways end a successful stream after a
+        // final usage packet without emitting finish_reason. Usage is strong
+        // completion evidence; a clean EOF without it remains fail-closed.
+        if (usage) {
+          finishReason = toolCalls.length > 0 ? 'tool_calls' : 'stop';
+        } else {
+          throw this.malformed('Provider stream ended before a finish reason was received');
+        }
       }
 
       return {

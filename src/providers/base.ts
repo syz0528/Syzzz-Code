@@ -42,6 +42,8 @@ export interface ProviderChatRequest {
   messages: ConversationMessage[];
   tools: ProviderTool[];
   systemPrompt: string;
+  maxOutputTokens?: number;
+  stopSequences?: string[];
   signal?: AbortSignal;
 }
 

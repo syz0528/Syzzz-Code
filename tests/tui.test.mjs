@@ -302,6 +302,21 @@ test('fullscreen TUI renders bounded Chinese content and reuses its suggestion r
   view.unmount();
 });
 
+test('TUI composer supports Ctrl+A replacement before submission', async () => {
+  const controller = new FakeController();
+  const view = render(React.createElement(TuiApp, { controller }));
+
+  view.stdin.write('draft 你🙂 text');
+  view.stdin.write('\u0001');
+  await wait();
+  view.stdin.write('替换后的问题');
+  view.stdin.write('\r');
+  await wait();
+
+  assert.equal(controller.submitted.at(-1), '替换后的问题');
+  view.unmount();
+});
+
 test('TUI approval resolves without writing the answer into the composer', async () => {
   const controller = new FakeController();
   const view = render(React.createElement(TuiApp, { controller }));

@@ -46,7 +46,7 @@ async function collect(turn) {
   }
 }
 
-test('AskUser is exposed only with a handler and returns validated answers through tool history', async () => {
+test('AskUser normalizes model-generated IDs and returns validated answers through tool history', async () => {
   const requests = [];
   const provider = {
     async chat(request) {
@@ -63,7 +63,7 @@ test('AskUser is exposed only with a handler and returns validated answers throu
                 input: {
                   questions: [
                     {
-                      id: 'choice',
+                      id: '选择',
                       header: 'Mode',
                       prompt: 'Choose one mode',
                       kind: 'single',
@@ -88,7 +88,8 @@ test('AskUser is exposed only with a handler and returns validated answers throu
     engine.runTurn('Ask me', {
       async requestUserInput(request) {
         assert.equal(request.questions[0].prompt, 'Choose one mode');
-        return { choice: 'safe' };
+        assert.equal(request.questions[0].id, 'question_1');
+        return { question_1: 'safe' };
       }
     })
   );
@@ -104,7 +105,7 @@ test('AskUser is exposed only with a handler and returns validated answers throu
   assert.match(requests[0].systemPrompt, /Do not print a numbered question list/);
   assert.match(requests[0].systemPrompt, /prefer a single-select question with 2-6 options/);
   assert.deepEqual(JSON.parse(requests[1].messages.at(-1).content), {
-    answers: { choice: 'safe' }
+    answers: { question_1: 'safe' }
   });
   assert.deepEqual(engine.getConversationDisplaySnapshot().messages, [
     { role: 'user', content: 'Ask me' },
@@ -344,10 +345,32 @@ test('ComposerBuffer covers deletion, horizontal and vertical grapheme navigatio
   assert.equal(buffer.backspace(), false);
 });
 
+test('ComposerBuffer supports select-all, shifted selection, replacement, and grapheme-safe deletion', () => {
+  const buffer = new ComposerBuffer('alpha 你👩‍💻 omega');
+  buffer.selectAll();
+  assert.deepEqual(buffer.selection, { start: 0, end: buffer.value.length });
+  assert.equal(buffer.insert('替换'), true);
+  assert.equal(buffer.value, '替换');
+  assert.equal(buffer.selection, undefined);
+
+  buffer.set('A你👩‍💻Z');
+  buffer.moveLeft(true);
+  buffer.moveLeft(true);
+  assert.equal(buffer.value.slice(buffer.selection.start, buffer.selection.end), '👩‍💻Z');
+  assert.equal(buffer.backspace(), true);
+  assert.equal(buffer.value, 'A你');
+
+  buffer.selectAll();
+  buffer.moveLeft();
+  assert.equal(buffer.cursor, 0);
+  assert.equal(buffer.selection, undefined);
+});
+
 test('Composer viewport keeps the real cursor aligned across CJK, emoji, long lines, and scrolling', () => {
   const wide = createComposerViewport('ab你🙂', 'ab你🙂'.length, 12, 3);
   assert.equal(wide.cursorX, 6);
   assert.deepEqual(wide.lines, ['ab你🙂']);
+  assert.deepEqual(wide.lineRanges, [{ start: 0, end: 'ab你🙂'.length }]);
 
   const horizontal = createComposerViewport('0123456789你', '0123456789你'.length, 6, 3);
   assert.ok(horizontal.cursorX >= 0 && horizontal.cursorX < 6);
@@ -652,8 +675,9 @@ test('controller projects Agent events and serializes every blocking interaction
       )
   );
   assert.equal(controller.toggleLatestToolDetail(), true);
-  assert.ok(
-    projected.transcript.some((entry) => entry.kind === 'notice' && /turn failed/.test(entry.text))
+  assert.equal(
+    projected.transcript.some((entry) => entry.kind === 'notice' && /turn failed/.test(entry.text)),
+    false
   );
   assert.ok(
     controller
@@ -796,6 +820,38 @@ test('controller runs streamed and buffered turns without mixing local commands 
   assert.equal(controller.toggleLatestToolDetail(), false);
   await controller.submit('exit');
   assert.equal(controller.getSnapshot().exitReason, 'user');
+  await controller.close();
+});
+
+test('controller projects a failed turn error exactly once', async () => {
+  const baseDirectory = await mkdtemp(join(tmpdir(), 'syzzz-phase8-failed-turn-'));
+  const engine = displayEngine('failed-turn-session', 'failed');
+  engine.runTurn = async function* () {
+    yield {
+      type: 'turn_failed',
+      error: { code: 'malformed_response', message: 'single provider failure' }
+    };
+    return {
+      status: 'failed',
+      durationMs: 3,
+      error: { code: 'malformed_response', message: 'single provider failure' }
+    };
+  };
+  const controller = await InteractionController.create({
+    engine,
+    sessionOptions: {},
+    streamOutput: true,
+    persistentHistory: false,
+    historyBaseDirectory: baseDirectory
+  });
+
+  await controller.submit('trigger failure');
+  const failures = controller
+    .getSnapshot()
+    .transcript.filter(
+      (entry) => entry.kind === 'notice' && entry.text === 'single provider failure'
+    );
+  assert.equal(failures.length, 1);
   await controller.close();
 });
 

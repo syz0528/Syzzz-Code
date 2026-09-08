@@ -58,6 +58,39 @@ test('context estimation is conservative for UTF-8 and includes fixed request da
   assert.equal(measurement.shouldCompact, true);
 });
 
+test('small model windows scale the output reserve without changing large-window behavior', () => {
+  const manager = new ContextManager();
+  const small = manager.measure([], 'system', [], {
+    ...providerInfo,
+    contextWindowTokens: 16_384
+  });
+  const large = manager.measure([], 'system', [], {
+    ...providerInfo,
+    contextWindowTokens: 65_536
+  });
+
+  assert.equal(small.triggerTokens, 12_288);
+  assert.equal(large.triggerTokens, Math.floor(65_536 * 0.85));
+});
+
+test('small model windows can compact useful history below the large-window minimum', () => {
+  const manager = new ContextManager({ defaultWindowTokens: 16_384 });
+  const info = { ...providerInfo, contextWindowTokens: 16_384 };
+  const messages = [
+    { role: 'user', content: 'older request '.repeat(300) },
+    { role: 'assistant', content: 'older answer '.repeat(180) },
+    { role: 'user', content: 'current request' }
+  ];
+  const measurement = manager.measure(messages, 's'.repeat(21_000), [], info);
+
+  assert.ok(measurement.estimatedInputTokens >= measurement.triggerTokens);
+  assert.ok(measurement.messageTokens < 4_000);
+  const plan = manager.createPlan(messages, measurement);
+  assert.ok(plan);
+  assert.equal(plan.mode, 'history');
+  assert.equal(plan.selectedMessages.at(-1).role, 'assistant');
+});
+
 test('auto compaction can be disabled without changing context measurement', () => {
   const manager = new ContextManager({
     autoCompact: false,

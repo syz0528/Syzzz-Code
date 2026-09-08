@@ -9,7 +9,11 @@ import { limitUtf8Head, limitUtf8HeadTail } from './tools/output-limits.js';
 const DEFAULT_TRIGGER_RATIO = 0.85;
 const DEFAULT_TARGET_RATIO = 0.5;
 const DEFAULT_RESERVED_OUTPUT_TOKENS = 8_192;
+const MAX_RESERVED_OUTPUT_RATIO = 0.25;
 const DEFAULT_MIN_COMPACTABLE_TOKENS = 4_000;
+const SMALL_WINDOW_THRESHOLD_TOKENS = 32_768;
+const SMALL_WINDOW_MIN_COMPACTABLE_RATIO = 0.05;
+const ABSOLUTE_MIN_COMPACTABLE_TOKENS = 512;
 const DEFAULT_MAX_TOOL_RESULT_BYTES = 40 * 1024;
 const DEFAULT_MAX_COMPACTION_INPUT_BYTES = 256 * 1024;
 const DEFAULT_MAX_SUMMARY_ATTEMPTS = 2;
@@ -338,11 +342,15 @@ export class ContextManager {
     const fixedTokens =
       estimateUtf8Tokens(systemPrompt) + estimateUtf8Tokens(JSON.stringify(tools)) + 64;
     const estimatedInputTokens = fixedTokens + messageTokens;
+    const reservedOutputTokens = Math.min(
+      this.options.reservedOutputTokens,
+      Math.max(1, Math.floor(contextWindowTokens * MAX_RESERVED_OUTPUT_RATIO))
+    );
     const triggerTokens = Math.max(
       1,
       Math.min(
         Math.floor(contextWindowTokens * this.options.triggerRatio),
-        contextWindowTokens - this.options.reservedOutputTokens
+        contextWindowTokens - reservedOutputTokens
       )
     );
     const targetTokens = Math.max(1, Math.floor(contextWindowTokens * this.options.targetRatio));
@@ -369,14 +377,24 @@ export class ContextManager {
       return undefined;
     }
 
+    const minimumCompactableTokens =
+      measurement.contextWindowTokens <= SMALL_WINDOW_THRESHOLD_TOKENS
+        ? Math.min(
+            this.options.minimumCompactableTokens,
+            Math.max(
+              ABSOLUTE_MIN_COMPACTABLE_TOKENS,
+              Math.floor(measurement.contextWindowTokens * SMALL_WINDOW_MIN_COMPACTABLE_RATIO)
+            )
+          )
+        : this.options.minimumCompactableTokens;
     const targetMessageTokens = Math.max(1, measurement.targetTokens - measurement.fixedTokens);
     const requiredRemoval = Math.max(
-      this.options.minimumCompactableTokens,
+      minimumCompactableTokens,
       measurement.messageTokens - targetMessageTokens
     );
     const historyUnits = units.filter((unit) => unit.endIndex <= currentUserIndex);
     const historyTokens = sumUnitTokens(historyUnits);
-    if (historyTokens >= this.options.minimumCompactableTokens) {
+    if (historyTokens >= minimumCompactableTokens) {
       let selectedTokens = 0;
       let endIndex = 0;
       for (const unit of historyUnits) {
@@ -403,7 +421,7 @@ export class ContextManager {
     }
     const compactableUnits = options.allowLatestIntraTurn ? intraUnits : intraUnits.slice(0, -1);
     const compactableTokens = sumUnitTokens(compactableUnits);
-    if (compactableTokens < this.options.minimumCompactableTokens) {
+    if (compactableTokens < minimumCompactableTokens) {
       return undefined;
     }
 

@@ -186,6 +186,31 @@ test('OpenAI-compatible early EOF fails after visible text without retrying', as
   }
 });
 
+test('OpenAI-compatible completion tolerates a missing finish reason when usage closes the stream', async () => {
+  const fixture = await startProviderFixture('openai-chat-completions');
+  try {
+    const provider = new OpenAICompatibleProvider(
+      'contract-secret',
+      fixture.openAIBaseURL,
+      'openai-contract-model',
+      'OpenAI Contract'
+    );
+    const { response } = await collect(
+      runProviderRequest(provider, request('usage-without-finish'))
+    );
+
+    assert.equal(response.message.content, 'usage-confirmed');
+    assert.equal(response.finishReason, 'stop');
+    assert.deepEqual(response.usage, {
+      inputTokens: 7,
+      outputTokens: 2,
+      totalTokens: 9
+    });
+  } finally {
+    await fixture.close();
+  }
+});
+
 test('minimal OpenAI-compatible endpoints recover once without stream_options', async () => {
   const fixture = await startProviderFixture('openai-compatible-minimal');
   try {

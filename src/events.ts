@@ -104,7 +104,8 @@ export interface UsageUpdatedEvent extends AgentEventEnvelope {
   purpose?: ProviderPurpose;
 }
 
-export type ProviderPurpose = 'turn' | 'compaction' | 'subagent' | 'rag-verification';
+export type ProviderPurpose =
+  'turn' | 'compaction' | 'subagent' | 'rag-query-rewrite' | 'rag-verification';
 
 export interface RagIndexStartedEvent extends AgentEventEnvelope {
   type: 'rag_index_started';

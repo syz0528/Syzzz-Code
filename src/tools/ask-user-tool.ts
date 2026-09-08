@@ -4,6 +4,31 @@ import { defineTool } from './runtime.js';
 
 export const MAX_ASK_USER_CALLS_PER_TURN = 2;
 export const MAX_USER_ANSWER_CHARACTERS = 4 * 1024;
+const QUESTION_ID_PATTERN = /^[A-Za-z][A-Za-z0-9_-]{0,63}$/;
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+export function normalizeAskUserQuestionIds(input: unknown): unknown {
+  if (!isRecord(input) || !Array.isArray(input.questions)) return input;
+  const usedIds = new Set<string>();
+  const questions = input.questions.map((question, index) => {
+    if (!isRecord(question)) return question;
+    const requestedId = typeof question.id === 'string' ? question.id.trim() : '';
+    let id = requestedId;
+    if (!QUESTION_ID_PATTERN.test(id) || usedIds.has(id)) {
+      let suffix = index + 1;
+      do {
+        id = `question_${suffix}`;
+        suffix += 1;
+      } while (usedIds.has(id));
+    }
+    usedIds.add(id);
+    return { ...question, id };
+  });
+  return { ...input, questions };
+}
 
 const questionOptionSchema = z
   .object({
@@ -15,10 +40,7 @@ const questionOptionSchema = z
 
 const questionSchema = z
   .object({
-    id: z
-      .string()
-      .trim()
-      .regex(/^[A-Za-z][A-Za-z0-9_-]{0,63}$/),
+    id: z.string().trim().regex(QUESTION_ID_PATTERN),
     header: z.string().trim().min(1).max(32),
     prompt: z.string().trim().min(1).max(500),
     kind: z.enum(['single', 'multi', 'text']),

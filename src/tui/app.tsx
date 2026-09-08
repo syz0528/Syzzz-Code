@@ -1076,6 +1076,10 @@ export function TuiApp({ controller, copyToClipboard, keyboard, profile }: TuiAp
       return;
     }
     if (state.state !== 'idle' || tooSmall) return;
+    if (key.ctrl && (input.toLowerCase() === 'a' || input === '\u0001')) {
+      mutateComposer(() => composer.current.selectAll());
+      return;
+    }
     if (key.ctrl && input.toLowerCase() === 'o') {
       controller.toggleLatestToolDetail();
       return;
@@ -1110,11 +1114,11 @@ export function TuiApp({ controller, copyToClipboard, keyboard, profile }: TuiAp
       setSuggestionsDismissed(true);
       return;
     }
-    if (suggestions.length > 0 && key.upArrow) {
+    if (suggestions.length > 0 && key.upArrow && !key.shift) {
       setSuggestionSelected((value) => (value - 1 + suggestions.length) % suggestions.length);
       return;
     }
-    if (suggestions.length > 0 && key.downArrow) {
+    if (suggestions.length > 0 && key.downArrow && !key.shift) {
       setSuggestionSelected((value) => (value + 1) % suggestions.length);
       return;
     }
@@ -1139,10 +1143,10 @@ export function TuiApp({ controller, copyToClipboard, keyboard, profile }: TuiAp
       }
       return;
     }
-    if (key.leftArrow) mutateComposer(() => composer.current.moveLeft());
-    else if (key.rightArrow) mutateComposer(() => composer.current.moveRight());
-    else if (key.home) mutateComposer(() => composer.current.moveHome());
-    else if (key.end) mutateComposer(() => composer.current.moveEnd());
+    if (key.leftArrow) mutateComposer(() => composer.current.moveLeft(key.shift));
+    else if (key.rightArrow) mutateComposer(() => composer.current.moveRight(key.shift));
+    else if (key.home) mutateComposer(() => composer.current.moveHome(key.shift));
+    else if (key.end) mutateComposer(() => composer.current.moveEnd(key.shift));
     else if (key.backspace)
       mutateComposer(() => {
         composer.current.backspace();
@@ -1152,16 +1156,16 @@ export function TuiApp({ controller, copyToClipboard, keyboard, profile }: TuiAp
         composer.current.delete();
       });
     else if (key.upArrow) {
-      if (composer.current.value.includes('\n')) {
-        mutateComposer(() => composer.current.moveVertical(-1));
+      if (key.shift || composer.current.value.includes('\n')) {
+        mutateComposer(() => composer.current.moveVertical(-1, key.shift));
       } else if (profile?.wheelInput === 'arrow-fallback') {
         moveTranscript(-3);
       } else {
         navigateInputHistory(-1);
       }
     } else if (key.downArrow) {
-      if (composer.current.value.includes('\n')) {
-        mutateComposer(() => composer.current.moveVertical(1));
+      if (key.shift || composer.current.value.includes('\n')) {
+        mutateComposer(() => composer.current.moveVertical(1, key.shift));
       } else if (profile?.wheelInput === 'arrow-fallback') {
         moveTranscript(3);
       } else {
@@ -1285,14 +1289,31 @@ export function TuiApp({ controller, copyToClipboard, keyboard, profile }: TuiAp
         overflow="hidden"
       >
         <Box ref={composerContentRef} flexDirection="column">
-          {composerViewport.lines.map((line, index) => (
-            <Text key={`${composerViewport.firstLogicalLine + index}:${line}`} wrap="truncate-end">
-              <Text color={toneColor('info')}>
-                {index === 0 ? composerPrompt : ' '.repeat(composerPromptWidth)}
+          {composerViewport.lines.map((line, index) => {
+            const range = composerViewport.lineRanges[index] ?? { start: 0, end: 0 };
+            const selection = composer.current.selection;
+            const selectionStart = selection ? Math.max(selection.start, range.start) : range.end;
+            const selectionEnd = selection ? Math.min(selection.end, range.end) : range.end;
+            const hasSelection = selectionStart < selectionEnd;
+            const localStart = Math.max(0, selectionStart - range.start);
+            const localEnd = Math.max(localStart, selectionEnd - range.start);
+            return (
+              <Text key={composerViewport.firstLogicalLine + index} wrap="truncate-end">
+                <Text color={toneColor('info')}>
+                  {index === 0 ? composerPrompt : ' '.repeat(composerPromptWidth)}
+                </Text>
+                {hasSelection ? (
+                  <>
+                    {line.slice(0, localStart)}
+                    <Text inverse>{line.slice(localStart, localEnd)}</Text>
+                    {line.slice(localEnd)}
+                  </>
+                ) : (
+                  line || ' '
+                )}
               </Text>
-              {line || ' '}
-            </Text>
-          ))}
+            );
+          })}
         </Box>
       </Box>
       <Box height={FOOTER_HEIGHT} overflow="hidden" justifyContent="space-between">

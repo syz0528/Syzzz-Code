@@ -61,6 +61,7 @@ import { isAbortError, OperationAbortedError, throwIfAborted } from './tools/abo
 import {
   MAX_ASK_USER_CALLS_PER_TURN,
   type AskUserInput,
+  normalizeAskUserQuestionIds,
   validateUserInputAnswers
 } from './tools/ask-user-tool.js';
 import { createToolSet } from './tools/index.js';
@@ -1700,6 +1701,7 @@ export class QueryEngine {
       const responseParts: string[] = [];
       const providerTools = this.getProviderTools(Boolean(options.requestUserInput));
       const confirmedFileSideEffects = new Set<string>();
+      let ragSearchSucceeded = false;
       let forcedFinalizationReason: 'delegate-failure' | 'hook-denial' | undefined;
       let forcedBudgetStopReason: BudgetStopReason | undefined;
       let appliedBudgetStopReason: BudgetStopReason | undefined;
@@ -1767,6 +1769,20 @@ export class QueryEngine {
               'that no file was modified.'
           );
         }
+        if (this.activeRagContextReceipts.length > 0) {
+          const allowedCitationTokens = this.activeRagContextReceipts
+            .map((receipt) => `[[rag:${receipt.chunkId}]]`)
+            .join(', ');
+          runtimeInstructions.push(
+            'RAG evidence was read in this turn. The final answer MUST copy at least one applicable citation token exactly from this allowed list: ' +
+              `${allowedCitationTokens}. ` +
+              'Start the response with the applicable citation token, then answer in at most two short sentences and stop. Do not invent or alter citation tokens. Answer in the user\'s language and only the operation or claim requested. Use only conclusions and code literally visible in the cited excerpts; an include directive or link is not code evidence. Do not add related definitions, alternative methods, setup code, packages, parameters, examples, or source metadata. If the excerpts do not answer the question, state that evidence is insufficient.'
+          );
+        } else if (ragSearchSucceeded) {
+          runtimeInstructions.push(
+            'RAG search candidates were returned, but no evidence was read with RagRead. Search result IDs are not citations: the final answer MUST NOT contain any [[rag:...]] token. If no candidate directly supports the request, state that evidence is insufficient without adding outside facts or recommendations.'
+          );
+        }
         if (finalizationReason === 'hook-denial') {
           runtimeInstructions.push(
             'A local Hook definitively denied an operation. Tool access is now ' +
@@ -1825,6 +1841,10 @@ export class QueryEngine {
         let response: ProviderChatResponse | undefined;
         let responseUsageReported = false;
         let recoveredFromContextExceeded = false;
+        const bufferRagAnswer =
+          this.rag !== undefined &&
+          (this.activeRagContextReceipts.length > 0 || ragSearchSucceeded);
+        const bufferedRagTextEvents: Array<Extract<AgentEventData, { type: 'text_delta' }>> = [];
         while (!response) {
           throwIfAborted(signal);
           this.consumeProviderCallBudget(
@@ -1839,6 +1859,9 @@ export class QueryEngine {
               messages: [...currentPrefixMessages, ...workingMessages],
               tools: providerToolsForRound,
               systemPrompt,
+              ...(this.activeRagContextReceipts.length > 0
+                ? { maxOutputTokens: 128, stopSequences: ['\n\n'] }
+                : {}),
               signal
             },
             signal,
@@ -1860,7 +1883,11 @@ export class QueryEngine {
                 finalFinishReason = next.value.finishReason;
                 break;
               }
-              yield event(next.value);
+              if (bufferRagAnswer && next.value.type === 'text_delta') {
+                bufferedRagTextEvents.push(next.value);
+              } else {
+                yield event(next.value);
+              }
             }
           } catch (error) {
             if (
@@ -1939,26 +1966,257 @@ export class QueryEngine {
           );
         }
         if (toolCalls.length === 0) {
-          if (this.rag && responseParts.some((part) => part.includes('[[rag:'))) {
+          let groundingBlockedResponse: string | undefined;
+          let groundingRepairedResponse: string | undefined;
+          if (
+            this.rag &&
+            (this.activeRagContextReceipts.length > 0 ||
+              responseParts.some((part) => part.includes('[[rag:')))
+          ) {
             const verificationStartedAt = this.now();
-            const deterministic = await this.rag.validateCitations(
+            let deterministic = await this.rag.validateCitations(
               responseParts.join('\n\n'),
               turnId,
               signal
             );
-            const invalidCount = deterministic.filter((check) => check.status !== 'valid').length;
+            let invalidCount = deterministic.filter((check) => check.status !== 'valid').length;
+            const needsCitationRepair = deterministic.length === 0 || invalidCount > 0;
+            let groundingBlocked = this.activeRagContextReceipts.length > 0 && needsCitationRepair;
+            let semanticOutcome:
+              'supported' | 'partial' | 'unsupported' | 'unverifiable' | undefined;
+            if (this.activeRagContextReceipts.length === 0 && deterministic.length > 0) {
+              const noEvidenceResponse = /[\u3400-\u9fff]/u.test(userMessage)
+                ? '证据不足：本轮没有通过 RagRead 读取到能够支持该问题的 RAG 证据。'
+                : 'Evidence is insufficient: no RAG evidence supporting this question was read with RagRead in this turn.';
+              responseParts.splice(0, responseParts.length, noEvidenceResponse);
+              workingMessages[workingMessages.length - 1] = {
+                ...response.message,
+                content: noEvidenceResponse
+              };
+              deterministic = [];
+              invalidCount = 0;
+              groundingBlocked = false;
+              groundingRepairedResponse = noEvidenceResponse;
+              semanticOutcome = 'supported';
+            }
+            if (this.activeRagContextReceipts.length > 0 && this.rag.canVerifySemantically()) {
+              const verificationEvents: AgentEventData[] = [];
+              try {
+                yield event({
+                  type: 'rag_verification_started',
+                  citationCount: deterministic.length
+                });
+                const verification =
+                  this.rag.getTurnVerification(turnId) ??
+                  (await this.rag.verify(responseParts.join('\n\n'), turnId, signal, (ragEvent) =>
+                    verificationEvents.push(ragEvent)
+                  ));
+                for (const ragEvent of verificationEvents) yield event(ragEvent);
+                verificationEvents.length = 0;
+                semanticOutcome = verification.outcome;
+                groundingBlocked = verification.outcome !== 'supported' || needsCitationRepair;
+                if (
+                  verification.outcome === 'supported' &&
+                  needsCitationRepair
+                ) {
+                  const availableChunkIds = new Set(
+                    this.activeRagContextReceipts.map((receipt) => receipt.chunkId)
+                  );
+                  const supportedChunkIds = [
+                    ...new Set(
+                      (verification.claims ?? [])
+                        .filter((claim) => claim.outcome === 'supported')
+                        .flatMap((claim) => claim.citations)
+                        .filter((chunkId) => availableChunkIds.has(chunkId))
+                    )
+                  ];
+                  if (supportedChunkIds.length > 0) {
+                    const citationTokens = supportedChunkIds
+                      .map((chunkId) => `[[rag:${chunkId}]]`)
+                      .join(' ');
+                    const repairedResponse =
+                      responseParts
+                        .join('\n\n')
+                        .replace(/\[\[rag:[a-f0-9]{16,64}\]\]/g, '')
+                        .trim() + `\n\n${citationTokens}`;
+                    responseParts.splice(0, responseParts.length, repairedResponse);
+                    workingMessages[workingMessages.length - 1] = {
+                      ...response.message,
+                      content: repairedResponse
+                    };
+                    deterministic = await this.rag.validateCitations(
+                      repairedResponse,
+                      turnId,
+                      signal
+                    );
+                    invalidCount = deterministic.filter(
+                      (check) => check.status !== 'valid'
+                    ).length;
+                    groundingBlocked = deterministic.length === 0 || invalidCount > 0;
+                    if (!groundingBlocked) groundingRepairedResponse = repairedResponse;
+                  }
+                }
+                if (groundingBlocked && verification.claims?.length) {
+                  const draftResponse = responseParts.join('\n\n');
+                  const availableChunkIds = new Set(
+                    this.activeRagContextReceipts.map((receipt) => receipt.chunkId)
+                  );
+                  const seenClaims = new Set<string>();
+                  const supportedLines: string[] = [];
+                  let supportedBytes = 0;
+                  for (const claim of verification.claims) {
+                    if (claim.outcome !== 'supported') continue;
+                    const claimText = claim.claim
+                      .replace(/\[\[rag:[a-f0-9]{16,64}\]\]/g, '')
+                      .trim();
+                    const claimKey = claimText.replace(/\s+/g, ' ').toLowerCase();
+                    if (
+                      !claimText ||
+                      claimText.includes('```') ||
+                      !draftResponse.includes(claimText) ||
+                      seenClaims.has(claimKey)
+                    ) {
+                      continue;
+                    }
+                    const citationTokens = [
+                      ...new Set(
+                        claim.citations
+                          .filter((chunkId) => availableChunkIds.has(chunkId))
+                          .map((chunkId) => `[[rag:${chunkId}]]`)
+                      )
+                    ];
+                    if (citationTokens.length === 0) continue;
+                    const line = `${claimText} ${citationTokens.join(' ')}`;
+                    const lineBytes = Buffer.byteLength(line, 'utf8');
+                    if (supportedLines.length >= 8 || supportedBytes + lineBytes > 8 * 1024) break;
+                    seenClaims.add(claimKey);
+                    supportedLines.push(line);
+                    supportedBytes += lineBytes;
+                  }
+                  if (supportedLines.length > 0) {
+                    const repairedResponse = supportedLines.join('\n\n');
+                    const repairedChecks = await this.rag.validateCitations(
+                      repairedResponse,
+                      turnId,
+                      signal
+                    );
+                    const repairedInvalidCount = repairedChecks.filter(
+                      (check) => check.status !== 'valid'
+                    ).length;
+                    if (repairedChecks.length > 0 && repairedInvalidCount === 0) {
+                      responseParts.splice(0, responseParts.length, repairedResponse);
+                      workingMessages[workingMessages.length - 1] = {
+                        ...response.message,
+                        content: repairedResponse
+                      };
+                      deterministic = repairedChecks;
+                      invalidCount = 0;
+                      groundingBlocked = false;
+                      groundingRepairedResponse = repairedResponse;
+                      semanticOutcome = 'supported';
+                    }
+                  }
+                }
+                if (groundingBlocked && this.rag.canRepairGroundedAnswer()) {
+                  const repairedResponse = await this.rag.repairGroundedAnswer(
+                    userMessage,
+                    turnId,
+                    signal,
+                    (ragEvent) => verificationEvents.push(ragEvent)
+                  );
+                  const repairedChecks = await this.rag.validateCitations(
+                    repairedResponse,
+                    turnId,
+                    signal
+                  );
+                  const repairedInvalidCount = repairedChecks.filter(
+                    (check) => check.status !== 'valid'
+                  ).length;
+                  if (repairedChecks.length > 0 && repairedInvalidCount === 0) {
+                    const repairedVerification = await this.rag.verifyRepairedAnswer(
+                      repairedResponse,
+                      turnId,
+                      signal,
+                      (ragEvent) => verificationEvents.push(ragEvent)
+                    );
+                    for (const ragEvent of verificationEvents) yield event(ragEvent);
+                    verificationEvents.length = 0;
+                    if (repairedVerification.outcome === 'supported') {
+                      responseParts.splice(0, responseParts.length, repairedResponse);
+                      workingMessages[workingMessages.length - 1] = {
+                        ...response.message,
+                        content: repairedResponse
+                      };
+                      deterministic = repairedChecks;
+                      invalidCount = 0;
+                      groundingBlocked = false;
+                      groundingRepairedResponse = repairedResponse;
+                      semanticOutcome = 'supported';
+                    }
+                  }
+                }
+              } catch (error) {
+                for (const ragEvent of verificationEvents) yield event(ragEvent);
+                semanticOutcome = 'unverifiable';
+                groundingBlocked = true;
+                yield event({
+                  type: 'rag_verification_failed',
+                  code:
+                    error && typeof error === 'object' && 'code' in error
+                      ? String(error.code)
+                      : 'rag_verification_failed',
+                  durationMs: Math.max(0, this.now() - verificationStartedAt)
+                });
+              }
+            }
             yield event({
               type: 'rag_verification_completed',
               outcome:
-                deterministic.length === 0
-                  ? 'unverifiable'
-                  : invalidCount > 0
-                    ? 'unsupported'
-                    : 'supported',
+                semanticOutcome ??
+                (groundingBlocked || invalidCount > 0
+                  ? 'unsupported'
+                  : deterministic.length === 0
+                    ? 'unverifiable'
+                    : 'supported'),
               citationCount: deterministic.length,
               invalidCitationCount: invalidCount,
               durationMs: Math.max(0, this.now() - verificationStartedAt)
             });
+            if (groundingBlocked) {
+              const invalidStatuses = [
+                ...new Set(
+                  deterministic
+                    .filter((check) => check.status !== 'valid')
+                    .map((check) => check.status)
+                )
+              ];
+              const blockedResponse =
+                deterministic.length === 0 || invalidCount > 0
+                  ? `RAG grounding blocked: the generated answer did not contain a valid citation to evidence read in this turn${invalidStatuses.length ? ` (${invalidStatuses.join(', ')})` : ''}. No evidence-backed conclusion was returned.`
+                  : `RAG grounding blocked: the cited evidence did not fully support the generated claims${semanticOutcome ? ` (${semanticOutcome})` : ''}. No evidence-backed conclusion was returned.`;
+              responseParts.splice(0, responseParts.length, blockedResponse);
+              workingMessages[workingMessages.length - 1] = {
+                ...response.message,
+                content: blockedResponse
+              };
+              groundingBlockedResponse = blockedResponse;
+            }
+          }
+          if (bufferRagAnswer) {
+            const replacementResponse = groundingBlockedResponse ?? groundingRepairedResponse;
+            if (replacementResponse) {
+              const sourceEvent = bufferedRagTextEvents[0];
+              if (sourceEvent) {
+                yield event({
+                  ...sourceEvent,
+                  delta: replacementResponse
+                });
+              }
+            } else {
+              for (const bufferedEvent of bufferedRagTextEvents) {
+                yield event(bufferedEvent);
+              }
+            }
           }
           const turnUsage = this.activeSubagentUsage
             ? addUsage(cumulativeUsage, this.activeSubagentUsage)
@@ -2014,6 +2272,10 @@ export class QueryEngine {
             usage: result.usage
           });
           return result;
+        }
+
+        for (const bufferedEvent of bufferedRagTextEvents) {
+          yield event(bufferedEvent);
         }
 
         if (finalizationReason) {
@@ -2122,6 +2384,12 @@ export class QueryEngine {
               toolCall.name === 'SaveKnowledge')
           ) {
             confirmedFileSideEffects.add(toolCall.name);
+          }
+          if (
+            toolCompletedEvent?.outcome === 'success' &&
+            toolCall.name === 'RagSearch'
+          ) {
+            ragSearchSucceeded = true;
           }
           if (
             toolCompletedEvent?.outcome === 'success' &&
@@ -2951,7 +3219,8 @@ export class QueryEngine {
       yield complete('error', content);
       return toolMessage(content, true);
     }
-    const validationResult = validateToolInput(tool, input);
+    const normalizedInput = tool.name === 'AskUser' ? normalizeAskUserQuestionIds(input) : input;
+    const validationResult = validateToolInput(tool, normalizedInput);
     if (!validationResult.success) {
       yield complete('error', validationResult.message);
       return toolMessage(validationResult.message, true);

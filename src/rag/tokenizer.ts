@@ -1,4 +1,4 @@
-const LATIN_OR_NUMBER = /[\p{L}\p{N}_$]+/gu;
+const NON_CJK_WORD_OR_NUMBER = /[\p{Script=Latin}\p{Script=Cyrillic}\p{Script=Greek}\p{N}_$]+/gu;
 const CJK_CHARACTER = /[\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}\p{Script=Hangul}]/u;
 
 function normalizeToken(token: string): string {
@@ -9,7 +9,7 @@ export function tokenizeRagText(text: string): string[] {
   const normalized = text.normalize('NFKC');
   const tokens = new Set<string>();
 
-  for (const match of normalized.matchAll(LATIN_OR_NUMBER)) {
+  for (const match of normalized.matchAll(NON_CJK_WORD_OR_NUMBER)) {
     const token = normalizeToken(match[0]);
     if (token) {
       tokens.add(token);

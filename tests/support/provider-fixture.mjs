@@ -286,6 +286,29 @@ function handleOpenAI(profile, body, response, requestCount) {
     return;
   }
 
+  if (userText.includes('usage-without-finish')) {
+    response.writeHead(200, { 'content-type': 'text/event-stream; charset=utf-8' });
+    response.write(
+      sseEvent({
+        id: 'chatcmpl-usage-without-finish',
+        object: 'chat.completion.chunk',
+        model,
+        choices: [{ index: 0, delta: { content: 'usage-confirmed' }, finish_reason: null }]
+      })
+    );
+    response.write(
+      sseEvent({
+        id: 'chatcmpl-usage-without-finish',
+        object: 'chat.completion.chunk',
+        model,
+        choices: [],
+        usage: { prompt_tokens: 7, completion_tokens: 2, total_tokens: 9 }
+      })
+    );
+    response.end('data: [DONE]\n\n');
+    return;
+  }
+
   if (userText.includes('tool-contract')) {
     writeOpenAITool(response, model, userText.includes('multi-tool-contract'));
     return;

@@ -40,11 +40,13 @@ import type {
   RagKnowledgeSaveInput,
   RagPreparedWrite,
   RagStatus,
+  RagVerificationClaim,
   RagVerificationResult
 } from './types.js';
 import { buildLanceVectorStore, searchLanceVectorStore } from './vector-store.js';
 import type { ToolDefinition } from '../types.js';
 import { createRagTools } from './tools.js';
+import type { RagQueryRewriter } from './query-rewriter.js';
 
 const MAX_FILES = 20_000;
 const MAX_SOURCE_BYTES = 512 * 1024 * 1024;
@@ -55,6 +57,8 @@ const DEFAULT_SEARCH_LIMIT = 12;
 const MAX_SEARCH_LIMIT = 50;
 const MAX_RERANK_CANDIDATES = 20;
 const RRF_K = 60;
+const MIN_LEXICAL_QUERY_COVERAGE = 0.2;
+const MIN_LEXICAL_MATCHED_TERMS = 2;
 const EMBEDDING_BATCH_SIZE = 64;
 const INGESTION_DIGEST = 'phase9-v1:extensions+gitignore+sensitive+2mib';
 const MAX_KNOWLEDGE_BYTES = 128 * 1024;
@@ -86,6 +90,28 @@ const HARD_EXCLUDED_SEGMENTS = new Set([
   '__pycache__'
 ]);
 
+function normalizeEvidenceCode(value: string): string {
+  return value.replace(/\r\n?/g, '\n').replace(/[ \t]+$/gm, '').trim();
+}
+
+function findUnsupportedCodeClaims(
+  draft: string,
+  chunks: readonly RagChunk[]
+): RagVerificationClaim[] {
+  const evidence = chunks.map((chunk) => normalizeEvidenceCode(chunk.text));
+  const claims: RagVerificationClaim[] = [];
+  for (const match of draft.matchAll(/```[^\n]*\n([\s\S]*?)```/g)) {
+    const code = normalizeEvidenceCode(match[1] ?? '');
+    if (!code || evidence.some((text) => text.includes(code))) continue;
+    claims.push({
+      claim: 'Generated code block is not present verbatim in the supplied evidence.',
+      outcome: 'unsupported',
+      citations: []
+    });
+  }
+  return claims;
+}
+
 interface LexicalDocument {
   id: string;
   path: string;
@@ -105,6 +131,17 @@ export type RagSemanticVerifier = (
   input: RagSemanticVerifierInput
 ) => Promise<RagVerificationResult['claims']>;
 
+export interface RagGroundedAnswerRepairInput {
+  question: string;
+  chunks: RagChunk[];
+  signal: AbortSignal;
+  emitEvent?: (event: AgentEventData) => void;
+}
+
+export type RagGroundedAnswerRepairer = (
+  input: RagGroundedAnswerRepairInput
+) => Promise<string>;
+
 export interface RagRuntimeOptions {
   workspaceRoot: string;
   config?: RagConfig;
@@ -112,6 +149,8 @@ export interface RagRuntimeOptions {
   now?: () => number;
   idFactory?: () => string;
   semanticVerifier?: RagSemanticVerifier;
+  answerRepairer?: RagGroundedAnswerRepairer;
+  queryRewriter?: RagQueryRewriter;
 }
 
 export interface RagIndexOptions {
@@ -152,6 +191,25 @@ function lexicalOptions() {
       fuzzy: 0.1
     }
   };
+}
+
+function meaningfulQueryTerms(query: string): Set<string> {
+  return new Set(tokenizeRagText(query).filter((term) => Array.from(term).length >= 2));
+}
+
+function hasSufficientLexicalCoverage(query: string, result: SearchResult): boolean {
+  const queryTerms = meaningfulQueryTerms(query);
+  const matchedTerms = new Set(
+    result.queryTerms.map((term) => term.normalize('NFKC').toLowerCase())
+  );
+  if (queryTerms.size <= 2) {
+    return [...queryTerms].every((term) => matchedTerms.has(term));
+  }
+  const matchedCount = [...queryTerms].filter((term) => matchedTerms.has(term)).length;
+  return (
+    matchedCount >= MIN_LEXICAL_MATCHED_TERMS &&
+    matchedCount / queryTerms.size >= MIN_LEXICAL_QUERY_COVERAGE
+  );
 }
 
 function isExcludedPath(path: string): boolean {
@@ -250,6 +308,27 @@ function normalizePathFilter(path: string | undefined): string | undefined {
   return normalized;
 }
 
+function resolveSearchScope(
+  collections: string[] | undefined,
+  path: string | undefined
+): { collections: string[] | undefined; path: string | undefined } {
+  if (!path?.startsWith('rag://')) return { collections, path };
+  const match = /^rag:\/\/([^/?#]+)(?:\/([^?#]*))?$/u.exec(path);
+  if (!match) {
+    throw new Error(
+      'RAG virtual path must be rag://<collection>/<relative-path> without query or fragment'
+    );
+  }
+  const collection = match[1];
+  if (collections?.length && !collections.includes(collection)) {
+    throw new Error('RAG virtual path collection must match the collections filter');
+  }
+  return {
+    collections: collections?.length ? collections : [collection],
+    path: match[2] || undefined
+  };
+}
+
 function rrfMerge(
   rankings: Array<Array<{ id: string; score: number; channel: 'lexical' | 'vector' }>>
 ) {
@@ -300,8 +379,12 @@ export class RagRuntime {
   private readonly now: () => number;
   private readonly idFactory: () => string;
   private readonly receipts = new Map<string, Map<string, RagContextReceipt>>();
+  private readonly searchedChunks = new Map<string, Set<string>>();
   private readonly verifiedTurns = new Set<string>();
+  private readonly verificationResults = new Map<string, RagVerificationResult>();
   private semanticVerifier?: RagSemanticVerifier;
+  private answerRepairer?: RagGroundedAnswerRepairer;
+  private queryRewriter?: RagQueryRewriter;
   private vectorAvailable = true;
   private runtimeWarnings: string[] = [];
   private cachedStatus: RagStatus;
@@ -313,6 +396,8 @@ export class RagRuntime {
     this.now = options.now ?? Date.now;
     this.idFactory = options.idFactory ?? randomUUID;
     this.semanticVerifier = options.semanticVerifier;
+    this.answerRepairer = options.answerRepairer;
+    this.queryRewriter = options.queryRewriter;
     this.cachedStatus = {
       enabled: this.config.enabled,
       autoRetrieve: this.config.autoRetrieve,
@@ -333,10 +418,17 @@ export class RagRuntime {
     this.semanticVerifier = verifier;
   }
 
+  setAnswerRepairer(repairer: RagGroundedAnswerRepairer | undefined): void {
+    this.answerRepairer = repairer;
+  }
+
   getSystemPromptSuffix(): string {
     return [
       'For broad workspace or mounted-knowledge questions, use RagSearch, then RagRead before making evidence-backed claims.',
+      'In RagSearch, put collection names in collections (for example ["techdocs"]) and omit path for a broad search; path is only a relative file or directory inside that collection.',
+      'Search queries must match the likely language of the indexed source. If the user and source languages differ, include a concise source-language translation in queries; do not submit only the untranslated user question.',
       'Cite retrieved evidence with the exact [[rag:<chunkId>]] token returned by RagRead.',
+      'When Rank 1 directly answers the requested procedure or claim, read Rank 1 alone. Do not mix in broader conceptual neighbors. Lower-ranked results must be promoted by a narrower search before reading.',
       'Prefer Grep, RepoMap, and Read for exact filenames, symbols, or current edits. Never invent a RAG citation.',
       'RagVerify is optional and should be used only when claim-level support needs a second pass.',
       'Use SaveKnowledge only when the user explicitly asks to save, remember, or update durable knowledge. Summarize and normalize the requested note, preserve evidence receipts when supplied, and never save content opportunistically.'
@@ -982,14 +1074,37 @@ export class RagRuntime {
 
   async search(options: RagSearchOptions): Promise<RagRetrievalHit[]> {
     const startedAt = this.now();
-    const queries = [options.query, ...(options.queries ?? [])]
+    const initialQueries = [options.query, ...(options.queries ?? [])]
       .filter((query): query is string => typeof query === 'string' && Boolean(query.trim()))
-      .map((query) => query.trim())
-      .slice(0, MAX_SEARCH_QUERIES);
-    if (queries.length === 0) throw new Error('RagSearch requires at least one query');
-    const pathFilter = normalizePathFilter(options.path);
+      .map((query) => query.trim());
+    if (initialQueries.length === 0) throw new Error('RagSearch requires at least one query');
+    const expandedQueries = [...initialQueries];
+    const crossLanguageQuery = initialQueries.find((query) => /\p{Script=Han}/u.test(query));
+    if (crossLanguageQuery && this.queryRewriter) {
+      try {
+        expandedQueries.push(
+          ...(await this.queryRewriter({
+            query: crossLanguageQuery,
+            signal: options.signal,
+            emitEvent: options.emitEvent
+          }))
+        );
+      } catch (error) {
+        this.runtimeWarnings = [
+          ...this.runtimeWarnings.filter(
+            (warning) => !warning.startsWith('Cross-language query rewrite failed')
+          ),
+          `Cross-language query rewrite failed; using the original query: ${error instanceof Error ? error.message : String(error)}`
+        ];
+      }
+    }
+    const queries = [
+      ...new Set(expandedQueries.map((query) => query.trim()).filter(Boolean))
+    ].slice(0, MAX_SEARCH_QUERIES);
+    const scope = resolveSearchScope(options.collections, options.path);
+    const pathFilter = normalizePathFilter(scope.path);
     const limit = Math.min(options.limit ?? DEFAULT_SEARCH_LIMIT, MAX_SEARCH_LIMIT);
-    const requestedCollections = options.collections ? new Set(options.collections) : undefined;
+    const requestedCollections = scope.collections ? new Set(scope.collections) : undefined;
     const collections = (await this.listCollections()).filter(
       (collection) => !requestedCollections || requestedCollections.has(collection.name)
     );
@@ -1052,6 +1167,7 @@ export class RagRuntime {
         for (const query of queries) {
           const lexical = miniSearch
             .search(query)
+            .filter((result) => hasSufficientLexicalCoverage(query, result))
             .filter((result) => {
               const chunk = chunksById.get(String(result.id));
               return (
@@ -1206,6 +1322,22 @@ export class RagRuntime {
     }
   }
 
+  recordSearchResults(turnId: string, results: readonly RagRetrievalHit[]): void {
+    const searched = this.searchedChunks.get(turnId) ?? new Set<string>();
+    results.forEach((result) => searched.add(result.chunkId));
+    this.searchedChunks.set(turnId, searched);
+  }
+
+  assertChunksWereSearched(turnId: string, chunkIds: readonly string[]): void {
+    const searched = this.searchedChunks.get(turnId) ?? new Set<string>();
+    const unavailable = chunkIds.filter((chunkId) => !searched.has(chunkId));
+    if (unavailable.length > 0) {
+      throw new Error(
+        'RagRead accepts only chunk IDs returned by a RagSearch in the current turn.'
+      );
+    }
+  }
+
   async readChunks(
     chunkIds: readonly string[],
     turnId: string,
@@ -1248,13 +1380,65 @@ export class RagRuntime {
     if (this.verifiedTurns.has(turnId))
       throw new Error('RagVerify may be called only once per turn');
     this.verifiedTurns.add(turnId);
+    return this.verifyDraft(draft, turnId, signal, emitEvent);
+  }
+
+  async verifyRepairedAnswer(
+    draft: string,
+    turnId: string,
+    signal: AbortSignal,
+    emitEvent?: (event: AgentEventData) => void
+  ): Promise<RagVerificationResult> {
+    return this.verifyDraft(draft, turnId, signal, emitEvent);
+  }
+
+  canRepairGroundedAnswer(): boolean {
+    return Boolean(this.answerRepairer);
+  }
+
+  async repairGroundedAnswer(
+    question: string,
+    turnId: string,
+    signal: AbortSignal,
+    emitEvent?: (event: AgentEventData) => void
+  ): Promise<string> {
+    if (!this.answerRepairer) throw new Error('RAG answer repair is unavailable');
+    const chunks = await this.loadTurnChunks(turnId, signal);
+    if (chunks.length === 0) throw new Error('No RAG evidence is available for answer repair');
+    return this.answerRepairer({
+      question: question.slice(0, 8 * 1024),
+      chunks,
+      signal,
+      emitEvent
+    });
+  }
+
+  private async loadTurnChunks(turnId: string, signal: AbortSignal): Promise<RagChunk[]> {
+    const chunks: RagChunk[] = [];
+    const turnReceipts = this.receipts.get(turnId) ?? new Map();
+    for (const receipt of turnReceipts.values()) {
+      throwIfAborted(signal);
+      const revision = await this.store.loadRevision(receipt.collectionId, receipt.revision);
+      const chunk = revision?.chunks.find((entry) => entry.id === receipt.chunkId);
+      if (chunk) chunks.push(chunk);
+    }
+    return chunks;
+  }
+
+  private async verifyDraft(
+    draft: string,
+    turnId: string,
+    signal: AbortSignal,
+    emitEvent?: (event: AgentEventData) => void
+  ): Promise<RagVerificationResult> {
     const deterministic = await this.validateCitations(draft, turnId, signal);
     const validChunkIds = new Set(
       deterministic.filter((entry) => entry.status === 'valid').map((entry) => entry.chunkId)
     );
     const chunks: RagChunk[] = [];
     const turnReceipts = this.receipts.get(turnId) ?? new Map();
-    for (const chunkId of validChunkIds) {
+    const evidenceChunkIds = validChunkIds.size > 0 ? validChunkIds : new Set(turnReceipts.keys());
+    for (const chunkId of evidenceChunkIds) {
       const receipt = turnReceipts.get(chunkId);
       if (!receipt) continue;
       const revision = await this.store.loadRevision(receipt.collectionId, receipt.revision);
@@ -1262,7 +1446,7 @@ export class RagRuntime {
       if (chunk) chunks.push(chunk);
     }
     const invalid = deterministic.filter((entry) => entry.status !== 'valid');
-    const claims = this.semanticVerifier
+    const verifierClaims = this.semanticVerifier
       ? await this.semanticVerifier({
           draft: draft.slice(0, 20 * 1024),
           chunks,
@@ -1270,16 +1454,44 @@ export class RagRuntime {
           emitEvent
         })
       : undefined;
+    const unsupportedCodeClaims = findUnsupportedCodeClaims(draft, chunks);
+    const claims =
+      verifierClaims || unsupportedCodeClaims.length > 0
+        ? [...(verifierClaims ?? []), ...unsupportedCodeClaims]
+        : undefined;
     const claimOutcomes = claims?.map((claim) => claim.outcome) ?? [];
-    const outcome: RagVerificationResult['outcome'] =
-      invalid.length > 0 || claimOutcomes.includes('unsupported')
-        ? 'unsupported'
+    const availableChunkIds = new Set(chunks.map((chunk) => chunk.id));
+    const semanticClaims = claims ?? [];
+    const claimsHaveEvidence =
+      semanticClaims.length > 0 &&
+      semanticClaims.every(
+        (claim) =>
+          claim.outcome === 'unsupported' ||
+          claim.outcome === 'unverifiable' ||
+          validChunkIds.size > 0 ||
+          claim.citations.some((citation) => availableChunkIds.has(citation))
+      );
+    const outcome: RagVerificationResult['outcome'] = claimOutcomes.includes('unsupported')
+      ? 'unsupported'
+      : claims && (!claimsHaveEvidence || claimOutcomes.includes('unverifiable'))
+        ? 'unverifiable'
         : claimOutcomes.includes('partial')
           ? 'partial'
-          : deterministic.length === 0 && !claims
+          : invalid.length > 0 || (deterministic.length === 0 && !claims)
             ? 'unverifiable'
             : 'supported';
-    return { outcome, deterministic, ...(claims ? { claims } : {}) };
+    const result = { outcome, deterministic, ...(claims ? { claims } : {}) };
+    this.verificationResults.set(turnId, structuredClone(result));
+    return result;
+  }
+
+  canVerifySemantically(): boolean {
+    return Boolean(this.semanticVerifier);
+  }
+
+  getTurnVerification(turnId: string): RagVerificationResult | undefined {
+    const result = this.verificationResults.get(turnId);
+    return result ? structuredClone(result) : undefined;
   }
 
   async validateCitations(
@@ -1375,7 +1587,9 @@ export class RagRuntime {
 
   clearTurn(turnId: string): void {
     this.receipts.delete(turnId);
+    this.searchedChunks.delete(turnId);
     this.verifiedTurns.delete(turnId);
+    this.verificationResults.delete(turnId);
   }
 
   private async changedFileCount(

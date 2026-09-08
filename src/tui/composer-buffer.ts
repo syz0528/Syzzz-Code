@@ -5,6 +5,7 @@ export const MAX_COMPOSER_BYTES = 256 * 1024;
 
 export interface ComposerViewport {
   lines: string[];
+  lineRanges: Array<{ start: number; end: number }>;
   cursorX: number;
   cursorRow: number;
   firstLogicalLine: number;
@@ -65,9 +66,10 @@ function offsetForColumn(value: string, start: number, end: number, column: numb
   return start + (parts[column]?.index ?? 0);
 }
 
-function clipLine(value: string, maximumWidth: number): string {
+function clipLine(value: string, maximumWidth: number): { text: string; end: number } {
   let result = '';
   let width = 0;
+  let end = 0;
   for (const part of segmenter.segment(value)) {
     const nextWidth = stringWidth(part.segment);
     if (width + nextWidth > maximumWidth) {
@@ -75,15 +77,16 @@ function clipLine(value: string, maximumWidth: number): string {
     }
     result += part.segment;
     width += nextWidth;
+    end = part.index + part.segment.length;
   }
-  return result;
+  return { text: result, end };
 }
 
 function activeLineViewport(
   value: string,
   cursor: number,
   maximumWidth: number
-): { text: string; cursorX: number } {
+): { text: string; cursorX: number; start: number; end: number } {
   const parts = [...segmenter.segment(value)];
   const cursorPart = parts.findIndex((part) => part.index + part.segment.length > cursor);
   const cursorIndex = cursorPart < 0 ? parts.length : cursorPart;
@@ -115,7 +118,9 @@ function activeLineViewport(
     cursorX: Math.min(
       maximumWidth - 1,
       Math.max(0, (cumulative[cursorIndex] ?? 0) - (cumulative[start] ?? 0))
-    )
+    ),
+    start: parts[start]?.index ?? value.length,
+    end: end < parts.length ? (parts[end]?.index ?? value.length) : value.length
   };
 }
 
@@ -139,18 +144,30 @@ export function createComposerViewport(
     Math.max(0, cursorLogicalLine - Math.floor(rows / 2))
   );
   const visibleLines = logicalLines.slice(firstLogicalLine, firstLogicalLine + rows);
+  const logicalLineStarts: number[] = [];
+  let logicalLineStart = 0;
+  for (const line of logicalLines) {
+    logicalLineStarts.push(logicalLineStart);
+    logicalLineStart += line.length + 1;
+  }
   const cursorRow = cursorLogicalLine - firstLogicalLine;
   let cursorX = 0;
+  const lineRanges: Array<{ start: number; end: number }> = [];
   const lines = visibleLines.map((line, index) => {
+    const lineStart = logicalLineStarts[firstLogicalLine + index] ?? 0;
     if (index !== cursorRow) {
-      return clipLine(line, width);
+      const clipped = clipLine(line, width);
+      lineRanges.push({ start: lineStart, end: lineStart + clipped.end });
+      return clipped.text;
     }
     const active = activeLineViewport(line, cursorInLine, width);
     cursorX = active.cursorX;
+    lineRanges.push({ start: lineStart + active.start, end: lineStart + active.end });
     return active.text;
   });
   return {
     lines: lines.length > 0 ? lines : [''],
+    lineRanges: lineRanges.length > 0 ? lineRanges : [{ start: 0, end: 0 }],
     cursorX,
     cursorRow: Math.max(0, Math.min(cursorRow, lines.length - 1)),
     firstLogicalLine,
@@ -162,6 +179,7 @@ export class ComposerBuffer {
   private content = '';
   private offset = 0;
   private preferredColumn?: number;
+  private selectionAnchor?: number;
 
   constructor(initialValue = '') {
     if (Buffer.byteLength(initialValue, 'utf8') > MAX_COMPOSER_BYTES) {
@@ -179,6 +197,16 @@ export class ComposerBuffer {
     return this.offset;
   }
 
+  get selection(): { start: number; end: number } | undefined {
+    if (this.selectionAnchor === undefined || this.selectionAnchor === this.offset) {
+      return undefined;
+    }
+    return {
+      start: Math.min(this.selectionAnchor, this.offset),
+      end: Math.max(this.selectionAnchor, this.offset)
+    };
+  }
+
   get empty(): boolean {
     return this.content.length === 0;
   }
@@ -191,27 +219,36 @@ export class ComposerBuffer {
     this.content = normalized;
     this.offset = Math.max(0, Math.min(cursor, normalized.length));
     this.preferredColumn = undefined;
+    this.selectionAnchor = undefined;
   }
 
   clear(): void {
     this.content = '';
     this.offset = 0;
     this.preferredColumn = undefined;
+    this.selectionAnchor = undefined;
   }
 
   insert(text: string): boolean {
     const normalized = text.replaceAll('\r\n', '\n').replaceAll('\r', '\n');
-    const next = this.content.slice(0, this.offset) + normalized + this.content.slice(this.offset);
+    const selection = this.selection;
+    const start = selection?.start ?? this.offset;
+    const end = selection?.end ?? this.offset;
+    const next = this.content.slice(0, start) + normalized + this.content.slice(end);
     if (Buffer.byteLength(next, 'utf8') > MAX_COMPOSER_BYTES) {
       return false;
     }
     this.content = next;
-    this.offset += normalized.length;
+    this.offset = start + normalized.length;
     this.preferredColumn = undefined;
+    this.selectionAnchor = undefined;
     return true;
   }
 
   backspace(): boolean {
+    if (this.deleteSelection()) {
+      return true;
+    }
     if (this.offset === 0) {
       return false;
     }
@@ -223,6 +260,9 @@ export class ComposerBuffer {
   }
 
   delete(): boolean {
+    if (this.deleteSelection()) {
+      return true;
+    }
     if (this.offset >= this.content.length) {
       return false;
     }
@@ -232,27 +272,52 @@ export class ComposerBuffer {
     return true;
   }
 
-  moveLeft(): void {
+  selectAll(): void {
+    this.selectionAnchor = 0;
+    this.offset = this.content.length;
+    this.preferredColumn = undefined;
+  }
+
+  moveLeft(extend = false): void {
+    const selection = this.selection;
+    if (!extend && selection) {
+      this.offset = selection.start;
+      this.selectionAnchor = undefined;
+      this.preferredColumn = undefined;
+      return;
+    }
+    this.prepareMovement(extend);
     this.offset = previousBoundary(this.content, this.offset);
     this.preferredColumn = undefined;
   }
 
-  moveRight(): void {
+  moveRight(extend = false): void {
+    const selection = this.selection;
+    if (!extend && selection) {
+      this.offset = selection.end;
+      this.selectionAnchor = undefined;
+      this.preferredColumn = undefined;
+      return;
+    }
+    this.prepareMovement(extend);
     this.offset = nextBoundary(this.content, this.offset);
     this.preferredColumn = undefined;
   }
 
-  moveHome(): void {
+  moveHome(extend = false): void {
+    this.prepareMovement(extend);
     this.offset = lineBounds(this.content, this.offset).start;
     this.preferredColumn = undefined;
   }
 
-  moveEnd(): void {
+  moveEnd(extend = false): void {
+    this.prepareMovement(extend);
     this.offset = lineBounds(this.content, this.offset).end;
     this.preferredColumn = undefined;
   }
 
-  moveVertical(direction: -1 | 1): void {
+  moveVertical(direction: -1 | 1, extend = false): void {
+    this.prepareMovement(extend);
     const current = lineBounds(this.content, this.offset);
     const column = this.preferredColumn ?? graphemeColumn(this.content, current.start, this.offset);
     this.preferredColumn = column;
@@ -274,5 +339,25 @@ export class ComposerBuffer {
     const nextNewline = this.content.indexOf('\n', nextStart);
     const nextEnd = nextNewline < 0 ? this.content.length : nextNewline;
     this.offset = offsetForColumn(this.content, nextStart, nextEnd, column);
+  }
+
+  private prepareMovement(extend: boolean): void {
+    if (extend) {
+      this.selectionAnchor ??= this.offset;
+    } else {
+      this.selectionAnchor = undefined;
+    }
+  }
+
+  private deleteSelection(): boolean {
+    const selection = this.selection;
+    if (!selection) {
+      return false;
+    }
+    this.content = this.content.slice(0, selection.start) + this.content.slice(selection.end);
+    this.offset = selection.start;
+    this.selectionAnchor = undefined;
+    this.preferredColumn = undefined;
+    return true;
   }
 }

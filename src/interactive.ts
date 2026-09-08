@@ -1293,27 +1293,47 @@ export function createCommandRegistry(): CommandRegistry<InteractiveCommandConte
     category: 'runtime',
     priority: COMMAND_PRIORITIES.context,
     description: 'Show context usage, reload instructions, or select a context window budget.',
-    argumentHint: '[reload|64k|128k|200k]',
-    choices: (commandContext) => [
-      ...CONTEXT_WINDOW_PRESETS.map((tokens) => ({
-        value: formatTokenWindow(tokens).toLowerCase(),
-        label: `${formatTokenWindow(tokens)} ${localText(commandContext, 'context', '上下文')}`,
-        description: localText(
-          commandContext,
-          'Persist this fallback context budget for configured models without an override',
-          '为未单独配置窗口的模型持久化此 fallback 上下文预算'
-        ),
-        current: commandContext.contextWindowTokens === tokens
-      })),
-      {
-        value: 'reload',
-        description: localText(
-          commandContext,
-          'Reload AGENTS.md and Skill metadata',
-          '重新加载 AGENTS.md 与 Skill 元数据'
-        )
-      }
-    ],
+    argumentHint: '[status|reload|64k|128k|200k]',
+    choices: (commandContext) => {
+      const actualTokens = commandContext.engine.getStatus().context.contextWindowTokens;
+      return [
+        {
+          value: 'status',
+          label: localText(
+            commandContext,
+            `Current model: ${formatTokenWindow(actualTokens)}`,
+            `当前模型：${formatTokenWindow(actualTokens)}`
+          ),
+          description: localText(
+            commandContext,
+            'Effective context window from Provider metadata or fallback',
+            'Provider 元数据或 fallback 最终决定的实际上下文窗口'
+          ),
+          current: true
+        },
+        ...CONTEXT_WINDOW_PRESETS.map((tokens) => ({
+          value: formatTokenWindow(tokens).toLowerCase(),
+          label:
+            `${formatTokenWindow(tokens)} ${localText(commandContext, 'fallback', '默认预算')}` +
+            (commandContext.contextWindowTokens === tokens
+              ? localText(commandContext, ' (default)', '（默认）')
+              : ''),
+          description: localText(
+            commandContext,
+            'Persist this fallback context budget for configured models without an override',
+            '为未单独配置窗口的模型持久化此 fallback 上下文预算'
+          )
+        })),
+        {
+          value: 'reload',
+          description: localText(
+            commandContext,
+            'Reload AGENTS.md and Skill metadata',
+            '重新加载 AGENTS.md 与 Skill 元数据'
+          )
+        }
+      ];
+    },
     async execute(argument, commandContext): Promise<CommandExecutionResult> {
       const runtime = commandContext.engine.getCompositionRuntime?.();
       const normalized = argument?.trim().toLowerCase();
@@ -1324,10 +1344,10 @@ export function createCommandRegistry(): CommandRegistry<InteractiveCommandConte
         }
         await runtime.reload();
         console.log(chalk.green('\nContext and Skill metadata reloaded.\n'));
-      } else if (normalized) {
+      } else if (normalized && normalized !== 'status') {
         const tokens = parseContextWindowPreset(normalized);
         if (!tokens) {
-          console.log(chalk.red('\nUse: /context reload | 64k | 128k | 200k\n'));
+          console.log(chalk.red('\nUse: /context status | reload | 64k | 128k | 200k\n'));
           return 'continue';
         }
         await commandContext.persistContextWindow?.(tokens);

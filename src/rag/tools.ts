@@ -7,6 +7,7 @@ import type { RagRuntime } from './runtime.js';
 import type { RagPreparedWrite } from './types.js';
 
 const MAX_RESULT_BYTES = 40 * 1024;
+const MIN_AGENT_SEARCH_LIMIT = 12;
 
 function errorResult(action: string, error: unknown): ToolResult {
   if (isAbortError(error)) throw error;
@@ -24,14 +25,44 @@ export function createRagTools(runtime: RagRuntime, includeVerify: boolean): Too
   const search = defineTool({
     name: 'RagSearch',
     description:
-      'Search ready workspace and mounted knowledge indexes. Returns bounded evidence summaries and chunk IDs; use RagRead before citing evidence.',
+      'Search ready workspace and mounted knowledge indexes. Queries must use the likely language of the indexed source; when the user asks in another language, include a concise source-language translation in queries. Select named collections with collections (for example ["techdocs"]); omit path for a collection-wide search. Returns bounded evidence summaries and chunk IDs; use RagRead before citing evidence.',
     inputSchema: z
       .object({
-        query: z.string().min(1).max(8_192).optional(),
-        queries: z.array(z.string().min(1).max(8_192)).max(4).optional(),
-        collections: z.array(z.string().min(1).max(64)).max(16).optional(),
-        path: z.string().min(1).max(4_096).optional(),
-        limit: z.number().int().min(1).max(50).optional()
+        query: z
+          .string()
+          .min(1)
+          .max(8_192)
+          .describe('One natural-language search query.')
+          .optional(),
+        queries: z
+          .array(z.string().min(1).max(8_192))
+          .max(4)
+          .describe('Optional additional search queries; at most four queries total are used.')
+          .optional(),
+        collections: z
+          .array(z.string().min(1).max(64))
+          .max(16)
+          .describe(
+            'Mounted collection names to search, for example ["techdocs"]. Put collection names here, never in path.'
+          )
+          .optional(),
+        path: z
+          .string()
+          .min(1)
+          .max(4_096)
+          .describe(
+            'Optional relative file or directory inside the selected collection, for example "advanced/testing-events.md". Omit for a broad collection search. A rag:// virtual path is accepted, but absolute host paths and .. are forbidden.'
+          )
+          .optional(),
+        limit: z
+          .number()
+          .int()
+          .min(1)
+          .max(50)
+          .describe(
+            'Requested number of ranked summaries. Agent searches always return at least 12 candidates so an early lexical rank cannot hide more specific evidence.'
+          )
+          .optional()
       })
       .strict()
       .refine((input) => Boolean(input.query || input.queries?.length), {
@@ -44,9 +75,11 @@ export function createRagTools(runtime: RagRuntime, includeVerify: boolean): Too
       try {
         const results = await runtime.search({
           ...input,
+          limit: Math.max(input.limit ?? MIN_AGENT_SEARCH_LIMIT, MIN_AGENT_SEARCH_LIMIT),
           signal: context.signal,
           emitEvent: context.emitEvent
         });
+        runtime.recordSearchResults(context.turnId, results);
         const body = results.length
           ? results
               .map(
@@ -56,8 +89,15 @@ export function createRagTools(runtime: RagRuntime, includeVerify: boolean): Too
                   `   ${hit.summary}`
               )
               .join('\n')
-          : '(no RAG evidence matched)';
-        const limited = limitUtf8Head(`RAG search results:\n${body}`, MAX_RESULT_BYTES);
+          : '(no sufficiently relevant RAG evidence matched; if the question and source use different languages, retry with a concise query in the source language)';
+        const limited = limitUtf8Head(
+          [
+            'RAG search results:',
+            'Selection rule: topic overlap alone is not evidence. Read the smallest set of returned candidates whose summaries directly address the requested operation or claim; ranking is a relevance hint, not proof.',
+            body
+          ].join('\n'),
+          MAX_RESULT_BYTES
+        );
         return {
           content: limited.text,
           metadata: {
@@ -75,7 +115,7 @@ export function createRagTools(runtime: RagRuntime, includeVerify: boolean): Too
   const read = defineTool({
     name: 'RagRead',
     description:
-      'Read up to 10 RAG chunks returned by RagSearch. Each chunk includes an exact citation token that may be used in the answer.',
+      'Read the smallest sufficient evidence set from candidates returned by RagSearch in this turn. Ranking is a relevance hint, not proof. Each chunk includes an exact citation token that must appear in any evidence-backed final answer.',
     inputSchema: z
       .object({
         chunkIds: z
@@ -89,6 +129,7 @@ export function createRagTools(runtime: RagRuntime, includeVerify: boolean): Too
     modeAccess: 'all-modes',
     async execute(input, context) {
       try {
+        runtime.assertChunksWereSearched(context.turnId, input.chunkIds);
         const result = await runtime.readChunks(input.chunkIds, context.turnId, context.signal);
         const missing = input.chunkIds.filter(
           (id) => !result.chunks.some((chunk) => chunk.id === id)
@@ -102,8 +143,19 @@ export function createRagTools(runtime: RagRuntime, includeVerify: boolean): Too
               `${chunk.text}`
           )
           .join('\n\n---\n\n');
+        const answerContract =
+          result.chunks.length > 0
+            ? [
+                'FINAL ANSWER CONTRACT:',
+                '- Answer in the user\'s language and keep the response no broader than the question.',
+                '- Copy every applicable [[rag:<chunkId>]] token exactly as shown below into the final answer.',
+                '- Do not output code unless that exact code is visible in the evidence text. An include directive or link is not code evidence.',
+                '- Do not add setup steps, packages, APIs, parameters, examples, or alternative methods absent from the evidence.',
+                '- If the evidence does not answer the question, state that evidence is insufficient.'
+              ].join('\n')
+            : '';
         const limited = limitUtf8Head(
-          `${body || '(no chunks found)'}${missing.length ? `\n\nMissing chunk IDs: ${missing.join(', ')}` : ''}`,
+          `${answerContract ? `${answerContract}\n\n` : ''}${body || '(no chunks found)'}${missing.length ? `\n\nMissing chunk IDs: ${missing.join(', ')}` : ''}`,
           MAX_RESULT_BYTES
         );
         return {

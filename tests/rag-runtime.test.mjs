@@ -9,7 +9,10 @@ import { manageRag } from '../dist/rag/management.js';
 import { RagRuntime } from '../dist/rag/runtime.js';
 import { RagStore } from '../dist/rag/store.js';
 import { tokenizeRagText } from '../dist/rag/tokenizer.js';
-import { createProviderRagVerifier } from '../dist/rag/verifier.js';
+import {
+  createProviderRagAnswerRepairer,
+  createProviderRagVerifier
+} from '../dist/rag/verifier.js';
 import { toAuditRecord } from '../dist/audit.js';
 import { QueryEngine } from '../dist/engine.js';
 
@@ -50,6 +53,10 @@ test('RAG chunking preserves Markdown breadcrumbs, code symbols, and CJK terms',
   assert.equal(chunks[1].heading, '项目 > 安全');
   assert.ok(tokenizeRagText('中文检索 QueryEngine').includes('中文'));
   assert.ok(tokenizeRagText('中文检索 QueryEngine').includes('queryengine'));
+  const mixedTerms = tokenizeRagText('FastAPI测试lifespan');
+  assert.ok(mixedTerms.includes('fastapi'));
+  assert.ok(mixedTerms.includes('lifespan'));
+  assert.equal(mixedTerms.includes('fastapi测试lifespan'), false);
 
   const source = 'export class QueryEngine {}\n\nexport function runTurn() {}';
   const code = chunkRagSource({
@@ -65,6 +72,108 @@ test('RAG chunking preserves Markdown breadcrumbs, code symbols, and CJK terms',
     code.map((chunk) => chunk.symbol),
     ['QueryEngine', 'runTurn']
   );
+});
+
+test('lexical RAG rejects accidental low-coverage cross-language hits and accepts source-language queries', async () => {
+  await withWorkspace(async ({ workspace, ragDirectory }) => {
+    await writeFile(
+      join(workspace, 'testing-events.md'),
+      '# Testing Events\nWhen lifespan must run in tests, use TestClient with a with statement.\n',
+      'utf8'
+    );
+    const runtime = new RagRuntime({
+      workspaceRoot: workspace,
+      config: lexicalConfig,
+      store: new RagStore(ragDirectory)
+    });
+    await runtime.index({ signal: signal() });
+
+    const untranslated = await runtime.search({
+      query: 'FastAPI 测试中如何确保应用 lifespan 在测试期间被执行',
+      signal: signal()
+    });
+    assert.deepEqual(untranslated, []);
+
+    const sourceLanguage = await runtime.search({
+      query: 'TestClient lifespan with statement',
+      signal: signal()
+    });
+    assert.equal(sourceLanguage[0].virtualPath, 'rag://workspace/testing-events.md');
+  });
+});
+
+test('RAG augments a CJK question with isolated source-language retrieval queries', async () => {
+  await withWorkspace(async ({ workspace, ragDirectory }) => {
+    await writeFile(
+      join(workspace, 'testing-events.md'),
+      '# Testing Events\nWhen lifespan must run in tests, use TestClient with a with statement.\n',
+      'utf8'
+    );
+    const rewritten = [];
+    const runtime = new RagRuntime({
+      workspaceRoot: workspace,
+      config: lexicalConfig,
+      store: new RagStore(ragDirectory),
+      queryRewriter: async ({ query }) => {
+        rewritten.push(query);
+        return ['TestClient lifespan with statement'];
+      }
+    });
+    await runtime.index({ signal: signal() });
+    const events = [];
+    const results = await runtime.search({
+      query: '如何确保 lifespan 在测试期间执行？',
+      signal: signal(),
+      emitEvent: (event) => events.push(event)
+    });
+
+    assert.deepEqual(rewritten, ['如何确保 lifespan 在测试期间执行？']);
+    assert.equal(results[0].virtualPath, 'rag://workspace/testing-events.md');
+    assert.ok(
+      events.some((event) => event.type === 'rag_retrieval_started' && event.queryCount === 2)
+    );
+  });
+});
+
+test('RagRead accepts only chunks returned by RagSearch in the same turn', async () => {
+  await withWorkspace(async ({ workspace, ragDirectory }) => {
+    await writeFile(join(workspace, 'README.md'), '# Evidence\nSEARCH_BEFORE_READ\n', 'utf8');
+    const runtime = new RagRuntime({
+      workspaceRoot: workspace,
+      config: lexicalConfig,
+      store: new RagStore(ragDirectory)
+    });
+    await runtime.index({ signal: signal() });
+    const searchTool = runtime.getTools().find((tool) => tool.name === 'RagSearch');
+    const readTool = runtime.getTools().find((tool) => tool.name === 'RagRead');
+    const context = {
+      toolCallId: 'search-before-read',
+      sessionId: 'session',
+      turnId: 'turn',
+      workspaceRoot: workspace,
+      workingDirectory: workspace,
+      mode: 'ask',
+      permissionMode: 'safe',
+      signal: signal()
+    };
+
+    const denied = await readTool.execute(
+      { chunkIds: ['aaaaaaaaaaaaaaaa'] },
+      { ...context, toolCallId: 'read-before-search' }
+    );
+    assert.equal(denied.isError, true);
+    assert.match(denied.content, /chunk IDs returned by a RagSearch in the current turn/);
+
+    const searched = await searchTool.execute({ query: 'SEARCH_BEFORE_READ' }, context);
+    const chunkId = /\b[a-f0-9]{32}\b/.exec(searched.content)?.[0];
+    assert.ok(chunkId);
+    const read = await readTool.execute(
+      { chunkIds: [chunkId] },
+      { ...context, toolCallId: 'read-after-search' }
+    );
+    assert.equal(read.isError, false);
+    assert.match(read.content, new RegExp(`\\[\\[rag:${chunkId}\\]\\]`));
+  });
 });
 
 test('lexical RAG indexes safely, retrieves progressively, and rejects stale citations', async () => {
@@ -214,6 +323,27 @@ test('external collections require an explicit workspace mount and expose virtua
     assert.ok(hits.length > 0);
     assert.match(hits[0].virtualPath, /^rag:\/\/docs\//);
     assert.doesNotMatch(JSON.stringify(hits), new RegExp(external.replaceAll('\\', '\\\\')));
+    const virtualRootHits = await runtime.search({
+      query: '挂载集合',
+      path: 'rag://docs',
+      signal: signal()
+    });
+    const virtualFileHits = await runtime.search({
+      query: '挂载集合',
+      path: 'rag://docs/guide.md',
+      signal: signal()
+    });
+    assert.ok(virtualRootHits.length > 0);
+    assert.ok(virtualFileHits.length > 0);
+    await assert.rejects(
+      runtime.search({
+        query: '挂载集合',
+        collections: ['workspace'],
+        path: 'rag://docs/guide.md',
+        signal: signal()
+      }),
+      /virtual path collection must match/
+    );
     await runtime.unmount('docs');
     await assert.rejects(
       runtime.search({ query: '挂载集合', collections: ['docs'], signal: signal() }),
@@ -394,20 +524,23 @@ test('OpenAI-compatible embeddings and Jina-compatible reranking produce a vecto
 test('semantic RAG verification emits isolated Provider purpose and bounded usage metadata', async () => {
   await withWorkspace(async ({ workspace, ragDirectory }) => {
     await writeFile(join(workspace, 'README.md'), '# Evidence\nVERIFIER_EVIDENCE\n', 'utf8');
+    let verifierRequest;
     const provider = {
-      async chat() {
+      async chat(request) {
+        verifierRequest = request;
+        const payload = JSON.stringify({
+          claims: [
+            {
+              claim: 'The evidence exists',
+              outcome: 'supported',
+              citations: []
+            }
+          ]
+        });
         return {
           message: {
             role: 'assistant',
-            content: JSON.stringify({
-              claims: [
-                {
-                  claim: 'The evidence exists',
-                  outcome: 'supported',
-                  citations: []
-                }
-              ]
-            })
+            content: `Verification result:\n\`\`\`json\n${payload}\n\`\`\`\n\n${payload}`
           },
           finishReason: 'stop',
           usage: { inputTokens: 12, outputTokens: 8, totalTokens: 20 },
@@ -454,6 +587,8 @@ test('semantic RAG verification emits isolated Provider purpose and bounded usag
     );
     assert.equal(result.isError, undefined);
     assert.equal(result.metadata.outcome, 'supported');
+    assert.equal(verifierRequest.maxOutputTokens, 512);
+    assert.deepEqual(verifierRequest.stopSequences, ['\n\n']);
     assert.deepEqual(
       events.filter((event) => event.type.startsWith('provider_')).map((event) => event.type),
       ['provider_request_started', 'provider_request_completed']
@@ -466,6 +601,102 @@ test('semantic RAG verification emits isolated Provider purpose and bounded usag
     assert.equal(events.find((event) => event.type === 'usage_updated').usage.totalTokens, 20);
     assert.ok(events.some((event) => event.type === 'rag_verification_started'));
     assert.ok(events.some((event) => event.type === 'rag_verification_completed'));
+  });
+});
+
+test('RAG answer repair uses an isolated bounded evidence-only request', async () => {
+  let repairRequest;
+  const provider = {
+    async chat(request) {
+      repairRequest = request;
+      return {
+        message: {
+          role: 'assistant',
+          content: '[[rag:1234567890abcdef1234567890abcdef]] 修复后的证据回答。'
+        },
+        finishReason: 'stop',
+        usage: { inputTokens: 20, outputTokens: 10, totalTokens: 30 }
+      };
+    },
+    getInfo() {
+      return {
+        name: 'Repair Mock',
+        type: 'mock',
+        model: 'repair-model',
+        capabilities: { streaming: false, reasoningToggle: false }
+      };
+    },
+    fork() {
+      return this;
+    }
+  };
+  const repair = createProviderRagAnswerRepairer(provider);
+  assert.ok(repair);
+  const events = [];
+  const answer = await repair({
+    question: '如何执行？',
+    chunks: [
+      {
+        id: '1234567890abcdef1234567890abcdef',
+        collectionId: 'collection',
+        virtualPath: 'rag://docs/example.md',
+        lineStart: 1,
+        lineEnd: 1,
+        language: 'markdown',
+        text: 'Use the documented operation.',
+        sourceHash: 'hash',
+        sourceBytes: 29,
+        sourceMtimeMs: 1,
+        revision: 'revision'
+      }
+    ],
+    signal: signal(),
+    emitEvent: (event) => events.push(event)
+  });
+
+  assert.match(answer, /^\[\[rag:/);
+  assert.equal(repairRequest.maxOutputTokens, 96);
+  assert.deepEqual(repairRequest.stopSequences, ['\n\n']);
+  assert.deepEqual(repairRequest.tools, []);
+  assert.doesNotMatch(repairRequest.messages[0].content, /sourceHash|virtualPath/);
+  assert.ok(
+    events
+      .filter((event) => event.type.startsWith('provider_') || event.type === 'usage_updated')
+      .every((event) => event.purpose === 'rag-verification')
+  );
+});
+
+test('RAG verification rejects generated code that is absent from evidence', async () => {
+  await withWorkspace(async ({ workspace, ragDirectory }) => {
+    await writeFile(join(workspace, 'README.md'), '# Evidence\nUse the documented operation.\n', 'utf8');
+    const runtime = new RagRuntime({
+      workspaceRoot: workspace,
+      config: lexicalConfig,
+      store: new RagStore(ragDirectory),
+      semanticVerifier: async ({ chunks }) => [
+        {
+          claim: 'Use the documented operation.',
+          outcome: 'supported',
+          citations: [chunks[0].id]
+        }
+      ]
+    });
+    await runtime.index({ signal: signal() });
+    const [hit] = await runtime.search({ query: 'documented operation', signal: signal() });
+    await runtime.readChunks([hit.chunkId], 'code-guard-turn', signal());
+    const result = await runtime.verify(
+      `Use the documented operation. [[rag:${hit.chunkId}]]\n\n\`\`\`js\ninventedCall()\n\`\`\``,
+      'code-guard-turn',
+      signal()
+    );
+
+    assert.equal(result.outcome, 'unsupported');
+    assert.ok(
+      result.claims.some(
+        (claim) =>
+          claim.outcome === 'unsupported' && claim.claim.includes('code block')
+      )
+    );
   });
 });
 
@@ -503,9 +734,14 @@ test('Engine exposes read-only RAG tools in ask mode and validates final citatio
     });
     await rag.index({ signal: signal() });
     const seenTools = [];
+    const seenGroundedAnswerBounds = [];
     const provider = {
       async chat(request) {
         seenTools.push(request.tools.map((tool) => tool.name));
+        seenGroundedAnswerBounds.push({
+          maxOutputTokens: request.maxOutputTokens,
+          stopSequences: request.stopSequences
+        });
         const toolResults = request.messages.filter((message) => message.role === 'tool');
         if (toolResults.length === 0) {
           return {
@@ -572,12 +808,474 @@ test('Engine exposes read-only RAG tools in ask mode and validates final citatio
     assert.equal(result.status, 'completed');
     assert.ok(seenTools.every((tools) => tools.includes('RagSearch') && tools.includes('RagRead')));
     assert.ok(seenTools.every((tools) => !tools.includes('RagVerify')));
+    assert.deepEqual(seenGroundedAnswerBounds, [
+      { maxOutputTokens: undefined, stopSequences: undefined },
+      { maxOutputTokens: undefined, stopSequences: undefined },
+      { maxOutputTokens: 128, stopSequences: ['\n\n'] }
+    ]);
     assert.ok(events.some((event) => event.type === 'rag_retrieval_completed'));
     assert.ok(
       events.some(
         (event) => event.type === 'rag_verification_completed' && event.invalidCitationCount === 0
       )
     );
+  });
+});
+
+test('Engine replaces citations copied from RagSearch when no evidence was read', async () => {
+  await withWorkspace(async ({ workspace, ragDirectory }) => {
+    await writeFile(join(workspace, 'README.md'), '# Candidate\nSEARCH_ONLY_CANDIDATE\n', 'utf8');
+    const rag = new RagRuntime({
+      workspaceRoot: workspace,
+      config: lexicalConfig,
+      store: new RagStore(ragDirectory)
+    });
+    await rag.index({ signal: signal() });
+    let step = 0;
+    const provider = {
+      async chat(request) {
+        step += 1;
+        if (step === 1) {
+          return {
+            message: {
+              role: 'assistant',
+              content: '',
+              toolCalls: [
+                {
+                  id: 'search-only',
+                  name: 'RagSearch',
+                  input: { query: 'SEARCH_ONLY_CANDIDATE' }
+                }
+              ]
+            },
+            finishReason: 'tool_calls'
+          };
+        }
+        const chunkId = /\b[a-f0-9]{32}\b/.exec(
+          request.messages.find((message) => message.role === 'tool').content
+        )?.[0];
+        assert.ok(chunkId);
+        return {
+          message: {
+            role: 'assistant',
+            content: '[[rag:' + chunkId + ']]\n\n证据不足，无法回答。'
+          },
+          finishReason: 'stop'
+        };
+      },
+      getInfo() {
+        return {
+          name: 'RAG search-only citation mock',
+          type: 'mock',
+          model: 'mock',
+          capabilities: { streaming: false, reasoningToggle: false }
+        };
+      }
+    };
+    const engine = new QueryEngine({
+      provider,
+      workspaceRoot: workspace,
+      mode: 'ask',
+      rag,
+      audit: false
+    });
+    const events = [];
+    const turn = engine.runTurn('请根据证据回答');
+    let result;
+    while (true) {
+      const next = await turn.next();
+      if (next.done) {
+        result = next.value;
+        break;
+      }
+      events.push(next.value);
+    }
+
+    assert.equal(
+      result.response,
+      '证据不足：本轮没有通过 RagRead 读取到能够支持该问题的 RAG 证据。'
+    );
+    assert.doesNotMatch(result.response, /\[\[rag:/);
+    assert.equal(
+      events
+        .filter((event) => event.type === 'text_delta')
+        .map((event) => event.delta)
+        .join(''),
+      result.response
+    );
+    assert.ok(
+      events.some(
+        (event) =>
+          event.type === 'rag_verification_completed' &&
+          event.outcome === 'supported' &&
+          event.invalidCitationCount === 0
+      )
+    );
+  });
+});
+
+test('Engine blocks a RAG answer that omits citations after reading evidence', async () => {
+  await withWorkspace(async ({ workspace, ragDirectory }) => {
+    await writeFile(join(workspace, 'README.md'), '# Evidence\nGROUNDED_ONLY\n', 'utf8');
+    const rag = new RagRuntime({
+      workspaceRoot: workspace,
+      config: lexicalConfig,
+      store: new RagStore(ragDirectory)
+    });
+    await rag.index({ signal: signal() });
+    let step = 0;
+    const provider = {
+      async chat(request) {
+        step += 1;
+        if (step === 1) {
+          return {
+            message: {
+              role: 'assistant',
+              content: '',
+              toolCalls: [
+                { id: 'ground-search', name: 'RagSearch', input: { query: 'GROUNDED_ONLY' } }
+              ]
+            },
+            finishReason: 'tool_calls'
+          };
+        }
+        if (step === 2) {
+          const chunkId = /\b[a-f0-9]{32}\b/.exec(
+            request.messages.find((message) => message.role === 'tool').content
+          )?.[0];
+          assert.ok(chunkId);
+          return {
+            message: {
+              role: 'assistant',
+              content: '',
+              toolCalls: [{ id: 'ground-read', name: 'RagRead', input: { chunkIds: [chunkId] } }]
+            },
+            finishReason: 'tool_calls'
+          };
+        }
+        return {
+          message: { role: 'assistant', content: 'Unsupported uncited conclusion.' },
+          finishReason: 'stop'
+        };
+      },
+      getInfo() {
+        return {
+          name: 'RAG grounding mock',
+          type: 'mock',
+          model: 'mock',
+          capabilities: { streaming: false, reasoningToggle: false }
+        };
+      }
+    };
+    const engine = new QueryEngine({
+      provider,
+      workspaceRoot: workspace,
+      mode: 'ask',
+      rag,
+      audit: false
+    });
+    const events = [];
+    const turn = engine.runTurn('Use evidence');
+    let result;
+    while (true) {
+      const next = await turn.next();
+      if (next.done) {
+        result = next.value;
+        break;
+      }
+      events.push(next.value);
+    }
+
+    assert.equal(result.status, 'completed');
+    assert.match(result.response, /RAG grounding blocked/);
+    assert.doesNotMatch(result.response, /Unsupported uncited conclusion/);
+    assert.doesNotMatch(
+      events
+        .filter((event) => event.type === 'text_delta')
+        .map((event) => event.delta)
+        .join(''),
+      /Unsupported uncited conclusion/
+    );
+    assert.match(
+      events
+        .filter((event) => event.type === 'text_delta')
+        .map((event) => event.delta)
+        .join(''),
+      /RAG grounding blocked/
+    );
+    assert.ok(
+      events.some(
+        (event) => event.type === 'rag_verification_completed' && event.outcome === 'unsupported'
+      )
+    );
+    assert.match(engine.exportState().messages.at(-1).content, /RAG grounding blocked/);
+  });
+});
+
+test('Engine keeps only supported cited claims when a RAG draft mixes grounded and invented text', async () => {
+  await withWorkspace(async ({ workspace, ragDirectory }) => {
+    await writeFile(join(workspace, 'README.md'), '# Evidence\nSINGLE_GROUNDED_FACT\n', 'utf8');
+    const rag = new RagRuntime({
+      workspaceRoot: workspace,
+      config: lexicalConfig,
+      store: new RagStore(ragDirectory),
+      semanticVerifier: async ({ chunks }) => [
+        {
+          claim: 'SINGLE_GROUNDED_FACT',
+          outcome: 'supported',
+          citations: [chunks[0].id]
+        },
+        {
+          claim: 'INVENTED_EXTRA',
+          outcome: 'unsupported',
+          citations: []
+        }
+      ]
+    });
+    await rag.index({ signal: signal() });
+    let step = 0;
+    const provider = {
+      async chat(request) {
+        step += 1;
+        if (step === 1) {
+          return {
+            message: {
+              role: 'assistant',
+              content: '',
+              toolCalls: [
+                { id: 'repair-search', name: 'RagSearch', input: { query: 'SINGLE_GROUNDED_FACT' } }
+              ]
+            },
+            finishReason: 'tool_calls'
+          };
+        }
+        if (step === 2) {
+          const chunkId = /\b[a-f0-9]{32}\b/.exec(
+            request.messages.find((message) => message.role === 'tool').content
+          )?.[0];
+          assert.ok(chunkId);
+          return {
+            message: {
+              role: 'assistant',
+              content: '',
+              toolCalls: [{ id: 'repair-read', name: 'RagRead', input: { chunkIds: [chunkId] } }]
+            },
+            finishReason: 'tool_calls'
+          };
+        }
+        return {
+          message: { role: 'assistant', content: 'SINGLE_GROUNDED_FACT\n\nINVENTED_EXTRA' },
+          finishReason: 'stop'
+        };
+      },
+      getInfo() {
+        return {
+          name: 'RAG citation repair mock',
+          type: 'mock',
+          model: 'mock',
+          capabilities: { streaming: false, reasoningToggle: false }
+        };
+      }
+    };
+    const engine = new QueryEngine({
+      provider,
+      workspaceRoot: workspace,
+      mode: 'ask',
+      rag,
+      audit: false
+    });
+    const events = [];
+    const turn = engine.runTurn('Use one evidence chunk');
+    let result;
+    while (true) {
+      const next = await turn.next();
+      if (next.done) {
+        result = next.value;
+        break;
+      }
+      events.push(next.value);
+    }
+
+    assert.equal(result.status, 'completed');
+    assert.match(result.response, /SINGLE_GROUNDED_FACT \[\[rag:[a-f0-9]{32}\]\]/);
+    assert.doesNotMatch(result.response, /INVENTED_EXTRA/);
+    assert.doesNotMatch(result.response, /RAG grounding blocked/);
+    assert.match(
+      events
+        .filter((event) => event.type === 'text_delta')
+        .map((event) => event.delta)
+        .join(''),
+      /SINGLE_GROUNDED_FACT \[\[rag:[a-f0-9]{32}\]\]/
+    );
+  });
+});
+
+test('Engine blocks cited RAG claims rejected by isolated semantic verification', async () => {
+  await withWorkspace(async ({ workspace, ragDirectory }) => {
+    await writeFile(join(workspace, 'README.md'), '# Evidence\nSUPPORTED_FACT_ONLY\n', 'utf8');
+    const rag = new RagRuntime({
+      workspaceRoot: workspace,
+      config: lexicalConfig,
+      store: new RagStore(ragDirectory),
+      semanticVerifier: async () => [
+        {
+          claim: 'Invented extra conclusion',
+          outcome: 'unsupported',
+          citations: []
+        }
+      ]
+    });
+    await rag.index({ signal: signal() });
+    let step = 0;
+    const provider = {
+      async chat(request) {
+        step += 1;
+        if (step === 1) {
+          return {
+            message: {
+              role: 'assistant',
+              content: '',
+              toolCalls: [
+                {
+                  id: 'semantic-search',
+                  name: 'RagSearch',
+                  input: { query: 'SUPPORTED_FACT_ONLY' }
+                }
+              ]
+            },
+            finishReason: 'tool_calls'
+          };
+        }
+        if (step === 2) {
+          const chunkId = /\b[a-f0-9]{32}\b/.exec(
+            request.messages.find((message) => message.role === 'tool').content
+          )?.[0];
+          assert.ok(chunkId);
+          return {
+            message: {
+              role: 'assistant',
+              content: '',
+              toolCalls: [{ id: 'semantic-read', name: 'RagRead', input: { chunkIds: [chunkId] } }]
+            },
+            finishReason: 'tool_calls'
+          };
+        }
+        const citation = /\[\[rag:[a-f0-9]{32}\]\]/.exec(
+          request.messages.filter((message) => message.role === 'tool').at(-1).content
+        )?.[0];
+        assert.ok(citation);
+        return {
+          message: { role: 'assistant', content: `Invented extra conclusion ${citation}` },
+          finishReason: 'stop'
+        };
+      },
+      getInfo() {
+        return {
+          name: 'RAG semantic guard mock',
+          type: 'mock',
+          model: 'mock',
+          capabilities: { streaming: false, reasoningToggle: false }
+        };
+      }
+    };
+    const engine = new QueryEngine({
+      provider,
+      workspaceRoot: workspace,
+      mode: 'ask',
+      rag,
+      audit: false
+    });
+    const result = await engine.chat('Use evidence safely');
+
+    assert.match(result, /RAG grounding blocked/);
+    assert.doesNotMatch(result, /Invented extra conclusion/);
+  });
+});
+
+test('Engine repairs an unsupported RAG draft with an isolated evidence-only answer', async () => {
+  await withWorkspace(async ({ workspace, ragDirectory }) => {
+    await writeFile(join(workspace, 'README.md'), '# Evidence\nREPAIRED_GROUNDED_FACT\n', 'utf8');
+    const rag = new RagRuntime({
+      workspaceRoot: workspace,
+      config: lexicalConfig,
+      store: new RagStore(ragDirectory),
+      semanticVerifier: async ({ draft, chunks }) => [
+        draft.includes('REPAIRED_GROUNDED_FACT')
+          ? {
+              claim: '__overall__',
+              outcome: 'supported',
+              citations: [chunks[0].id]
+            }
+          : {
+              claim: '__overall__',
+              outcome: 'unsupported',
+              citations: []
+            }
+      ],
+      answerRepairer: async ({ chunks }) =>
+        `[[rag:${chunks[0].id}]] REPAIRED_GROUNDED_FACT`
+    });
+    await rag.index({ signal: signal() });
+    let step = 0;
+    const provider = {
+      async chat(request) {
+        step += 1;
+        if (step === 1) {
+          return {
+            message: {
+              role: 'assistant',
+              content: '',
+              toolCalls: [
+                { id: 'repair-search', name: 'RagSearch', input: { query: 'REPAIRED_GROUNDED_FACT' } }
+              ]
+            },
+            finishReason: 'tool_calls'
+          };
+        }
+        if (step === 2) {
+          const chunkId = /\b[a-f0-9]{32}\b/.exec(
+            request.messages.find((message) => message.role === 'tool').content
+          )?.[0];
+          assert.ok(chunkId);
+          return {
+            message: {
+              role: 'assistant',
+              content: '',
+              toolCalls: [{ id: 'repair-read', name: 'RagRead', input: { chunkIds: [chunkId] } }]
+            },
+            finishReason: 'tool_calls'
+          };
+        }
+        const citation = /\[\[rag:[a-f0-9]{32}\]\]/.exec(
+          request.messages.filter((message) => message.role === 'tool').at(-1).content
+        )?.[0];
+        assert.ok(citation);
+        return {
+          message: { role: 'assistant', content: `${citation} INVENTED_EXTRA` },
+          finishReason: 'stop'
+        };
+      },
+      getInfo() {
+        return {
+          name: 'RAG answer repair mock',
+          type: 'mock',
+          model: 'mock',
+          capabilities: { streaming: false, reasoningToggle: false }
+        };
+      }
+    };
+    const engine = new QueryEngine({
+      provider,
+      workspaceRoot: workspace,
+      mode: 'ask',
+      rag,
+      audit: false
+    });
+
+    const result = await engine.chat('Use only evidence');
+
+    assert.match(result, /^\[\[rag:[a-f0-9]{32}\]\] REPAIRED_GROUNDED_FACT$/);
+    assert.doesNotMatch(result, /INVENTED_EXTRA|grounding blocked/);
   });
 });
 

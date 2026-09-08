@@ -51,7 +51,11 @@ import { SessionStore } from './session-store.js';
 import { isAbortError, OperationAbortedError } from './tools/abort.js';
 import { detectUiCapabilities, resolveUiMode } from './ui-mode.js';
 import { RagRuntime } from './rag/runtime.js';
-import { createProviderRagVerifier } from './rag/verifier.js';
+import { createProviderRagQueryRewriter } from './rag/query-rewriter.js';
+import {
+  createProviderRagAnswerRepairer,
+  createProviderRagVerifier
+} from './rag/verifier.js';
 import { manageRag } from './rag/management.js';
 
 const program = new Command();
@@ -205,7 +209,9 @@ async function createConfiguredEngine(request: SessionEngineRequest): Promise<Se
   const rag = new RagRuntime({
     workspaceRoot: process.cwd(),
     config: config.rag,
-    semanticVerifier: createProviderRagVerifier(provider)
+    queryRewriter: createProviderRagQueryRewriter(provider),
+    semanticVerifier: createProviderRagVerifier(provider),
+    answerRepairer: createProviderRagAnswerRepairer(provider)
   });
   await rag.getStatus();
   const engine = new QueryEngine({

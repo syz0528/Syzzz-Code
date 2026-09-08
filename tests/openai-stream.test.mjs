@@ -254,6 +254,110 @@ test('streaming can disable reasoning and omit stream_options', async () => {
   assert.equal(response.message.content, 'hello');
 });
 
+test('OpenAI-compatible requests omit an empty tools array', async () => {
+  const provider = new OpenAICompatibleProvider(
+    'test-key',
+    'https://example.invalid/v1',
+    'model',
+    'Compatible'
+  );
+  const requests = [];
+  provider.client = {
+    chat: {
+      completions: {
+        create(request) {
+          requests.push(request);
+          if (request.stream) {
+            return streamFrom([
+              {
+                id: 'chat-no-tools-stream',
+                model: 'model',
+                choices: [{ index: 0, finish_reason: 'stop', delta: { content: 'streamed' } }]
+              }
+            ]);
+          }
+          return {
+            id: 'chat-no-tools',
+            model: 'model',
+            choices: [
+              {
+                index: 0,
+                finish_reason: 'stop',
+                message: { role: 'assistant', content: 'complete' }
+              }
+            ]
+          };
+        }
+      }
+    }
+  };
+  const request = {
+    messages: [{ role: 'user', content: 'summarize' }],
+    tools: [],
+    systemPrompt: 'system'
+  };
+
+  const direct = await provider.chat(request);
+  assert.equal(direct.message.content, 'complete');
+  const streamed = await collect(
+    provider.chatStream(request, {
+      signal: new AbortController().signal,
+      attempt: 1,
+      attemptId: 'no-tools',
+      includeUsage: false,
+      disableReasoning: false
+    })
+  );
+  assert.equal(streamed.response.message.content, 'streamed');
+  assert.equal(requests.length, 2);
+  assert.equal('tools' in requests[0], false);
+  assert.equal('tools' in requests[1], false);
+});
+
+test('streaming accepts usage-confirmed completion when a compatible gateway omits finish_reason', async () => {
+  const provider = new OpenAICompatibleProvider(
+    'test-key',
+    'https://example.invalid/v1',
+    'model',
+    'Compatible'
+  );
+  provider.client = {
+    chat: {
+      completions: {
+        create() {
+          return streamFrom([
+            {
+              id: 'chat-usage-finish',
+              model: 'model',
+              choices: [{ index: 0, finish_reason: null, delta: { content: 'complete response' } }]
+            },
+            {
+              id: 'chat-usage-finish',
+              model: 'model',
+              choices: [],
+              usage: { prompt_tokens: 4, completion_tokens: 2, total_tokens: 6 }
+            }
+          ]);
+        }
+      }
+    }
+  };
+
+  const { response } = await collect(
+    provider.chatStream(basicRequest, {
+      signal: new AbortController().signal,
+      attempt: 1,
+      attemptId: 'attempt-usage-finish',
+      includeUsage: true,
+      disableReasoning: false
+    })
+  );
+
+  assert.equal(response.message.content, 'complete response');
+  assert.equal(response.finishReason, 'stop');
+  assert.deepEqual(response.usage, { inputTokens: 4, outputTokens: 2, totalTokens: 6 });
+});
+
 test('streaming rejects malformed aggregated tool JSON', async () => {
   const provider = new OpenAICompatibleProvider(
     'test-key',

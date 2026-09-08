@@ -481,6 +481,7 @@ export class OpenAIResponsesProvider implements AIProvider {
       model: this.model,
       instructions: request.systemPrompt,
       input: convertMessagesToResponses(request.messages),
+      ...(request.maxOutputTokens ? { max_output_tokens: request.maxOutputTokens } : {}),
       ...(request.tools.length ? { tools: convertToolsToResponses(request.tools) } : {}),
       include: ['reasoning.encrypted_content'],
       store: false

@@ -669,8 +669,10 @@ export class InteractionController implements InteractionPort {
         }
         break;
       case 'turn_failed':
-        this.notice({ tone: 'error', text: event.error.message });
-        return;
+        if (this.activity && typeof this.activity !== 'string') {
+          this.activity = { ...this.activity, phase: 'failed', detail: event.error.message };
+        }
+        break;
       case 'turn_cancelled':
         if (this.activity && typeof this.activity !== 'string') {
           this.activity = { ...this.activity, phase: 'cancelled', detail: 'Cancelled' };
