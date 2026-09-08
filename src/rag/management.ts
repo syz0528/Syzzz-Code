@@ -28,6 +28,12 @@ function formatBytes(bytes: number): string {
 
 export async function manageRag(request: RagManagementRequest): Promise<RagManagementResult> {
   const action = request.action.toLowerCase();
+  if (
+    request.runtime.isRemote() &&
+    !['status', 'doctor', 'search', 'inspect', 'collections'].includes(action)
+  ) {
+    throw new Error('Remote RAG is read-only; manage documents and indexes on the server');
+  }
   const confirmRemote = async ({
     purpose,
     collection,
@@ -57,8 +63,11 @@ export async function manageRag(request: RagManagementRequest): Promise<RagManag
     const status = await request.runtime.getStatus();
     const lines = [
       `RAG: ${status.enabled ? 'enabled' : 'disabled'}`,
+      ...(status.backend === 'remote'
+        ? ['Backend: remote (FastAPI); server-managed documents']
+        : []),
       `Auto retrieve: ${status.autoRetrieve}; auto refresh: ${status.autoRefresh ? 'on' : 'off'}`,
-      `Retrieval: lexical ready; vector ${status.vectorAvailable ? 'ready' : 'unavailable'}; reranker ${status.rerankerConfigured ? 'configured' : 'off'}`
+      `Retrieval: lexical ${status.lexicalAvailable ? 'ready' : 'unavailable'}; vector ${status.vectorAvailable ? 'ready' : 'unavailable'}; reranker ${status.rerankerConfigured ? 'configured' : 'off'}`
     ];
     for (const collection of status.collections) {
       lines.push(
@@ -72,6 +81,7 @@ export async function manageRag(request: RagManagementRequest): Promise<RagManag
   }
 
   if (action === 'doctor') {
+    if (request.runtime.isRemote()) return manageRag({ ...request, action: 'status' });
     const status = await request.runtime.getStatus();
     let lance: { ok: boolean; error?: string } = { ok: true };
     try {
@@ -148,6 +158,7 @@ export async function manageRag(request: RagManagementRequest): Promise<RagManag
   }
 
   if (action === 'collections') {
+    if (request.runtime.isRemote()) return manageRag({ ...request, action: 'status' });
     const subaction = request.target?.toLowerCase() ?? 'list';
     const [name, root] = request.rest ?? [];
     if (subaction === 'add') {

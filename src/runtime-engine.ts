@@ -395,6 +395,10 @@ function validateEngineState(state: QueryEngineStateV1): void {
       if (
         typeof receipt !== 'object' ||
         receipt === null ||
+        (receipt.serviceId !== undefined &&
+          (typeof receipt.serviceId !== 'string' ||
+            !receipt.serviceId ||
+            receipt.serviceId.length > 128)) ||
         typeof receipt.turnId !== 'string' ||
         !receipt.turnId ||
         typeof receipt.chunkId !== 'string' ||
@@ -1776,7 +1780,7 @@ export class QueryEngine {
           runtimeInstructions.push(
             'RAG evidence was read in this turn. The final answer MUST copy at least one applicable citation token exactly from this allowed list: ' +
               `${allowedCitationTokens}. ` +
-              'Start the response with the applicable citation token, then answer in at most two short sentences and stop. Do not invent or alter citation tokens. Answer in the user\'s language and only the operation or claim requested. Use only conclusions and code literally visible in the cited excerpts; an include directive or link is not code evidence. Do not add related definitions, alternative methods, setup code, packages, parameters, examples, or source metadata. If the excerpts do not answer the question, state that evidence is insufficient.'
+              "Start the response with the applicable citation token, then answer in at most two short sentences and stop. Do not invent or alter citation tokens. Answer in the user's language and only the operation or claim requested. Use only conclusions and code literally visible in the cited excerpts; an include directive or link is not code evidence. Do not add related definitions, alternative methods, setup code, packages, parameters, examples, or source metadata. If the excerpts do not answer the question, state that evidence is insufficient."
           );
         } else if (ragSearchSucceeded) {
           runtimeInstructions.push(
@@ -2015,10 +2019,7 @@ export class QueryEngine {
                 verificationEvents.length = 0;
                 semanticOutcome = verification.outcome;
                 groundingBlocked = verification.outcome !== 'supported' || needsCitationRepair;
-                if (
-                  verification.outcome === 'supported' &&
-                  needsCitationRepair
-                ) {
+                if (verification.outcome === 'supported' && needsCitationRepair) {
                   const availableChunkIds = new Set(
                     this.activeRagContextReceipts.map((receipt) => receipt.chunkId)
                   );
@@ -2049,9 +2050,7 @@ export class QueryEngine {
                       turnId,
                       signal
                     );
-                    invalidCount = deterministic.filter(
-                      (check) => check.status !== 'valid'
-                    ).length;
+                    invalidCount = deterministic.filter((check) => check.status !== 'valid').length;
                     groundingBlocked = deterministic.length === 0 || invalidCount > 0;
                     if (!groundingBlocked) groundingRepairedResponse = repairedResponse;
                   }
@@ -2385,10 +2384,7 @@ export class QueryEngine {
           ) {
             confirmedFileSideEffects.add(toolCall.name);
           }
-          if (
-            toolCompletedEvent?.outcome === 'success' &&
-            toolCall.name === 'RagSearch'
-          ) {
+          if (toolCompletedEvent?.outcome === 'success' && toolCall.name === 'RagSearch') {
             ragSearchSucceeded = true;
           }
           if (

@@ -71,6 +71,7 @@ const conversationDisplayMessageSchema = z
 
 const ragContextReceiptSchema = z
   .object({
+    serviceId: z.string().min(1).max(128).optional(),
     turnId: z.string().min(1),
     chunkId: z.string().regex(/^[a-f0-9]{16,64}$/),
     collectionId: z.string().min(1),

@@ -8,6 +8,8 @@ Syzzz Code 是一个本地优先、可扩展的命令行 AI 编程 Agent。你�
 
 本文档面向第一次接触编程 Agent 的用户，也适用于准备部署 Syzzz Code `1.0.0` 的开发者。
 
+开发分支中的 [KnowForge 统一模型与知识服务接入](docs/knowforge-service.md) 为可选功能，尚未发布到 npm；正式版用户仍按下方本地 RAG 说明使用。
+
 > [!WARNING]
 > Syzzz Code 可以修改文件和执行 Shell 命令。文件工具具有工作区边界、敏感路径检查、并发 hash 校验和原子写入保护，但 Shell 不是操作系统沙箱。请在审批前阅读命令和文件差异，不要在不受信任的项目中启用 `fullAccess`。
 

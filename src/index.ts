@@ -52,10 +52,7 @@ import { isAbortError, OperationAbortedError } from './tools/abort.js';
 import { detectUiCapabilities, resolveUiMode } from './ui-mode.js';
 import { RagRuntime } from './rag/runtime.js';
 import { createProviderRagQueryRewriter } from './rag/query-rewriter.js';
-import {
-  createProviderRagAnswerRepairer,
-  createProviderRagVerifier
-} from './rag/verifier.js';
+import { createProviderRagAnswerRepairer, createProviderRagVerifier } from './rag/verifier.js';
 import { manageRag } from './rag/management.js';
 
 const program = new Command();
@@ -152,7 +149,8 @@ function providerCredentialEnvironmentNames(config: Config): string[] {
       [
         ...Object.values(config.providers).map((provider) => provider.env.API_KEY_ENV),
         config.rag.embedding?.env.API_KEY_ENV,
-        config.rag.reranker?.env.API_KEY_ENV
+        config.rag.reranker?.env.API_KEY_ENV,
+        config.rag.service?.apiKeyEnv
       ].filter((name): name is string => Boolean(name))
     )
   ];

@@ -147,7 +147,7 @@ export function createRagTools(runtime: RagRuntime, includeVerify: boolean): Too
           result.chunks.length > 0
             ? [
                 'FINAL ANSWER CONTRACT:',
-                '- Answer in the user\'s language and keep the response no broader than the question.',
+                "- Answer in the user's language and keep the response no broader than the question.",
                 '- Copy every applicable [[rag:<chunkId>]] token exactly as shown below into the final answer.',
                 '- Do not output code unless that exact code is visible in the evidence text. An include directive or link is not code evidence.',
                 '- Do not add setup steps, packages, APIs, parameters, examples, or alternative methods absent from the evidence.',
@@ -234,7 +234,9 @@ export function createRagTools(runtime: RagRuntime, includeVerify: boolean): Too
     }
   });
 
-  const tools: ToolDefinition[] = [search, read, saveKnowledge];
+  const tools: ToolDefinition[] = runtime.isRemote()
+    ? [search, read]
+    : [search, read, saveKnowledge];
   if (includeVerify) {
     tools.push(
       defineTool({

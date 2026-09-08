@@ -77,6 +77,7 @@ export interface RagRetrievalHit {
 }
 
 export interface RagContextReceipt {
+  serviceId?: string;
   turnId: string;
   chunkId: string;
   collectionId: string;
@@ -119,6 +120,7 @@ export interface RagCollectionStatus {
 }
 
 export interface RagStatus {
+  backend?: 'local' | 'remote';
   enabled: boolean;
   autoRetrieve: RagAutoRetrieve;
   autoRefresh: boolean;

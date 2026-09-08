@@ -47,6 +47,7 @@ import { buildLanceVectorStore, searchLanceVectorStore } from './vector-store.js
 import type { ToolDefinition } from '../types.js';
 import { createRagTools } from './tools.js';
 import type { RagQueryRewriter } from './query-rewriter.js';
+import { RagServiceClient } from './service-client.js';
 
 const MAX_FILES = 20_000;
 const MAX_SOURCE_BYTES = 512 * 1024 * 1024;
@@ -91,7 +92,10 @@ const HARD_EXCLUDED_SEGMENTS = new Set([
 ]);
 
 function normalizeEvidenceCode(value: string): string {
-  return value.replace(/\r\n?/g, '\n').replace(/[ \t]+$/gm, '').trim();
+  return value
+    .replace(/\r\n?/g, '\n')
+    .replace(/[ \t]+$/gm, '')
+    .trim();
 }
 
 function findUnsupportedCodeClaims(
@@ -105,6 +109,18 @@ function findUnsupportedCodeClaims(
     if (!code || evidence.some((text) => text.includes(code))) continue;
     claims.push({
       claim: 'Generated code block is not present verbatim in the supplied evidence.',
+      outcome: 'unsupported',
+      citations: []
+    });
+  }
+  // Inline executable examples require evidence too; bare identifiers remain ordinary mentions.
+  const prose = draft.replace(/```[^\n]*\n[\s\S]*?```/g, '');
+  for (const match of prose.matchAll(/(?<!`)`([^`\n]+)`(?!`)/g)) {
+    const code = normalizeEvidenceCode(match[1]);
+    const executable = /[\p{L}_][\p{L}\p{N}_.]*\s*\(|(?<![=<>!])=(?!=)/u.test(code);
+    if (!executable || evidence.some((text) => text.includes(code))) continue;
+    claims.push({
+      claim: 'Generated inline code is not present verbatim in the supplied evidence.',
       outcome: 'unsupported',
       citations: []
     });
@@ -138,9 +154,7 @@ export interface RagGroundedAnswerRepairInput {
   emitEvent?: (event: AgentEventData) => void;
 }
 
-export type RagGroundedAnswerRepairer = (
-  input: RagGroundedAnswerRepairInput
-) => Promise<string>;
+export type RagGroundedAnswerRepairer = (input: RagGroundedAnswerRepairInput) => Promise<string>;
 
 export interface RagRuntimeOptions {
   workspaceRoot: string;
@@ -388,6 +402,8 @@ export class RagRuntime {
   private vectorAvailable = true;
   private runtimeWarnings: string[] = [];
   private cachedStatus: RagStatus;
+  private readonly service?: RagServiceClient;
+  private readonly remoteChunks = new Map<string, Map<string, RagChunk>>();
 
   constructor(options: RagRuntimeOptions) {
     this.workspaceRoot = resolve(options.workspaceRoot);
@@ -398,8 +414,12 @@ export class RagRuntime {
     this.semanticVerifier = options.semanticVerifier;
     this.answerRepairer = options.answerRepairer;
     this.queryRewriter = options.queryRewriter;
+    this.service = this.config.service?.enabled
+      ? new RagServiceClient(this.config.service)
+      : undefined;
     this.cachedStatus = {
       enabled: this.config.enabled,
+      backend: this.service ? 'remote' : 'local',
       autoRetrieve: this.config.autoRetrieve,
       autoRefresh: this.config.autoRefresh,
       lexicalAvailable: true,
@@ -412,6 +432,15 @@ export class RagRuntime {
 
   getTools(): readonly ToolDefinition[] {
     return createRagTools(this, Boolean(this.semanticVerifier));
+  }
+
+  isRemote(): boolean {
+    return Boolean(this.service);
+  }
+
+  private requireLocalManagement(): void {
+    if (this.service)
+      throw new Error('Remote RAG is read-only; update documents and indexes on the server');
   }
 
   setSemanticVerifier(verifier: RagSemanticVerifier | undefined): void {
@@ -431,19 +460,34 @@ export class RagRuntime {
       'When Rank 1 directly answers the requested procedure or claim, read Rank 1 alone. Do not mix in broader conceptual neighbors. Lower-ranked results must be promoted by a narrower search before reading.',
       'Prefer Grep, RepoMap, and Read for exact filenames, symbols, or current edits. Never invent a RAG citation.',
       'RagVerify is optional and should be used only when claim-level support needs a second pass.',
-      'Use SaveKnowledge only when the user explicitly asks to save, remember, or update durable knowledge. Summarize and normalize the requested note, preserve evidence receipts when supplied, and never save content opportunistically.'
+      this.service
+        ? 'Knowledge is served remotely and is read-only. Do not read server paths with local file tools or attempt to save knowledge.'
+        : 'Use SaveKnowledge only when the user explicitly asks to save, remember, or update durable knowledge. Summarize and normalize the requested note, preserve evidence receipts when supplied, and never save content opportunistically.'
     ].join(' ');
   }
 
   async listCollections(): Promise<RagCollection[]> {
+    if (this.service) {
+      const status = await this.service.status();
+      return status.collections.map((entry) => ({
+        id: entry.id,
+        name: entry.name,
+        kind: 'external',
+        canonicalRoot: '',
+        virtualRoot: `rag://${entry.name}`,
+        createdAt: ''
+      }));
+    }
     return this.store.resolveAvailableCollections(this.workspaceRoot);
   }
 
   async registerCollection(name: string, root: string): Promise<RagCollection> {
+    this.requireLocalManagement();
     return this.store.addExternalCollection(name, root);
   }
 
   async ensurePersonalLibrary(): Promise<RagCollection> {
+    this.requireLocalManagement();
     return this.store.ensurePersonalLibrary(this.workspaceRoot);
   }
 
@@ -452,6 +496,7 @@ export class RagRuntime {
     requestedFilename: string | undefined,
     signal: AbortSignal
   ): Promise<RagPreparedWrite> {
+    this.requireLocalManagement();
     const normalizedInput = sourceInput
       .trim()
       .replace(/^@/, '')
@@ -611,11 +656,16 @@ export class RagRuntime {
     receipts: readonly RagContextReceipt[],
     signal: AbortSignal
   ): Promise<RagCitationCheck[]> {
+    if (this.service) return this.service.verify(receipts, signal);
     const checks: RagCitationCheck[] = [];
     const collections = await this.listCollections();
     for (const receipt of receipts) {
       throwIfAborted(signal);
       const token = `[[rag:${receipt.chunkId}]]`;
+      if (receipt.serviceId) {
+        checks.push({ token, chunkId: receipt.chunkId, status: 'unknown-chunk' });
+        continue;
+      }
       const revision = await this.store.loadRevision(receipt.collectionId, receipt.revision);
       if (!revision) {
         checks.push({ token, chunkId: receipt.chunkId, status: 'missing-revision' });
@@ -725,10 +775,12 @@ export class RagRuntime {
   }
 
   async removeCollection(name: string): Promise<boolean> {
+    this.requireLocalManagement();
     return this.store.removeExternalCollection(name);
   }
 
   async mount(name: string): Promise<void> {
+    this.requireLocalManagement();
     const collection = (await this.store.listExternalCollections()).find(
       (entry) => entry.name === name
     );
@@ -737,6 +789,7 @@ export class RagRuntime {
   }
 
   async unmount(name: string): Promise<void> {
+    this.requireLocalManagement();
     const collection = (await this.store.listExternalCollections()).find(
       (entry) => entry.name === name
     );
@@ -745,6 +798,33 @@ export class RagRuntime {
   }
 
   async getStatus(): Promise<RagStatus> {
+    if (this.service) {
+      try {
+        const remote = this.config.enabled ? await this.service.status() : undefined;
+        this.cachedStatus = {
+          enabled: this.config.enabled,
+          backend: 'remote',
+          autoRetrieve: this.config.autoRetrieve,
+          autoRefresh: false,
+          lexicalAvailable: remote?.lexicalAvailable ?? false,
+          vectorAvailable: remote?.vectorAvailable ?? false,
+          rerankerConfigured: false,
+          collections: remote?.collections ?? [],
+          warnings: remote?.warnings ?? []
+        };
+      } catch (error) {
+        this.cachedStatus = {
+          ...this.cachedStatus,
+          backend: 'remote',
+          autoRefresh: false,
+          lexicalAvailable: false,
+          vectorAvailable: false,
+          collections: this.cachedStatus.collections.map((c) => ({ ...c, health: 'error' })),
+          warnings: [error instanceof Error ? error.message : 'Remote RAG unavailable']
+        };
+      }
+      return structuredClone(this.cachedStatus);
+    }
     const collections = await this.listCollections();
     const statuses: RagCollectionStatus[] = [];
     for (const collection of collections) {
@@ -803,6 +883,7 @@ export class RagRuntime {
   }
 
   async index(options: RagIndexOptions): Promise<RagIndexResult> {
+    this.requireLocalManagement();
     if (!this.config.enabled) throw new Error('RAG is disabled');
     const collections = await this.listCollections();
     const collection = collections.find(
@@ -1073,6 +1154,7 @@ export class RagRuntime {
   }
 
   async search(options: RagSearchOptions): Promise<RagRetrievalHit[]> {
+    if (!this.config.enabled) throw new Error('RAG is disabled');
     const startedAt = this.now();
     const initialQueries = [options.query, ...(options.queries ?? [])]
       .filter((query): query is string => typeof query === 'string' && Boolean(query.trim()))
@@ -1104,6 +1186,38 @@ export class RagRuntime {
     const scope = resolveSearchScope(options.collections, options.path);
     const pathFilter = normalizePathFilter(scope.path);
     const limit = Math.min(options.limit ?? DEFAULT_SEARCH_LIMIT, MAX_SEARCH_LIMIT);
+    if (this.service) {
+      options.emitEvent?.({
+        type: 'rag_retrieval_started',
+        queryCount: queries.length,
+        collectionCount: scope.collections?.length ?? this.config.service?.collections.length ?? 0
+      });
+      try {
+        const results = await this.service.search({
+          queries,
+          collections: scope.collections,
+          path: pathFilter,
+          limit,
+          signal: options.signal
+        });
+        options.emitEvent?.({
+          type: 'rag_retrieval_completed',
+          candidateCount: results.length,
+          resultCount: results.length,
+          channels: [...new Set(results.flatMap((r) => r.channels))],
+          staleCollections: 0,
+          durationMs: this.now() - startedAt
+        });
+        return results;
+      } catch (error) {
+        options.emitEvent?.({
+          type: 'rag_retrieval_failed',
+          code: 'rag_service_error',
+          durationMs: this.now() - startedAt
+        });
+        throw error;
+      }
+    }
     const requestedCollections = scope.collections ? new Set(scope.collections) : undefined;
     const collections = (await this.listCollections()).filter(
       (collection) => !requestedCollections || requestedCollections.has(collection.name)
@@ -1343,6 +1457,28 @@ export class RagRuntime {
     turnId: string,
     signal: AbortSignal
   ): Promise<{ chunks: RagChunk[]; receipts: RagContextReceipt[] }> {
+    if (this.service) {
+      if (!this.config.enabled) throw new Error('RAG is disabled');
+      const result = await this.service.read(chunkIds, signal);
+      const receipts = result.chunks.map((chunk): RagContextReceipt => ({
+        turnId,
+        serviceId: result.serviceId,
+        chunkId: chunk.id,
+        collectionId: chunk.collectionId,
+        virtualPath: chunk.virtualPath,
+        lineStart: chunk.lineStart,
+        lineEnd: chunk.lineEnd,
+        sourceHash: chunk.sourceHash,
+        revision: chunk.revision
+      }));
+      const turnReceipts = this.receipts.get(turnId) ?? new Map<string, RagContextReceipt>();
+      const turnChunks = this.remoteChunks.get(turnId) ?? new Map<string, RagChunk>();
+      receipts.forEach((receipt) => turnReceipts.set(receipt.chunkId, receipt));
+      result.chunks.forEach((chunk) => turnChunks.set(chunk.id, chunk));
+      this.receipts.set(turnId, turnReceipts);
+      this.remoteChunks.set(turnId, turnChunks);
+      return { chunks: result.chunks, receipts };
+    }
     const wanted = new Set(chunkIds.slice(0, 10));
     const found: RagChunk[] = [];
     const receipts: RagContextReceipt[] = [];
@@ -1414,6 +1550,8 @@ export class RagRuntime {
   }
 
   private async loadTurnChunks(turnId: string, signal: AbortSignal): Promise<RagChunk[]> {
+    throwIfAborted(signal);
+    if (this.service) return [...(this.remoteChunks.get(turnId)?.values() ?? [])];
     const chunks: RagChunk[] = [];
     const turnReceipts = this.receipts.get(turnId) ?? new Map();
     for (const receipt of turnReceipts.values()) {
@@ -1435,16 +1573,11 @@ export class RagRuntime {
     const validChunkIds = new Set(
       deterministic.filter((entry) => entry.status === 'valid').map((entry) => entry.chunkId)
     );
-    const chunks: RagChunk[] = [];
     const turnReceipts = this.receipts.get(turnId) ?? new Map();
     const evidenceChunkIds = validChunkIds.size > 0 ? validChunkIds : new Set(turnReceipts.keys());
-    for (const chunkId of evidenceChunkIds) {
-      const receipt = turnReceipts.get(chunkId);
-      if (!receipt) continue;
-      const revision = await this.store.loadRevision(receipt.collectionId, receipt.revision);
-      const chunk = revision?.chunks.find((entry) => entry.id === chunkId);
-      if (chunk) chunks.push(chunk);
-    }
+    const chunks = (await this.loadTurnChunks(turnId, signal)).filter((chunk) =>
+      evidenceChunkIds.has(chunk.id)
+    );
     const invalid = deterministic.filter((entry) => entry.status !== 'valid');
     const verifierClaims = this.semanticVerifier
       ? await this.semanticVerifier({
@@ -1505,6 +1638,16 @@ export class RagRuntime {
     }));
     const turnReceipts = this.receipts.get(turnId) ?? new Map();
     const deterministic: RagCitationCheck[] = [];
+    if (this.service) {
+      const receipts = tokens
+        .map((token) => turnReceipts.get(token.chunkId))
+        .filter((r): r is RagContextReceipt => Boolean(r));
+      const checks = await this.service.verify(receipts, signal);
+      let index = 0;
+      return tokens.map((token) =>
+        turnReceipts.has(token.chunkId) ? checks[index++] : { ...token, status: 'not-read' }
+      );
+    }
     for (const token of tokens) {
       throwIfAborted(signal);
       const receipt = turnReceipts.get(token.chunkId);
@@ -1555,6 +1698,7 @@ export class RagRuntime {
   }
 
   async inspectChunk(chunkId: string, signal: AbortSignal): Promise<RagChunk | undefined> {
+    if (this.service) return (await this.service.read([chunkId], signal)).chunks[0];
     for (const collection of await this.listCollections()) {
       throwIfAborted(signal);
       const revision = await this.store.loadRevision(collection.id);
@@ -1565,6 +1709,7 @@ export class RagRuntime {
   }
 
   async clear(collectionName = 'workspace'): Promise<void> {
+    this.requireLocalManagement();
     const collection = (await this.listCollections()).find(
       (entry) => entry.name === collectionName
     );
@@ -1586,6 +1731,7 @@ export class RagRuntime {
   }
 
   clearTurn(turnId: string): void {
+    this.remoteChunks.delete(turnId);
     this.receipts.delete(turnId);
     this.searchedChunks.delete(turnId);
     this.verifiedTurns.delete(turnId);

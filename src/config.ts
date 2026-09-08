@@ -92,12 +92,21 @@ export interface RagRerankerConfig {
   env: RagRemoteEnvironmentConfig;
 }
 
+export interface RagServiceConfig {
+  enabled: boolean;
+  baseUrl: string;
+  collections: string[];
+  apiKeyEnv?: string;
+  timeoutMs: number;
+}
+
 export interface RagConfig {
   enabled: boolean;
   autoRetrieve: RagAutoRetrieve;
   autoRefresh: boolean;
   embedding?: RagEmbeddingConfig;
   reranker?: RagRerankerConfig;
+  service?: RagServiceConfig;
 }
 
 export interface Config {
@@ -409,6 +418,36 @@ function validateRagConfig(value: unknown): RagConfig {
     throw new Error('rag.autoRefresh must be a boolean');
   }
 
+  let service: RagServiceConfig | undefined;
+  if (value.service !== undefined) {
+    const remote = value.service;
+    if (!isRecord(remote) || typeof remote.enabled !== 'boolean') {
+      throw new Error('rag.service.enabled must be a boolean');
+    }
+    if (
+      !Array.isArray(remote.collections) ||
+      remote.collections.length < 1 ||
+      remote.collections.length > 16 ||
+      remote.collections.some(
+        (name) => typeof name !== 'string' || !/^[A-Za-z][A-Za-z0-9_-]{0,63}$/.test(name)
+      )
+    ) {
+      throw new Error('rag.service.collections must contain 1 to 16 collection names');
+    }
+    const timeoutMs = remote.timeoutMs ?? 30_000;
+    if (!Number.isInteger(timeoutMs) || Number(timeoutMs) < 100 || Number(timeoutMs) > 120_000) {
+      throw new Error('rag.service.timeoutMs must be between 100 and 120000');
+    }
+    const apiKeyEnv = validateEnvironmentVariable(remote.apiKeyEnv, 'rag.service.apiKeyEnv');
+    service = {
+      enabled: remote.enabled,
+      baseUrl: validateBaseURL(remote.baseUrl, 'rag.service.baseUrl'),
+      collections: [...new Set(remote.collections as string[])],
+      timeoutMs: Number(timeoutMs),
+      ...(apiKeyEnv ? { apiKeyEnv } : {})
+    };
+  }
+
   let embedding: RagEmbeddingConfig | undefined;
   if (value.embedding !== undefined) {
     if (!isRecord(value.embedding) || value.embedding.type !== 'openai-compatible') {
@@ -445,6 +484,7 @@ function validateRagConfig(value: unknown): RagConfig {
     enabled: value.enabled,
     autoRetrieve,
     autoRefresh,
+    ...(service ? { service } : {}),
     ...(embedding ? { embedding } : {}),
     ...(reranker ? { reranker } : {})
   };
