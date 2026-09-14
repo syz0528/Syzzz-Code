@@ -34,6 +34,7 @@ import { DEFAULT_PERMISSION_MODE, type PermissionMode } from './permissions/mode
 import { requiresUserApproval } from './permissions/policy.js';
 import { createProvider } from './providers/factory.js';
 import { CORE_RUNTIME_INSTRUCTIONS } from './runtime-instructions.js';
+import { TaskExecutionLedger } from './task-execution.js';
 import type {
   AIProvider,
   ConversationMessage,
@@ -1738,6 +1739,9 @@ export class QueryEngine {
       const providerTools = this.getProviderTools(Boolean(options.requestUserInput));
       const confirmedFileSideEffects = new Set<string>();
       let ragSearchSucceeded = false;
+      const taskExecution = new TaskExecutionLedger(userMessage);
+      if (this.activeRagContextReceipts.length > 0)
+        taskExecution.observe('AutoRagRead', {}, 'success');
       let forcedFinalizationReason: 'delegate-failure' | 'hook-denial' | undefined;
       let forcedBudgetStopReason: BudgetStopReason | undefined;
       let appliedBudgetStopReason: BudgetStopReason | undefined;
@@ -1792,6 +1796,8 @@ export class QueryEngine {
         }
         const finalizationReason = forcedFinalizationReason ?? budgetFinalizationReason;
         const runtimeInstructions: string[] = [];
+        const executionInstructions = taskExecution.instructions();
+        if (executionInstructions) runtimeInstructions.push(executionInstructions);
         if (options.requestUserInput && !finalizationReason) {
           runtimeInstructions.push(
             'Interactive AskUser is available. When an activated Skill or workflow requires the user to answer, choose, or clarify before you can continue, you MUST call AskUser before emitting assistant prose. Do not print a numbered question list or simulated menu as ordinary text. For a design decision with honest bounded alternatives, prefer a single-select question with 2-6 options and identify the recommended option in its label or description. The client always lets the user supply a bounded custom answer in addition to your choices. Use free text only when predefined choices would be misleading. Use AskUser only for genuine blocking input, not rhetorical questions.'
@@ -1812,7 +1818,10 @@ export class QueryEngine {
           runtimeInstructions.push(
             'RAG evidence was read in this turn. The final answer MUST copy at least one applicable citation token exactly from this allowed list: ' +
               `${allowedCitationTokens}. ` +
-              "Start the response with the applicable citation token, then answer in at most two short sentences and stop. Do not invent or alter citation tokens. Answer in the user's language and only the operation or claim requested. Use only conclusions and code literally visible in the cited excerpts; an include directive or link is not code evidence. Do not add related definitions, alternative methods, setup code, packages, parameters, examples, or source metadata. If the excerpts do not answer the question, state that evidence is insufficient."
+              (taskExecution.active && !finalizationReason
+                ? 'Tools remain available: finish the other requested authorized steps before your final answer; reading RAG alone does not complete a combined task. '
+                : 'Start the response with the applicable citation token, then answer in at most two short sentences and stop. ') +
+              "Do not invent or alter citation tokens. Answer in the user's language and only the operation or claim requested. Use only conclusions and code literally visible in the cited excerpts for RAG claims; an include directive or link is not code evidence. Do not add unrelated definitions, alternative methods, setup code, packages, parameters, examples, or source metadata. If the excerpts do not answer the question, state that evidence is insufficient."
           );
         } else if (ragSearchSucceeded) {
           runtimeInstructions.push(
@@ -1843,7 +1852,11 @@ export class QueryEngine {
         const systemPrompt = this.getSystemPrompt(runtimeInstructions);
         const providerToolsForRound = finalizationReason ? [] : providerTools;
         const maximumOutputTokens =
-          this.activeRagContextReceipts.length > 0 ? RAG_ANSWER_MAX_OUTPUT_TOKENS : undefined;
+          this.activeRagContextReceipts.length > 0
+            ? taskExecution.active && !finalizationReason
+              ? 512
+              : RAG_ANSWER_MAX_OUTPUT_TOKENS
+            : undefined;
         // Successful tools can add RAG rules or nested instructions after the initial output cap.
         // Rebudget only fresh tool results against the exact next request, preserving call/result pairs.
         for (const message of pendingToolResults) {
@@ -1902,7 +1915,7 @@ export class QueryEngine {
         let recoveredFromContextExceeded = false;
         const bufferRagAnswer =
           this.rag !== undefined &&
-          (this.activeRagContextReceipts.length > 0 || ragSearchSucceeded);
+          (this.activeRagContextReceipts.length > 0 || ragSearchSucceeded || taskExecution.active);
         const bufferedRagTextEvents: Array<Extract<AgentEventData, { type: 'text_delta' }>> = [];
         while (!response) {
           throwIfAborted(signal);
@@ -1919,7 +1932,12 @@ export class QueryEngine {
               tools: providerToolsForRound,
               systemPrompt,
               ...(maximumOutputTokens !== undefined
-                ? { maxOutputTokens: maximumOutputTokens, stopSequences: ['\n\n'] }
+                ? {
+                    maxOutputTokens: maximumOutputTokens,
+                    ...(!taskExecution.active || finalizationReason
+                      ? { stopSequences: ['\n\n'] }
+                      : {})
+                  }
                 : {}),
               signal
             },
@@ -2026,6 +2044,20 @@ export class QueryEngine {
           );
         }
         if (toolCalls.length === 0) {
+          if (
+            !finalizationReason &&
+            toolRound < this.maxToolRounds &&
+            (this.maxToolCalls === undefined || executedToolCalls < this.maxToolCalls) &&
+            (providerCallBudget.maximum === undefined ||
+              providerCallBudget.count < providerCallBudget.maximum) &&
+            (this.hardTokenBudget === undefined || observedBudgetTokens < this.hardTokenBudget) &&
+            taskExecution.takeFinalizationReview()
+          ) {
+            // Discard the withheld premature draft; the next request gets only factual guidance.
+            workingMessages.pop();
+            if (response.message.content.trim()) responseParts.pop();
+            continue;
+          }
           let groundingBlockedResponse: string | undefined;
           let groundingRepairedResponse: string | undefined;
           if (
@@ -2443,6 +2475,9 @@ export class QueryEngine {
               toolCall.name === 'SaveKnowledge')
           ) {
             confirmedFileSideEffects.add(toolCall.name);
+          }
+          if (toolCompletedEvent) {
+            taskExecution.observe(toolCall.name, toolCall.input, toolCompletedEvent.outcome);
           }
           if (toolCompletedEvent?.outcome === 'success' && toolCall.name === 'RagSearch') {
             ragSearchSucceeded = true;
