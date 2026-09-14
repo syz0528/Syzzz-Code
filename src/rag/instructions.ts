@@ -19,7 +19,7 @@ export const RAG_SELECTION_INSTRUCTIONS =
   'Selection rule: read candidates that directly address the requested operation or claim, including lower-ranked matches. Topic overlap and rank are not proof. Search again only if the returned candidates are insufficient.';
 
 export const RAG_EMPTY_SEARCH_INSTRUCTIONS =
-  'No sufficiently relevant evidence matched this search; this does not prove the information is absent from the entire collection. If source and query languages differ, try a concise source-language query. Do not invent an answer or citation.';
+  'No sufficiently relevant evidence matched this search; this does not prove the information is absent from the entire collection. The runtime may already have attempted one query rewrite within the same scope. Do not repeat the same search; use a materially different, source-grounded query only if justified. Do not invent an answer or citation.';
 
 export const RAG_ANSWER_INSTRUCTIONS = [
   'FINAL ANSWER CONTRACT:',

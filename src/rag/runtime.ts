@@ -1145,34 +1145,54 @@ export class RagRuntime {
 
   async search(options: RagSearchOptions): Promise<RagRetrievalHit[]> {
     if (!this.config.enabled) throw new Error('RAG is disabled');
-    const startedAt = this.now();
+    throwIfAborted(options.signal);
     const initialQueries = [options.query, ...(options.queries ?? [])]
       .filter((query): query is string => typeof query === 'string' && Boolean(query.trim()))
       .map((query) => query.trim());
     if (initialQueries.length === 0) throw new Error('RagSearch requires at least one query');
-    const expandedQueries = [...initialQueries];
-    const crossLanguageQuery = initialQueries.find((query) => /\p{Script=Han}/u.test(query));
-    if (crossLanguageQuery && this.queryRewriter) {
-      try {
-        expandedQueries.push(
-          ...(await this.queryRewriter({
-            query: crossLanguageQuery,
-            signal: options.signal,
-            emitEvent: options.emitEvent
-          }))
-        );
-      } catch (error) {
-        this.runtimeWarnings = [
-          ...this.runtimeWarnings.filter(
-            (warning) => !warning.startsWith('Cross-language query rewrite failed')
-          ),
-          `Cross-language query rewrite failed; using the original query: ${error instanceof Error ? error.message : String(error)}`
-        ];
-      }
+    if (
+      initialQueries.length > MAX_SEARCH_QUERIES ||
+      initialQueries.some((q) => q.length > 8_192)
+    ) {
+      throw new Error('RagSearch accepts at most four queries of 8192 characters each');
     }
-    const queries = [
-      ...new Set(expandedQueries.map((query) => query.trim()).filter(Boolean))
-    ].slice(0, MAX_SEARCH_QUERIES);
+    const queries = [...new Set(initialQueries)];
+    const first = await this.searchOnce({ ...options, query: undefined, queries });
+    throwIfAborted(options.signal);
+    // Recover one empty query, never successful retrieval or a failed backend request.
+    // Multi-query searches remain intact rather than merging independent constraints.
+    if (first.length || !this.queryRewriter || queries.length !== 1 || queries[0].length > 4_096) {
+      return first;
+    }
+    let rewritten: string[];
+    try {
+      rewritten = await this.queryRewriter({
+        query: queries[0],
+        signal: options.signal,
+        emitEvent: options.emitEvent
+      });
+    } catch {
+      throwIfAborted(options.signal);
+      const warning = 'Empty-search recovery failed; the original search returned no evidence.';
+      this.runtimeWarnings = [...this.runtimeWarnings.filter((item) => item !== warning), warning];
+      return first;
+    }
+    throwIfAborted(options.signal);
+    if (
+      !Array.isArray(rewritten) ||
+      rewritten.length > 3 ||
+      rewritten.some((query) => typeof query !== 'string' || !query.trim() || query.length > 512)
+    )
+      return first;
+    const recovered = [...new Set([...queries, ...rewritten.map((query) => query.trim())])];
+    if (recovered.length === queries.length) return first;
+    return this.searchOnce({ ...options, query: undefined, queries: recovered });
+  }
+
+  private async searchOnce(options: RagSearchOptions): Promise<RagRetrievalHit[]> {
+    throwIfAborted(options.signal);
+    const startedAt = this.now();
+    const queries = options.queries ?? [];
     const scope = resolveSearchScope(options.collections, options.path);
     const pathFilter = normalizePathFilter(scope.path);
     const limit = Math.min(options.limit ?? DEFAULT_SEARCH_LIMIT, MAX_SEARCH_LIMIT);
@@ -1213,6 +1233,9 @@ export class RagRuntime {
       (collection) => !requestedCollections || requestedCollections.has(collection.name)
     );
     if (collections.length === 0) throw new Error('No requested RAG collections are mounted');
+    if (requestedCollections && collections.length !== requestedCollections.size) {
+      throw new Error('One or more requested RAG collections are not mounted');
+    }
     options.emitEvent?.({
       type: 'rag_retrieval_started',
       queryCount: queries.length,

@@ -39,7 +39,9 @@ export function createRagTools(runtime: RagRuntime, includeVerify: boolean): Too
           .min(1)
           .max(8_192)
           .refine((value) => value.trim().length > 0, 'Query must not be blank')
-          .describe('One natural-language search query.')
+          .describe(
+            'Preserve the supplied query, identifiers, negation and conditions.'
+          )
           .optional(),
         queries: z
           .array(
@@ -62,7 +64,7 @@ export function createRagTools(runtime: RagRuntime, includeVerify: boolean): Too
           .min(1)
           .max(4_096)
           .describe(
-            'Omit for collection-wide search. Otherwise use a relative path, e.g. "advanced/testing-events.md", or a rag:// virtual path. Never use absolute host paths or .. segments.'
+            'Omit unless the user constrains a known collection path or a search result supplies it. Exact collection-root-relative file/directory prefix, not a basename search or local workspace filename. Accepts rag:// paths. Never use absolute host paths or .. segments.'
           )
           .optional(),
         limit: z
@@ -103,7 +105,14 @@ export function createRagTools(runtime: RagRuntime, includeVerify: boolean): Too
                   `   ${hit.summary}`
               )
               .join('\n')
-          : RAG_EMPTY_SEARCH_INSTRUCTIONS;
+          : [
+              RAG_EMPTY_SEARCH_INSTRUCTIONS,
+              ...(input.path
+                ? [
+                    `Active path filter (data): ${JSON.stringify(input.path)}. This is an exact collection-root-relative prefix, not a basename match. Empty results can mean a wrong filter, not absent knowledge. Do not remove user-required constraints; correct only an inferred filter using a confirmed collection path.`
+                  ]
+                : [])
+            ].join('\n');
         const limited = limitUtf8Head(
           [
             'RAG search results:',

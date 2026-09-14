@@ -20,6 +20,13 @@ const repetitions = Number(arg('--repetitions', dataset.repetitions));
 if (!Number.isInteger(repetitions) || repetitions < 1 || repetitions > 3)
   throw new Error('Repetitions must be 1..3');
 const only = arg('--cases', '').split(',').filter(Boolean);
+const selectedArms = arg('--arms', 'baseline,candidate').split(',');
+if (
+  new Set(selectedArms).size !== selectedArms.length ||
+  selectedArms.some((arm) => !['baseline', 'candidate'].includes(arm))
+)
+  throw new Error('Arms must be baseline,candidate or one of them');
+const diagnosticsEnabled = args.includes('--diagnostics');
 const cases = dataset.cases.filter((item) => !only.length || only.includes(item.id));
 if (!cases.length) throw new Error('No matching cases');
 const baseUrl = 'http://127.0.0.1:18080';
@@ -71,7 +78,9 @@ async function loadEngine(root) {
     ...(await load('rag/query-rewriter.js'))
   };
 }
-const arms = { baseline: await loadEngine(baselineRoot), candidate: await loadEngine(repo) };
+const arms = {};
+for (const arm of selectedArms)
+  arms[arm] = await loadEngine(arm === 'baseline' ? baselineRoot : repo);
 const revision = (root) =>
   execFileSync('git', ['rev-parse', 'HEAD'], {
     cwd: root,
@@ -85,7 +94,9 @@ const report = {
   createdAt: new Date().toISOString(),
   model,
   contextWindowTokens: 16384,
-  revisions: { baseline: revision(baselineRoot), candidate: revision(repo) },
+  revisions: Object.fromEntries(
+    selectedArms.map((arm) => [arm, revision(arm === 'baseline' ? baselineRoot : repo)])
+  ),
   collection,
   repetitions,
   cases: cases.map((item) => item.id),
@@ -109,7 +120,8 @@ const report = {
     auditEnabled: false,
     collectionsRead: ['techdocs'],
     publicFixtureAnswersPersistedLocally: true,
-    reasoningPersisted: false
+    reasoningPersisted: false,
+    publicFixtureDiagnostics: diagnosticsEnabled
   },
   results: []
 };
@@ -126,6 +138,36 @@ const abort = new AbortController();
 const onInterrupt = () => abort.abort();
 process.once('SIGINT', onInterrupt);
 process.once('SIGTERM', onInterrupt);
+let activeDiagnostics;
+let diagnosticBytes = 0;
+const trace = (value) => {
+  if (!activeDiagnostics || activeDiagnostics.length >= 80) return;
+  const bytes = Buffer.byteLength(JSON.stringify(value));
+  if (diagnosticBytes + bytes > 256 * 1024) return;
+  diagnosticBytes += bytes;
+  activeDiagnostics.push(value);
+};
+const originalFetch = globalThis.fetch;
+if (diagnosticsEnabled) {
+  globalThis.fetch = (input, init) => {
+    const url = new URL(typeof input === 'string' ? input : (input.url ?? input.href));
+    if (
+      url.hostname === '127.0.0.1' &&
+      url.pathname === '/knowledge/search' &&
+      typeof init?.body === 'string'
+    ) {
+      const body = JSON.parse(init.body);
+      trace({
+        phase: 'wire-search',
+        queries: body.queries,
+        collections: body.collections,
+        path: body.path,
+        limit: body.limit
+      });
+    }
+    return originalFetch(input, init);
+  };
+}
 
 async function run(arm, item, repetition) {
   const api = arms[arm];
@@ -136,6 +178,20 @@ async function run(arm, item, repetition) {
     modelContextWindows: { [model]: 16384 },
     env: { BASE_URL: `${baseUrl}/v1`, API_KEY: 'local-only' }
   });
+  const rewriter = api.createProviderRagQueryRewriter(provider);
+  const tracedRewriter =
+    rewriter &&
+    (async (input) => {
+      trace({ phase: 'rewrite-input', query: input.query });
+      try {
+        const queries = await rewriter(input);
+        trace({ phase: 'rewrite-output', queries });
+        return queries;
+      } catch (error) {
+        trace({ phase: 'rewrite-error', code: error.code ?? error.name });
+        throw error;
+      }
+    });
   const rag = new api.RagRuntime({
     workspaceRoot: workspace,
     config: {
@@ -151,8 +207,41 @@ async function run(arm, item, repetition) {
     },
     semanticVerifier: api.createProviderRagVerifier(provider),
     answerRepairer: api.createProviderRagAnswerRepairer(provider),
-    queryRewriter: api.createProviderRagQueryRewriter(provider)
+    queryRewriter: diagnosticsEnabled ? tracedRewriter : rewriter
   });
+  if (diagnosticsEnabled) {
+    const search = rag.search.bind(rag);
+    rag.search = async (options) => {
+      const { query, queries, collections, path, limit } = options;
+      trace({ phase: 'search-input', query, queries, collections, path, limit });
+      try {
+        const hits = await search(options);
+        trace({
+          phase: 'search-output',
+          hits: hits.map(({ chunkId, virtualPath, lineStart, lineEnd, rank }) => ({
+            chunkId,
+            virtualPath,
+            lineStart,
+            lineEnd,
+            rank
+          }))
+        });
+        return hits;
+      } catch (error) {
+        trace({
+          phase: 'search-error',
+          code: error.code ?? error.name,
+          message: error.message?.slice(0, 512)
+        });
+        throw error;
+      }
+    };
+    const read = rag.readChunks.bind(rag);
+    rag.readChunks = async (ids, turnId, signal) => {
+      trace({ phase: 'read-input', chunkIds: ids });
+      return read(ids, turnId, signal);
+    };
+  }
   const engine = new api.QueryEngine({
     provider,
     workspaceRoot: workspace,
@@ -180,6 +269,8 @@ async function run(arm, item, repetition) {
         answer: ''
       };
       const usages = new Map();
+      activeDiagnostics = diagnosticsEnabled ? [] : undefined;
+      diagnosticBytes = 0;
       const deadline = AbortSignal.timeout(item.fault === 'cancel' ? 150 : dataset.turnTimeoutMs);
       const started = performance.now();
       const generator = engine.runTurn(prompt, {
@@ -194,6 +285,7 @@ async function run(arm, item, repetition) {
             entry.status = result.status;
             entry.answer = result.response ?? '';
             entry.errorCode = result.error?.code;
+            if (diagnosticsEnabled) entry.errorMessage = result.error?.message?.slice(0, 512);
             break;
           }
           const event = next.value;
@@ -231,6 +323,8 @@ async function run(arm, item, repetition) {
         entry.errorCode = error.name;
       }
       entry.durationMs = Math.round(performance.now() - started);
+      if (diagnosticsEnabled) entry.diagnostics = activeDiagnostics;
+      activeDiagnostics = undefined;
       entry.deadlineReached = deadline.aborted;
       entry.answerSha256 = sha(entry.answer);
       entry.lastRequest = engine.getStatus().context.lastRequest;
@@ -288,8 +382,9 @@ try {
   });
   for (let repetition = 1; repetition <= repetitions; repetition++) {
     for (const [index, item] of cases.entries()) {
-      const order =
-        (repetition + index) % 2 ? ['baseline', 'candidate'] : ['candidate', 'baseline'];
+      const order = (
+        (repetition + index) % 2 ? ['baseline', 'candidate'] : ['candidate', 'baseline']
+      ).filter((arm) => selectedArms.includes(arm));
       for (const arm of order) {
         if (abort.signal.aborted) break;
         await run(arm, item, repetition);
@@ -304,7 +399,8 @@ try {
   report.collectionUnchanged = JSON.stringify(collection) === JSON.stringify(finalCollection);
   report.complete =
     !abort.signal.aborted &&
-    report.results.filter((item) => !item.setup).length === cases.length * repetitions * 2;
+    report.results.filter((item) => !item.setup).length ===
+      cases.length * repetitions * selectedArms.length;
   report.finishedAt = new Date().toISOString();
   await writeFile(join(output, 'report.json'), JSON.stringify(report, null, 2));
   console.log(
@@ -315,6 +411,7 @@ try {
     })
   );
 } finally {
+  globalThis.fetch = originalFetch;
   faultServer.closeAllConnections();
   await new Promise((done) => faultServer.close(done));
   process.removeListener('SIGINT', onInterrupt);
