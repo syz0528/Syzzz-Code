@@ -559,6 +559,8 @@ export interface QueryEngineOptions {
   softTokenBudget?: number;
   hardTokenBudget?: number;
   systemPromptSuffix?: string;
+  /** Development-only experiment; live evaluation has not established a quality gain. */
+  experimentalTaskCompletionReview?: boolean;
 }
 
 export interface ChatOptions {
@@ -610,6 +612,7 @@ export class QueryEngine {
   private softTokenBudget?: number;
   private hardTokenBudget?: number;
   private systemPromptSuffix?: string;
+  private experimentalTaskCompletionReview: boolean;
   private activeDelegateCalls = 0;
   private activeSubagentUsage?: ProviderUsage;
   private activeUserInputCalls = 0;
@@ -618,6 +621,7 @@ export class QueryEngine {
     this.extensions = options.extensions;
     this.composition = options.composition;
     this.rag = options.rag;
+    this.experimentalTaskCompletionReview = options.experimentalTaskCompletionReview === true;
     this.tools =
       options.tools ??
       createToolSet({
@@ -1739,7 +1743,9 @@ export class QueryEngine {
       const providerTools = this.getProviderTools(Boolean(options.requestUserInput));
       const confirmedFileSideEffects = new Set<string>();
       let ragSearchSucceeded = false;
-      const taskExecution = new TaskExecutionLedger(userMessage);
+      const taskExecution = new TaskExecutionLedger(
+        this.experimentalTaskCompletionReview ? userMessage : ''
+      );
       if (this.activeRagContextReceipts.length > 0)
         taskExecution.observe('AutoRagRead', {}, 'success');
       let forcedFinalizationReason: 'delegate-failure' | 'hook-denial' | undefined;
@@ -1821,7 +1827,9 @@ export class QueryEngine {
               (taskExecution.active && !finalizationReason
                 ? 'Tools remain available: finish the other requested authorized steps before your final answer; reading RAG alone does not complete a combined task. '
                 : 'Start the response with the applicable citation token, then answer in at most two short sentences and stop. ') +
-              "Do not invent or alter citation tokens. Answer in the user's language and only the operation or claim requested. Use only conclusions and code literally visible in the cited excerpts for RAG claims; an include directive or link is not code evidence. Do not add unrelated definitions, alternative methods, setup code, packages, parameters, examples, or source metadata. If the excerpts do not answer the question, state that evidence is insufficient."
+              (taskExecution.active
+                ? "Do not invent or alter citation tokens. Answer in the user's language and only the operation or claim requested. Use only conclusions and code literally visible in the cited excerpts for RAG claims; an include directive or link is not code evidence. Do not add unrelated definitions, alternative methods, setup code, packages, parameters, examples, or source metadata. If the excerpts do not answer the question, state that evidence is insufficient."
+                : "Do not invent or alter citation tokens. Answer in the user's language and only the operation or claim requested. Use only conclusions and code literally visible in the cited excerpts; an include directive or link is not code evidence. Do not add related definitions, alternative methods, setup code, packages, parameters, examples, or source metadata. If the excerpts do not answer the question, state that evidence is insufficient.")
           );
         } else if (ragSearchSucceeded) {
           runtimeInstructions.push(

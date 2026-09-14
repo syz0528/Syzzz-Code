@@ -103,6 +103,46 @@ async function collect(engine, prompt, options) {
   }
 }
 
+test('default runtime does not enable the experimental review or change RAG output limits', async () => {
+  await fixture(async ({ workspace, rag }) => {
+    let calls = 0;
+    const provider = {
+      getInfo: info,
+      async chat(request) {
+        calls++;
+        assert.doesNotMatch(
+          request.systemPrompt,
+          /Current-turn execution facts|One-time completion review/
+        );
+        const tools = request.messages.filter((m) => m.role === 'tool');
+        if (!tools.length) return call('RagSearch', { query: 'TestClient lifespan' }, 's');
+        if (tools.length === 1)
+          return call('RagRead', { chunkIds: [/\b[a-f0-9]{32}\b/.exec(tools[0].content)[0]] }, 'r');
+        assert.equal(request.maxOutputTokens, 128);
+        assert.deepEqual(request.stopSequences, ['\n\n']);
+        assert.match(request.systemPrompt, /two short sentences and stop/);
+        return reply(
+          `Use TestClient with a with statement ${/\[\[rag:[a-f0-9]{32}\]\]/.exec(tools[1].content)[0]}`
+        );
+      }
+    };
+    const engine = new QueryEngine({
+      provider,
+      workspaceRoot: workspace,
+      rag,
+      mode: 'ask',
+      audit: false
+    });
+    try {
+      const { result } = await collect(engine, 'Read docs then inspect test_lifespan.py');
+      assert.equal(result.status, 'completed');
+      assert.equal(calls, 3);
+    } finally {
+      await engine.close();
+    }
+  });
+});
+
 test('combined task gets one completion review, performs local Read and does not stream the discarded draft', async () => {
   await fixture(async ({ workspace, rag }) => {
     const requests = [];
@@ -122,6 +162,7 @@ test('combined task gets one completion review, performs local Read and does not
       }
     };
     const engine = new QueryEngine({
+      experimentalTaskCompletionReview: true,
       provider,
       workspaceRoot: workspace,
       rag,
@@ -185,6 +226,7 @@ test('a RAG scope failure does not stop requested local reading; missing files a
       }
     };
     const engine = new QueryEngine({
+      experimentalTaskCompletionReview: true,
       provider,
       workspaceRoot: workspace,
       rag,
@@ -222,6 +264,7 @@ test('one-time review respects a prohibition and never executes tools by itself'
       }
     };
     const engine = new QueryEngine({
+      experimentalTaskCompletionReview: true,
       provider,
       workspaceRoot: workspace,
       rag,
@@ -257,6 +300,7 @@ test('completion review does not exceed Provider or tool-round budgets', async (
         }
       };
       const engine = new QueryEngine({
+        experimentalTaskCompletionReview: true,
         provider,
         workspaceRoot: workspace,
         rag,
@@ -289,6 +333,7 @@ test('cancelling during completion review ends the turn without local execution'
       }
     };
     const engine = new QueryEngine({
+      experimentalTaskCompletionReview: true,
       provider,
       workspaceRoot: workspace,
       rag,

@@ -27,6 +27,7 @@ if (
 )
   throw new Error('Arms must be baseline,candidate or one of them');
 const diagnosticsEnabled = args.includes('--diagnostics');
+const taskCompletionReview = args.includes('--task-completion-review');
 const cases = dataset.cases.filter((item) => !only.length || only.includes(item.id));
 if (!cases.length) throw new Error('No matching cases');
 const baseUrl = 'http://127.0.0.1:18080';
@@ -111,7 +112,8 @@ const report = {
     modelDecoding: 'unchanged server/provider defaults; no per-request seed override',
     composition: 'none',
     extensions: 'none',
-    review: 'automated diagnostics plus Codex review; not human Gold'
+    review: 'automated diagnostics plus Codex review; not human Gold',
+    candidateTaskCompletionReview: taskCompletionReview
   },
   privacy: {
     userConfigModified: false,
@@ -257,6 +259,7 @@ async function run(arm, item, repetition) {
     };
   }
   const engine = new api.QueryEngine({
+    experimentalTaskCompletionReview: arm === 'candidate' && taskCompletionReview,
     provider,
     workspaceRoot: workspace,
     mode: 'ask',
