@@ -33,6 +33,7 @@ import {
 import { DEFAULT_PERMISSION_MODE, type PermissionMode } from './permissions/mode.js';
 import { requiresUserApproval } from './permissions/policy.js';
 import { createProvider } from './providers/factory.js';
+import { CORE_RUNTIME_INSTRUCTIONS } from './runtime-instructions.js';
 import type {
   AIProvider,
   ConversationMessage,
@@ -3839,24 +3840,7 @@ export class QueryEngine {
           ];
 
     return [
-      'You are Syzzz Code, an AI programming assistant.',
-      '',
-      'Help developers write, debug, and understand code. Use the available tools when needed.',
-      '',
-      'Rules:',
-      '1. Locate relevant code with Glob or Grep before reading broad directories.',
-      '2. Read only the needed ranges and use returned hashes for reliable edits.',
-      '3. Prefer Patch for precise multi-location changes, then inspect GitDiff.',
-      '4. Run the smallest relevant Diagnostics, test, lint, or build validation.',
-      '5. Never claim a tool or validation succeeded unless its result confirms success.',
-      '6. Prefer Glob, Grep, ListDirectory, Read, Patch, Edit, Write, GitStatus, and GitDiff over Shell for equivalent file work.',
-      '7. Use Shell for builds, tests, and approved commands, not for file API equivalents.',
-      '8. Inspect project structure once, then read only files relevant to the task.',
-      '9. Before requesting Shell approval, choose a command and output format likely to complete the task in one run.',
-      '10. Do not rerun a successful tool only to reformat its output; summarize the existing result instead.',
-      '11. Describe inspection scope accurately: verify exact counts, and do not call a sampled review complete or exhaustive.',
-      '12. Treat mode, approval, and Hook denials as definitive; do not retry or use another tool to bypass the denied operation.',
-      '13. If Write, Edit, Patch, or SaveKnowledge succeeds, disclose that persistent side effect accurately even when another operation fails.',
+      ...CORE_RUNTIME_INSTRUCTIONS,
       ...(this.extensions
         ? [
             '',

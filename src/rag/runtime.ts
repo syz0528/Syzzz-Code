@@ -46,6 +46,7 @@ import type {
 import { buildLanceVectorStore, searchLanceVectorStore } from './vector-store.js';
 import type { ToolDefinition } from '../types.js';
 import { createRagTools } from './tools.js';
+import { ragCapabilityInstructions } from './instructions.js';
 import type { RagQueryRewriter } from './query-rewriter.js';
 import { RagServiceClient } from './service-client.js';
 
@@ -452,18 +453,7 @@ export class RagRuntime {
   }
 
   getSystemPromptSuffix(): string {
-    return [
-      'For broad workspace or mounted-knowledge questions, use RagSearch, then RagRead before making evidence-backed claims.',
-      'In RagSearch, put collection names in collections (for example ["techdocs"]) and omit path for a broad search; path is only a relative file or directory inside that collection.',
-      'Search queries must match the likely language of the indexed source. If the user and source languages differ, include a concise source-language translation in queries; do not submit only the untranslated user question.',
-      'Cite retrieved evidence with the exact [[rag:<chunkId>]] token returned by RagRead.',
-      'When Rank 1 directly answers the requested procedure or claim, read Rank 1 alone. Do not mix in broader conceptual neighbors. Lower-ranked results must be promoted by a narrower search before reading.',
-      'Prefer Grep, RepoMap, and Read for exact filenames, symbols, or current edits. Never invent a RAG citation.',
-      'RagVerify is optional and should be used only when claim-level support needs a second pass.',
-      this.service
-        ? 'Knowledge is served remotely and is read-only. Do not read server paths with local file tools or attempt to save knowledge.'
-        : 'Use SaveKnowledge only when the user explicitly asks to save, remember, or update durable knowledge. Summarize and normalize the requested note, preserve evidence receipts when supplied, and never save content opportunistically.'
-    ].join(' ');
+    return ragCapabilityInstructions(Boolean(this.service));
   }
 
   async listCollections(): Promise<RagCollection[]> {

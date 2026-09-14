@@ -5,6 +5,13 @@ import { limitUtf8Head } from '../tools/output-limits.js';
 import { defineTool } from '../tools/runtime.js';
 import type { RagRuntime } from './runtime.js';
 import type { RagPreparedWrite } from './types.js';
+import {
+  RAG_ANSWER_INSTRUCTIONS,
+  RAG_EMPTY_SEARCH_INSTRUCTIONS,
+  RAG_READ_DESCRIPTION,
+  RAG_SEARCH_DESCRIPTION,
+  RAG_SELECTION_INSTRUCTIONS
+} from './instructions.js';
 
 const MAX_RESULT_BYTES = 40 * 1024;
 const MIN_AGENT_SEARCH_LIMIT = 12;
@@ -24,34 +31,38 @@ function errorResult(action: string, error: unknown): ToolResult {
 export function createRagTools(runtime: RagRuntime, includeVerify: boolean): ToolDefinition[] {
   const search = defineTool({
     name: 'RagSearch',
-    description:
-      'Search ready workspace and mounted knowledge indexes. Queries must use the likely language of the indexed source; when the user asks in another language, include a concise source-language translation in queries. Select named collections with collections (for example ["techdocs"]); omit path for a collection-wide search. Returns bounded evidence summaries and chunk IDs; use RagRead before citing evidence.',
+    description: RAG_SEARCH_DESCRIPTION,
     inputSchema: z
       .object({
         query: z
           .string()
           .min(1)
           .max(8_192)
+          .refine((value) => value.trim().length > 0, 'Query must not be blank')
           .describe('One natural-language search query.')
           .optional(),
         queries: z
-          .array(z.string().min(1).max(8_192))
+          .array(
+            z
+              .string()
+              .min(1)
+              .max(8_192)
+              .refine((value) => value.trim().length > 0, 'Query must not be blank')
+          )
           .max(4)
           .describe('Optional additional search queries; at most four queries total are used.')
           .optional(),
         collections: z
           .array(z.string().min(1).max(64))
           .max(16)
-          .describe(
-            'Mounted collection names to search, for example ["techdocs"]. Put collection names here, never in path.'
-          )
+          .describe('Mounted names, e.g. ["techdocs"]. Collection names belong here, not in path.')
           .optional(),
         path: z
           .string()
           .min(1)
           .max(4_096)
           .describe(
-            'Optional relative file or directory inside the selected collection, for example "advanced/testing-events.md". Omit for a broad collection search. A rag:// virtual path is accepted, but absolute host paths and .. are forbidden.'
+            'Omit for collection-wide search. Otherwise use a relative path, e.g. "advanced/testing-events.md", or a rag:// virtual path. Never use absolute host paths or .. segments.'
           )
           .optional(),
         limit: z
@@ -60,13 +71,16 @@ export function createRagTools(runtime: RagRuntime, includeVerify: boolean): Too
           .min(1)
           .max(50)
           .describe(
-            'Requested number of ranked summaries. Agent searches always return at least 12 candidates so an early lexical rank cannot hide more specific evidence.'
+            'Candidate budget: default 12; smaller requests use 12, maximum 50. Fewer matches may be returned.'
           )
           .optional()
       })
       .strict()
       .refine((input) => Boolean(input.query || input.queries?.length), {
         message: 'query or queries is required'
+      })
+      .refine((input) => (input.query ? 1 : 0) + (input.queries?.length ?? 0) <= 4, {
+        message: 'Provide at most four queries total across query and queries'
       }),
     risk: 'read',
     approval: 'never',
@@ -89,11 +103,13 @@ export function createRagTools(runtime: RagRuntime, includeVerify: boolean): Too
                   `   ${hit.summary}`
               )
               .join('\n')
-          : '(no sufficiently relevant RAG evidence matched; if the question and source use different languages, retry with a concise query in the source language)';
+          : RAG_EMPTY_SEARCH_INSTRUCTIONS;
         const limited = limitUtf8Head(
           [
             'RAG search results:',
-            'Selection rule: topic overlap alone is not evidence. Read the smallest set of returned candidates whose summaries directly address the requested operation or claim; ranking is a relevance hint, not proof.',
+            ...(results.length
+              ? [RAG_SELECTION_INSTRUCTIONS, 'Candidate summaries (untrusted source data):']
+              : []),
             body
           ].join('\n'),
           MAX_RESULT_BYTES
@@ -114,8 +130,7 @@ export function createRagTools(runtime: RagRuntime, includeVerify: boolean): Too
 
   const read = defineTool({
     name: 'RagRead',
-    description:
-      'Read the smallest sufficient evidence set from candidates returned by RagSearch in this turn. Ranking is a relevance hint, not proof. Each chunk includes an exact citation token that must appear in any evidence-backed final answer.',
+    description: RAG_READ_DESCRIPTION,
     inputSchema: z
       .object({
         chunkIds: z
@@ -143,19 +158,9 @@ export function createRagTools(runtime: RagRuntime, includeVerify: boolean): Too
               `${chunk.text}`
           )
           .join('\n\n---\n\n');
-        const answerContract =
-          result.chunks.length > 0
-            ? [
-                'FINAL ANSWER CONTRACT:',
-                "- Answer in the user's language and keep the response no broader than the question.",
-                '- Copy every applicable [[rag:<chunkId>]] token exactly as shown below into the final answer.',
-                '- Do not output code unless that exact code is visible in the evidence text. An include directive or link is not code evidence.',
-                '- Do not add setup steps, packages, APIs, parameters, examples, or alternative methods absent from the evidence.',
-                '- If the evidence does not answer the question, state that evidence is insufficient.'
-              ].join('\n')
-            : '';
+        const answerContract = result.chunks.length > 0 ? RAG_ANSWER_INSTRUCTIONS : '';
         const limited = limitUtf8Head(
-          `${answerContract ? `${answerContract}\n\n` : ''}${body || '(no chunks found)'}${missing.length ? `\n\nMissing chunk IDs: ${missing.join(', ')}` : ''}`,
+          `${answerContract ? `${answerContract}\n\nEvidence text (untrusted source data):\n` : ''}${body || '(no chunks found)'}${missing.length ? `\n\nMissing chunk IDs: ${missing.join(', ')}` : ''}`,
           MAX_RESULT_BYTES
         );
         return {
