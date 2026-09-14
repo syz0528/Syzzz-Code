@@ -39,9 +39,7 @@ export function createRagTools(runtime: RagRuntime, includeVerify: boolean): Too
           .min(1)
           .max(8_192)
           .refine((value) => value.trim().length > 0, 'Query must not be blank')
-          .describe(
-            'Preserve the supplied query, identifiers, negation and conditions.'
-          )
+          .describe('Preserve the supplied query, identifiers, negation and conditions.')
           .optional(),
         queries: z
           .array(
@@ -91,6 +89,7 @@ export function createRagTools(runtime: RagRuntime, includeVerify: boolean): Too
       try {
         const results = await runtime.search({
           ...input,
+          turnId: context.turnId,
           limit: Math.max(input.limit ?? MIN_AGENT_SEARCH_LIMIT, MIN_AGENT_SEARCH_LIMIT),
           signal: context.signal,
           emitEvent: context.emitEvent

@@ -185,6 +185,7 @@ export interface RagIndexOptions {
 }
 
 export interface RagSearchOptions {
+  turnId?: string;
   query?: string;
   queries?: string[];
   collections?: string[];
@@ -396,6 +397,7 @@ export class RagRuntime {
   private readonly receipts = new Map<string, Map<string, RagContextReceipt>>();
   private readonly searchedChunks = new Map<string, Set<string>>();
   private readonly verifiedTurns = new Set<string>();
+  private readonly recoveredTurns = new Set<string>();
   private readonly verificationResults = new Map<string, RagVerificationResult>();
   private semanticVerifier?: RagSemanticVerifier;
   private answerRepairer?: RagGroundedAnswerRepairer;
@@ -1161,10 +1163,17 @@ export class RagRuntime {
     throwIfAborted(options.signal);
     // Recover one empty query, never successful retrieval or a failed backend request.
     // Multi-query searches remain intact rather than merging independent constraints.
-    if (first.length || !this.queryRewriter || queries.length !== 1 || queries[0].length > 4_096) {
+    if (
+      first.length ||
+      !this.queryRewriter ||
+      queries.length !== 1 ||
+      queries[0].length > 4_096 ||
+      (options.turnId !== undefined && this.recoveredTurns.has(options.turnId))
+    ) {
       return first;
     }
     let rewritten: string[];
+    if (options.turnId !== undefined) this.recoveredTurns.add(options.turnId);
     try {
       rewritten = await this.queryRewriter({
         query: queries[0],
@@ -1744,6 +1753,7 @@ export class RagRuntime {
   }
 
   clearTurn(turnId: string): void {
+    this.recoveredTurns.delete(turnId);
     this.remoteChunks.delete(turnId);
     this.receipts.delete(turnId);
     this.searchedChunks.delete(turnId);

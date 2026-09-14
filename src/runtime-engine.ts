@@ -1692,6 +1692,7 @@ export class QueryEngine {
         yield event({ type: 'phase_changed', phase: 'rag' });
         const ragEvents: AgentEventData[] = [];
         const hits = await this.rag.search({
+          turnId,
           query: userMessage,
           limit: 4,
           signal,

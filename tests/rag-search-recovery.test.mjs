@@ -280,3 +280,40 @@ test('provider rewrite validates its input without truncation or dispatch', asyn
   }
   assert.equal(calls, 0);
 });
+
+test('repeated RagSearch calls share one recovery budget per turn and release it on cleanup', async () => {
+  await fixture(async ({ runtime, calls }) => {
+    let rewrites = 0;
+    const rag = runtime(async () => {
+      rewrites++;
+      return ['other query'];
+    });
+    const tool = rag.getTools().find((t) => t.name === 'RagSearch');
+    const context = { turnId: 'one', signal: signal() };
+    for (let n = 0; n < 4; n++)
+      await tool.execute({ query: 'original', path: 'missing.md' }, context);
+    assert.equal(rewrites, 1);
+    assert.equal(calls.length, 5);
+    await tool.execute({ query: 'different', path: 'missing.md' }, context);
+    assert.equal(rewrites, 1);
+    await tool.execute({ query: 'original' }, { ...context, turnId: 'two' });
+    assert.equal(rewrites, 2);
+    rag.clearTurn('one');
+    await tool.execute({ query: 'original' }, context);
+    assert.equal(rewrites, 3);
+  });
+});
+
+test('failed recovery consumes its turn budget and concurrent searches cannot double-spend it', async () => {
+  await fixture(async ({ runtime }) => {
+    let rewrites = 0;
+    const rag = runtime(async () => {
+      rewrites++;
+      throw new Error('unavailable');
+    });
+    await Promise.all(
+      [1, 2, 3].map(() => rag.search({ query: 'original', turnId: 'same', signal: signal() }))
+    );
+    assert.equal(rewrites, 1);
+  });
+});
