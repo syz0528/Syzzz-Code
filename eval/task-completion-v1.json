@@ -1,0 +1,101 @@
+{
+  "schemaVersion": 1,
+  "datasetId": "task-completion-v1",
+  "scope": "Public techdocs and isolated local file fixtures; development checks, not human Gold",
+  "repetitions": 1,
+  "turnTimeoutMs": 45000,
+  "cases": [
+    {
+      "id": "combined-explicit",
+      "group": "combined",
+      "prompt": "先查询并读取 techdocs 的 TestClient lifespan 文档，再读取当前 test_lifespan.py，检查它有没有按文档触发生命周期。附证据引用，不修改文件，不执行 Shell。",
+      "expect": "mixed",
+      "topic": "lifespan",
+      "localReadPolicy": "success"
+    },
+    {
+      "id": "combined-natural",
+      "group": "combined",
+      "prompt": "请根据 techdocs 判断 test_lifespan.py 的生命周期测试有没有问题。文档和这个本地文件都要实际读取，中文说明结果并引用，不改文件。",
+      "expect": "mixed",
+      "topic": "lifespan",
+      "localReadPolicy": "success"
+    },
+    {
+      "id": "combined-english",
+      "group": "combined",
+      "prompt": "Search techdocs for TestClient lifespan with statement and read the relevant evidence. Then read test_lifespan.py and assess its lifecycle handling. Cite evidence, do not modify files or run Shell.",
+      "expect": "mixed",
+      "topic": "lifespan",
+      "localReadPolicy": "success"
+    },
+    {
+      "id": "local-first",
+      "group": "combined",
+      "prompt": "先读取 test_lifespan.py，再从 techdocs 检索并读取 TestClient lifespan with statement 的证据，对照说明。不要修改或运行文件，中文附引用。",
+      "expect": "mixed",
+      "topic": "lifespan",
+      "localReadPolicy": "success"
+    },
+    {
+      "id": "missing-local",
+      "group": "failure",
+      "prompt": "从 techdocs 检索并读取 TestClient lifespan with statement；然后尝试读取 missing.py。若文件不存在就明确说明，不要创建它。中文说明文档办法并引用。",
+      "expect": "evidence",
+      "topic": "lifespan",
+      "localReadPolicy": "error"
+    },
+    {
+      "id": "service-local",
+      "group": "fault",
+      "fault": "unavailable",
+      "prompt": "先检索 techdocs 的 lifespan 文档；即使知识服务异常，也请独立读取本地 test_lifespan.py。分别说明实际结果，不要修改文件或凭空给出文档结论。",
+      "expect": "service-error",
+      "localReadPolicy": "success"
+    },
+    {
+      "id": "forbidden-local",
+      "group": "control",
+      "prompt": "只检索并读取 techdocs 的 TestClient lifespan with statement，中文一句话说明并引用。test_lifespan.py 只是举例，禁止读取它，不要操作本地文件。",
+      "expect": "evidence",
+      "topic": "lifespan",
+      "localReadPolicy": "none"
+    },
+    {
+      "id": "standalone-rag",
+      "group": "control",
+      "prompt": "只使用 techdocs。先 RagSearch 查询 TestClient lifespan with statement，再 RagRead 最相关正文。用中文一句话说明如何让 lifespan 在测试中执行，附准确引用，不补代码。",
+      "expect": "evidence",
+      "topic": "lifespan",
+      "localReadPolicy": "none"
+    },
+    {
+      "id": "ordinary-file-mention",
+      "group": "ordinary",
+      "prompt": "test_lifespan.py 只是一个举例文件名。不要读文件、不要检索、不要调用工具，只回复：收到。",
+      "expect": "ack",
+      "localReadPolicy": "none"
+    },
+    {
+      "id": "ordinary-array",
+      "group": "ordinary",
+      "prompt": "用一句中文解释 JavaScript 数组，不需要工具。",
+      "expect": "direct",
+      "localReadPolicy": "none"
+    },
+    {
+      "id": "scope-prohibition",
+      "group": "fault",
+      "prompt": "只允许查询 not-mounted-eval 集合，不要改查 techdocs。请检索 lifespan；若集合不可用就说明。test_lifespan.py 只是举例，禁止读取。",
+      "expect": "scope-error",
+      "localReadPolicy": "none"
+    },
+    {
+      "id": "cancel-combined",
+      "group": "fault",
+      "fault": "cancel",
+      "prompt": "查询 techdocs 生命周期文档，再检查 test_lifespan.py，不修改。",
+      "expect": "cancelled"
+    }
+  ]
+}

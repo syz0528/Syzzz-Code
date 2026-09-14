@@ -10,6 +10,34 @@ const entry = (answer, tools = []) => ({
   verification: []
 });
 const search = { name: 'RagSearch', outcome: 'success', result: 'candidates' };
+test('completion eval separates successful reading, failed attempts and forbidden local access', () => {
+  const good = { name: 'Read', outcome: 'success', result: 'client = TestClient(app)' };
+  const bad = { name: 'Read', outcome: 'error', result: 'File does not exist' };
+  assert.equal(
+    assessPromptCase(entry('Done', [good]), { expect: 'direct', localReadPolicy: 'success' })
+      .localReadSucceeded,
+    true
+  );
+  assert.equal(
+    assessPromptCase(entry('Done', [bad]), { expect: 'direct', localReadPolicy: 'success' })
+      .localReadSucceeded,
+    false
+  );
+  assert.equal(
+    assessPromptCase(entry('Done', [bad]), { expect: 'direct', localReadPolicy: 'error' })
+      .localReadFailed,
+    true
+  );
+  assert.equal(
+    assessPromptCase(entry('Done', [bad]), { expect: 'direct', localReadPolicy: 'none' })
+      .noLocalRead,
+    false
+  );
+  assert.equal(
+    assessPromptCase(entry('Done'), { expect: 'direct', localReadPolicy: 'none' }).noLocalRead,
+    true
+  );
+});
 test('live eval does not score grounding block as a correct refusal', () => {
   const checks = assessPromptCase(
     entry('RAG grounding blocked: No evidence-backed conclusion was returned.', [search]),

@@ -179,6 +179,20 @@ async function run(arm, item, repetition) {
     env: { BASE_URL: `${baseUrl}/v1`, API_KEY: 'local-only' }
   });
   const rewriter = api.createProviderRagQueryRewriter(provider);
+  if (diagnosticsEnabled) {
+    for (const method of ['chat', 'chatStream']) {
+      if (typeof provider[method] !== 'function') continue;
+      const original = provider[method].bind(provider);
+      provider[method] = (request, ...rest) => {
+        trace({
+          phase: 'turn-request',
+          completionReview: request.systemPrompt?.includes('One-time completion review:') ?? false,
+          maxOutputTokens: request.maxOutputTokens
+        });
+        return original(request, ...rest);
+      };
+    }
+  }
   const tracedRewriter =
     rewriter &&
     (async (input) => {

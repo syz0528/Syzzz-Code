@@ -84,5 +84,16 @@ export function assessPromptCase(entry, item) {
     checks.noFabricatedCitation = !cited;
     if (item.expect === 'scope-error') checks.noScopeFallback = !search;
   }
+  if (item.localReadPolicy === 'none')
+    checks.noLocalRead = !entry.tools.some((t) => t.name === 'Read');
+  if (item.localReadPolicy === 'error')
+    checks.localReadFailed = entry.tools.some((t) => t.name === 'Read' && t.outcome === 'error');
+  if (item.localReadPolicy === 'success')
+    checks.localReadSucceeded = entry.tools.some(
+      (t) =>
+        t.name === 'Read' &&
+        t.outcome === 'success' &&
+        t.result.includes('client = TestClient(app)')
+    );
   return checks;
 }
