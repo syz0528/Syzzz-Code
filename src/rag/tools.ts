@@ -4,6 +4,7 @@ import { isAbortError } from '../tools/abort.js';
 import { limitUtf8Head } from '../tools/output-limits.js';
 import { defineTool } from '../tools/runtime.js';
 import type { RagRuntime } from './runtime.js';
+import { formatRagChunk } from './evidence-package.js';
 import type { RagPreparedWrite } from './types.js';
 import {
   RAG_ANSWER_INSTRUCTIONS,
@@ -153,23 +154,28 @@ export function createRagTools(runtime: RagRuntime, includeVerify: boolean): Too
     async execute(input, context) {
       try {
         runtime.assertChunksWereSearched(context.turnId, input.chunkIds);
-        const result = await runtime.readChunks(input.chunkIds, context.turnId, context.signal);
-        const missing = input.chunkIds.filter(
-          (id) => !result.chunks.some((chunk) => chunk.id === id)
+        const compact =
+          context.contextWindowTokens !== undefined && context.contextWindowTokens <= 16_384;
+        const maximumBytes = Math.min(
+          compact ? 8 * 1024 : MAX_RESULT_BYTES,
+          context.maximumResultBytes ?? MAX_RESULT_BYTES
         );
-        const body = result.chunks
-          .map(
-            (chunk) =>
-              `[[rag:${chunk.id}]]\n` +
-              `${chunk.virtualPath}:L${chunk.lineStart}-L${chunk.lineEnd}\n` +
-              `source-sha256=${chunk.sourceHash} revision=${chunk.revision}\n` +
-              `${chunk.text}`
-          )
-          .join('\n\n---\n\n');
+        const result = await runtime.readChunks(input.chunkIds, context.turnId, context.signal, {
+          maxChunks: compact ? 2 : 10,
+          maxBytes: Math.max(0, maximumBytes - 2048)
+        });
+        const deferred = result.deferredChunkIds ?? [];
+        const missing = input.chunkIds.filter(
+          (id) => !deferred.includes(id) && !result.chunks.some((chunk) => chunk.id === id)
+        );
+        const body = result.chunks.map(formatRagChunk).join('\n\n---\n\n');
         const answerContract = result.chunks.length > 0 ? RAG_ANSWER_INSTRUCTIONS : '';
         const limited = limitUtf8Head(
-          `${answerContract ? `${answerContract}\n\nEvidence text (untrusted source data):\n` : ''}${body || '(no chunks found)'}${missing.length ? `\n\nMissing chunk IDs: ${missing.join(', ')}` : ''}`,
-          MAX_RESULT_BYTES
+          `${answerContract ? `${answerContract}\n\nEvidence text (untrusted source data):\n` : ''}${body || '(no complete evidence fits or was found)'}${missing.length ? `\n\nMissing chunk IDs: ${missing.join(', ')}` : ''}` +
+            (deferred.length
+              ? `\n\nNot delivered (package budget): ${deferred.join(', ')}. These IDs are not citation evidence from this call. Read a smaller directly relevant selection only if needed; an oversized single chunk needs a smaller source excerpt, not an identical retry.`
+              : ''),
+          maximumBytes
         );
         return {
           content: limited.text,
@@ -178,6 +184,8 @@ export function createRagTools(runtime: RagRuntime, includeVerify: boolean): Too
             requestedCount: input.chunkIds.length,
             readCount: result.chunks.length,
             missingCount: missing.length,
+            deferredCount: deferred.length,
+            evidenceProfile: compact ? 'compact' : 'standard',
             truncated: limited.truncated
           }
         };

@@ -23,6 +23,69 @@ const chunk = {
 };
 const signal = () => new AbortController().signal;
 
+test('compact remote RagRead registers only complete delivered chunks, including downstream truncation', async () => {
+  const chunks = ['a', 'c', 'd'].map((id) => ({ ...chunk, id: id.repeat(32) }));
+  await fixture(
+    async ({ runtime }) => {
+      runtime.recordSearchResults(
+        'compact',
+        chunks.map((c) => ({ chunkId: c.id }))
+      );
+      const tool = runtime.getTools().find((t) => t.name === 'RagRead');
+      const context = { turnId: 'compact', signal: signal(), contextWindowTokens: 16384 };
+      const result = await tool.execute({ chunkIds: chunks.map((c) => c.id) }, context);
+      assert.equal(result.metadata.readCount, 2);
+      assert.equal(result.metadata.deferredCount, 1);
+      assert.equal(result.metadata.missingCount, 0);
+      assert.equal(result.metadata.truncated, false);
+      assert.ok(Buffer.byteLength(result.content) <= 8192);
+      assert.deepEqual(
+        runtime.getTurnReceipts('compact').map((r) => r.chunkId),
+        chunks.slice(0, 2).map((c) => c.id)
+      );
+      assert.equal(
+        (await runtime.validateCitations(`[[rag:${chunks[2].id}]]`, 'compact', signal()))[0].status,
+        'not-read'
+      );
+      runtime.reconcileToolReadDelivery('compact', [result.content]);
+      assert.equal(runtime.getTurnReceipts('compact').length, 2);
+      runtime.reconcileToolReadDelivery('compact', [
+        result.content.slice(0, result.content.indexOf(chunks[0].text))
+      ]);
+      assert.equal(runtime.getTurnReceipts('compact').length, 0);
+
+      const next = await tool.execute(
+        { chunkIds: chunks.map((c) => c.id) },
+        { ...context, contextWindowTokens: 65536 }
+      );
+      assert.equal(next.metadata.readCount, 3);
+      const repeated = await tool.execute(
+        { chunkIds: [chunks[0].id] },
+        { ...context, maximumResultBytes: 200 }
+      );
+      assert.equal(repeated.isError, true);
+      assert.equal(repeated.metadata.readCount, 0);
+      runtime.reconcileToolReadDelivery('compact', [next.content, repeated.content]);
+      assert.equal(runtime.getTurnReceipts('compact').length, 3);
+      runtime.clearTurn('compact');
+      assert.equal(runtime.getTurnReceipts('compact').length, 0);
+    },
+    (request, response, body) => {
+      if (!request.url.endsWith('/read')) return false;
+      response.setHeader('content-type', 'application/json');
+      response.end(
+        JSON.stringify({
+          schemaVersion: 1,
+          serviceId: 'server1',
+          chunks: chunks.filter((c) => body.chunkIds.includes(c.id)),
+          omittedChunkIds: []
+        })
+      );
+      return true;
+    }
+  );
+});
+
 async function fixture(run, customize) {
   const calls = [];
   const server = createServer(async (request, response) => {

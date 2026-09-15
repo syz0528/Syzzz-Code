@@ -1802,6 +1802,7 @@ export class QueryEngine {
         }
         const finalizationReason = forcedFinalizationReason ?? budgetFinalizationReason;
         const runtimeInstructions: string[] = [];
+        const hasLocalReadEvidence = Boolean(this.rag?.hasLocalReadEvidence(turnId));
         const executionInstructions = taskExecution.instructions();
         if (executionInstructions) runtimeInstructions.push(executionInstructions);
         if (options.requestUserInput && !finalizationReason) {
@@ -1826,8 +1827,10 @@ export class QueryEngine {
               `${allowedCitationTokens}. ` +
               (taskExecution.active && !finalizationReason
                 ? 'Tools remain available: finish the other requested authorized steps before your final answer; reading RAG alone does not complete a combined task. '
-                : 'Start the response with the applicable citation token, then answer in at most two short sentences and stop. ') +
-              (taskExecution.active
+                : hasLocalReadEvidence
+                  ? 'In at most three short sentences, separate: documented rule with its citation; observed local file/range; comparison and what remains unverified. A successful Read is not a test execution result. '
+                  : 'Start the response with the applicable citation token, then answer in at most two short sentences and stop. ') +
+              (taskExecution.active || hasLocalReadEvidence
                 ? "Do not invent or alter citation tokens. Answer in the user's language and only the operation or claim requested. Use only conclusions and code literally visible in the cited excerpts for RAG claims; an include directive or link is not code evidence. Do not add unrelated definitions, alternative methods, setup code, packages, parameters, examples, or source metadata. If the excerpts do not answer the question, state that evidence is insufficient."
                 : "Do not invent or alter citation tokens. Answer in the user's language and only the operation or claim requested. Use only conclusions and code literally visible in the cited excerpts; an include directive or link is not code evidence. Do not add related definitions, alternative methods, setup code, packages, parameters, examples, or source metadata. If the excerpts do not answer the question, state that evidence is insufficient.")
           );
@@ -1863,7 +1866,9 @@ export class QueryEngine {
           this.activeRagContextReceipts.length > 0
             ? taskExecution.active && !finalizationReason
               ? 512
-              : RAG_ANSWER_MAX_OUTPUT_TOKENS
+              : hasLocalReadEvidence
+                ? 256
+                : RAG_ANSWER_MAX_OUTPUT_TOKENS
             : undefined;
         // Successful tools can add RAG rules or nested instructions after the initial output cap.
         // Rebudget only fresh tool results against the exact next request, preserving call/result pairs.
@@ -1885,6 +1890,15 @@ export class QueryEngine {
           ).content;
         }
         pendingToolResults.clear();
+        if (this.rag) {
+          this.rag.reconcileToolReadDelivery(
+            turnId,
+            workingMessages.flatMap((message) =>
+              message.role === 'tool' && message.toolName === 'RagRead' ? [message.content] : []
+            )
+          );
+          this.activeRagContextReceipts = this.rag.getTurnReceipts(turnId);
+        }
         const preparation = this.prepareContextBudget(
           workingMessages,
           systemPrompt,
@@ -1942,7 +1956,7 @@ export class QueryEngine {
               ...(maximumOutputTokens !== undefined
                 ? {
                     maxOutputTokens: maximumOutputTokens,
-                    ...(!taskExecution.active || finalizationReason
+                    ...((!taskExecution.active || finalizationReason) && !hasLocalReadEvidence
                       ? { stopSequences: ['\n\n'] }
                       : {})
                   }
@@ -3343,6 +3357,8 @@ export class QueryEngine {
       turnId,
       workspaceRoot: this.workspaceRoot,
       workingDirectory: this.workspaceRoot,
+      contextWindowTokens: this.contextManager.contextWindowTokens(this.getProviderInfo()),
+      maximumResultBytes,
       ...(composition
         ? {
             resolveSkillWorkingDirectory: (name: string, activeSignal: AbortSignal) =>

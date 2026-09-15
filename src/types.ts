@@ -71,6 +71,8 @@ export interface ToolContext {
   turnId: string;
   workspaceRoot: string;
   workingDirectory: string;
+  contextWindowTokens?: number;
+  maximumResultBytes?: number;
   resolveSkillWorkingDirectory?: (name: string, signal: AbortSignal) => Promise<string>;
   mode: AgentMode;
   permissionMode: PermissionMode;

@@ -23,6 +23,7 @@ import {
 } from '../tools/file-changes.js';
 import { limitUtf8Head } from '../tools/output-limits.js';
 import { chunkRagSource, hashRagContent } from './chunker.js';
+import { formatRagChunk, selectEvidencePackage, type RagReadBudget } from './evidence-package.js';
 import { createEmbeddings, rerankDocuments, resolveRagCredential } from './remote.js';
 import { indexedFileFromChunks, RagStore, shortRagHash } from './store.js';
 import { processRagTerm, tokenizeRagText } from './tokenizer.js';
@@ -411,6 +412,7 @@ export class RagRuntime {
   private cachedStatus: RagStatus;
   private readonly service?: RagServiceClient;
   private readonly remoteChunks = new Map<string, Map<string, RagChunk>>();
+  private readonly toolReadChunks = new Map<string, Map<string, RagChunk>>();
 
   constructor(options: RagRuntimeOptions) {
     this.workspaceRoot = resolve(options.workspaceRoot);
@@ -1500,11 +1502,14 @@ export class RagRuntime {
   async readChunks(
     chunkIds: readonly string[],
     turnId: string,
-    signal: AbortSignal
-  ): Promise<{ chunks: RagChunk[]; receipts: RagContextReceipt[] }> {
+    signal: AbortSignal,
+    budget?: RagReadBudget
+  ): Promise<{ chunks: RagChunk[]; receipts: RagContextReceipt[]; deferredChunkIds?: string[] }> {
     if (this.service) {
       if (!this.config.enabled) throw new Error('RAG is disabled');
       const result = await this.service.read(chunkIds, signal);
+      const selection = budget ? selectEvidencePackage(result.chunks, chunkIds, budget) : undefined;
+      if (selection) result.chunks = selection.chunks;
       const receipts = result.chunks.map((chunk): RagContextReceipt => ({
         turnId,
         serviceId: result.serviceId,
@@ -1522,7 +1527,8 @@ export class RagRuntime {
       result.chunks.forEach((chunk) => turnChunks.set(chunk.id, chunk));
       this.receipts.set(turnId, turnReceipts);
       this.remoteChunks.set(turnId, turnChunks);
-      return { chunks: result.chunks, receipts };
+      if (budget) this.trackToolReads(turnId, result.chunks);
+      return { chunks: result.chunks, receipts, deferredChunkIds: selection?.deferredChunkIds };
     }
     const wanted = new Set(chunkIds.slice(0, 10));
     const found: RagChunk[] = [];
@@ -1546,10 +1552,38 @@ export class RagRuntime {
         });
       }
     }
+    const selection = budget ? selectEvidencePackage(found, chunkIds, budget) : undefined;
+    const selectedChunks = selection?.chunks ?? found;
+    const selectedIds = new Set(selectedChunks.map((chunk) => chunk.id));
+    const selectedReceipts = receipts.filter((receipt) => selectedIds.has(receipt.chunkId));
     const turnReceipts = this.receipts.get(turnId) ?? new Map<string, RagContextReceipt>();
-    receipts.forEach((receipt) => turnReceipts.set(receipt.chunkId, receipt));
+    selectedReceipts.forEach((receipt) => turnReceipts.set(receipt.chunkId, receipt));
     this.receipts.set(turnId, turnReceipts);
-    return { chunks: found, receipts };
+    if (budget) this.trackToolReads(turnId, selectedChunks);
+    return {
+      chunks: selectedChunks,
+      receipts: selectedReceipts,
+      deferredChunkIds: selection?.deferredChunkIds
+    };
+  }
+
+  private trackToolReads(turnId: string, chunks: readonly RagChunk[]): void {
+    const tracked = this.toolReadChunks.get(turnId) ?? new Map<string, RagChunk>();
+    chunks.forEach((chunk) => tracked.set(chunk.id, chunk));
+    this.toolReadChunks.set(turnId, tracked);
+    this.verificationResults.delete(turnId);
+  }
+
+  reconcileToolReadDelivery(turnId: string, contents: readonly string[]): void {
+    const tracked = this.toolReadChunks.get(turnId);
+    if (!tracked) return;
+    for (const [id, chunk] of tracked) {
+      if (contents.some((content) => content.includes(formatRagChunk(chunk)))) continue;
+      this.receipts.get(turnId)?.delete(id);
+      this.remoteChunks.get(turnId)?.delete(id);
+      this.verificationResults.delete(turnId);
+      tracked.delete(id);
+    }
   }
 
   recordLocalRead(turnId: string, value: unknown): void {
@@ -1800,6 +1834,7 @@ export class RagRuntime {
   }
 
   clearTurn(turnId: string): void {
+    this.toolReadChunks.delete(turnId);
     this.localReads.delete(turnId);
     this.recoveredTurns.delete(turnId);
     this.remoteChunks.delete(turnId);

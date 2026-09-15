@@ -222,6 +222,11 @@ test('Engine supplies actual current-turn Read snapshots and never repairs a mix
           return call('RagSearch', { query: 'TestClient lifespan', path: 'docs.md' }, 's');
         if (tools.length === 2)
           return call('RagRead', { chunkIds: [/\b[a-f0-9]{32}\b/.exec(tools[1].content)[0]] }, 'r');
+        assert.equal(request.maxOutputTokens, 256);
+        assert.equal(request.stopSequences, undefined);
+        assert.match(request.systemPrompt, /observed local file\/range/);
+        assert.match(request.systemPrompt, /successful Read is not a test execution result/);
+        assert.doesNotMatch(request.systemPrompt, /Start the response.*two short sentences/);
         return reply(
           `Documents require with; local code contains \`client = TestClient(app)\`. ${/\[\[rag:[a-f0-9]{32}\]\]/.exec(tools[2].content)[0]}`
         );
@@ -245,5 +250,27 @@ test('Engine supplies actual current-turn Read snapshots and never repairs a mix
       }
     }
     assert.equal(repairs, 0);
+  });
+});
+
+test('local RagRead budgets do not register deferred sources and keep manual reads compatible', async () => {
+  await fixture(async ({ runtime }) => {
+    const hits = await runtime.search({ query: 'TestClient', signal: signal() });
+    assert.ok(hits.length >= 2);
+    const ids = hits.map((hit) => hit.chunkId);
+    const result = await runtime.readChunks(ids, 'bounded', signal(), {
+      maxChunks: 1,
+      maxBytes: 6000
+    });
+    assert.equal(result.chunks.length, 1);
+    assert.equal(result.chunks[0].id, ids[0]);
+    assert.equal(result.deferredChunkIds.length, ids.length - 1);
+    assert.equal(runtime.getTurnReceipts('bounded').length, 1);
+    runtime.reconcileToolReadDelivery('bounded', []);
+    assert.equal(runtime.getTurnReceipts('bounded').length, 0);
+    const manual = await runtime.readChunks(ids, 'manual', signal());
+    assert.equal(manual.chunks.length, ids.length);
+    runtime.reconcileToolReadDelivery('manual', []);
+    assert.equal(runtime.getTurnReceipts('manual').length, ids.length);
   });
 });
