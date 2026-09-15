@@ -274,3 +274,61 @@ test('local RagRead budgets do not register deferred sources and keep manual rea
     assert.equal(runtime.getTurnReceipts('manual').length, ids.length);
   });
 });
+
+test('Engine withdraws citation receipts after a downstream tool-result truncation', async () => {
+  await fixture(async ({ workspace, runtime }) => {
+    const [hit] = await runtime.search({ query: 'lifespan', path: 'docs.md', signal: signal() });
+    const tools = runtime.getTools().map((tool) =>
+      tool.name !== 'RagRead'
+        ? tool
+        : {
+            ...tool,
+            async execute(input, context) {
+              const result = await tool.execute(input, { ...context, maximumResultBytes: 8192 });
+              assert.equal(runtime.getTurnReceipts(context.turnId).length, 1);
+              return {
+                ...result,
+                content: 'oversized tool decoration '.repeat(1000) + result.content
+              };
+            }
+          }
+    );
+    let turnId;
+    const read = runtime.readChunks.bind(runtime);
+    runtime.readChunks = (...args) => {
+      turnId = args[1];
+      return read(...args);
+    };
+    const provider = {
+      getInfo: () => ({
+        name: 'Mock',
+        type: 'mock',
+        model: 'mock',
+        contextWindowTokens: 16384,
+        capabilities: { streaming: false, reasoningToggle: false }
+      }),
+      async chat(request) {
+        const results = request.messages.filter((message) => message.role === 'tool');
+        if (!results.length) return call('RagSearch', { query: 'lifespan', path: 'docs.md' }, 's');
+        if (results.length === 1) return call('RagRead', { chunkIds: [hit.chunkId] }, 'r');
+        assert.equal(runtime.getTurnReceipts(turnId).length, 0);
+        assert.ok(!results[1].content.includes(hit.chunkId));
+        return reply('Evidence delivery was truncated; I cannot give a supported conclusion.');
+      }
+    };
+    const engine = new QueryEngine({
+      provider,
+      rag: runtime,
+      tools,
+      workspaceRoot: workspace,
+      mode: 'ask',
+      audit: false,
+      context: { maxToolResultBytes: 1024 }
+    });
+    try {
+      await drain(engine, 'Read lifespan evidence');
+    } finally {
+      await engine.close();
+    }
+  });
+});
