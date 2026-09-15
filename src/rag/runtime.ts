@@ -49,6 +49,7 @@ import { createRagTools } from './tools.js';
 import { ragCapabilityInstructions } from './instructions.js';
 import type { RagQueryRewriter } from './query-rewriter.js';
 import { RagServiceClient } from './service-client.js';
+import { LocalReadEvidenceStore, type LocalReadEvidence } from './local-evidence.js';
 
 const MAX_FILES = 20_000;
 const MAX_SOURCE_BYTES = 512 * 1024 * 1024;
@@ -101,9 +102,10 @@ function normalizeEvidenceCode(value: string): string {
 
 function findUnsupportedCodeClaims(
   draft: string,
-  chunks: readonly RagChunk[]
+  chunks: readonly RagChunk[],
+  localEvidence: readonly LocalReadEvidence[] = []
 ): RagVerificationClaim[] {
-  const evidence = chunks.map((chunk) => normalizeEvidenceCode(chunk.text));
+  const evidence = [...chunks, ...localEvidence].map((chunk) => normalizeEvidenceCode(chunk.text));
   const claims: RagVerificationClaim[] = [];
   for (const match of draft.matchAll(/```[^\n]*\n([\s\S]*?)```/g)) {
     const code = normalizeEvidenceCode(match[1] ?? '');
@@ -140,6 +142,7 @@ interface LexicalDocument {
 export interface RagSemanticVerifierInput {
   draft: string;
   chunks: RagChunk[];
+  localEvidence?: LocalReadEvidence[];
   signal: AbortSignal;
   emitEvent?: (event: AgentEventData) => void;
 }
@@ -340,7 +343,7 @@ function resolveSearchScope(
     throw new Error('RAG virtual path collection must match the collections filter');
   }
   return {
-    collections: collections?.length ? collections : [collection],
+    collections: [collection],
     path: match[2] || undefined
   };
 }
@@ -395,6 +398,7 @@ export class RagRuntime {
   private readonly now: () => number;
   private readonly idFactory: () => string;
   private readonly receipts = new Map<string, Map<string, RagContextReceipt>>();
+  private readonly localReads = new Map<string, LocalReadEvidenceStore>();
   private readonly searchedChunks = new Map<string, Set<string>>();
   private readonly verifiedTurns = new Set<string>();
   private readonly recoveredTurns = new Set<string>();
@@ -1148,6 +1152,25 @@ export class RagRuntime {
   async search(options: RagSearchOptions): Promise<RagRetrievalHit[]> {
     if (!this.config.enabled) throw new Error('RAG is disabled');
     throwIfAborted(options.signal);
+    const scope = resolveSearchScope(options.collections, options.path);
+    const pathFilter = normalizePathFilter(scope.path);
+    if (pathFilter && !options.path?.startsWith('rag://')) {
+      const names =
+        scope.collections ??
+        (this.service ? this.config.service?.collections : undefined) ??
+        (await this.listCollections()).map((collection) => collection.name);
+      const firstSegment = pathFilter.split('/')[0];
+      if (names.includes(firstSegment)) {
+        throw Object.assign(
+          new Error(
+            `Ambiguous RAG path: ${JSON.stringify(firstSegment)} is a selected collection name. ` +
+              'Put collection names in collections, not path. Omit path only when the user did not require a path filter. ' +
+              'For an actual same-named directory, use rag://<collection>/<relative-path> to disambiguate. No search or scope expansion was performed.'
+          ),
+          { code: 'rag_ambiguous_path' }
+        );
+      }
+    }
     const initialQueries = [options.query, ...(options.queries ?? [])]
       .filter((query): query is string => typeof query === 'string' && Boolean(query.trim()))
       .map((query) => query.trim());
@@ -1529,6 +1552,18 @@ export class RagRuntime {
     return { chunks: found, receipts };
   }
 
+  recordLocalRead(turnId: string, value: unknown): void {
+    const store = this.localReads.get(turnId) ?? new LocalReadEvidenceStore();
+    if (store.capture(value)) {
+      this.localReads.set(turnId, store);
+      this.verificationResults.delete(turnId);
+    }
+  }
+
+  hasLocalReadEvidence(turnId: string): boolean {
+    return Boolean(this.localReads.get(turnId)?.size);
+  }
+
   async verify(
     draft: string,
     turnId: string,
@@ -1601,21 +1636,28 @@ export class RagRuntime {
       evidenceChunkIds.has(chunk.id)
     );
     const invalid = deterministic.filter((entry) => entry.status !== 'valid');
+    const localSnapshot = await this.localReads.get(turnId)?.validate(this.workspaceRoot, signal);
+    const localEvidence = localSnapshot?.evidence ?? [];
     const verifierClaims = this.semanticVerifier
       ? await this.semanticVerifier({
           draft: draft.slice(0, 20 * 1024),
           chunks,
+          ...(localEvidence.length ? { localEvidence } : {}),
           signal,
           emitEvent
         })
       : undefined;
-    const unsupportedCodeClaims = findUnsupportedCodeClaims(draft, chunks);
+    const unsupportedCodeClaims = findUnsupportedCodeClaims(draft, chunks, localEvidence);
     const claims =
       verifierClaims || unsupportedCodeClaims.length > 0
         ? [...(verifierClaims ?? []), ...unsupportedCodeClaims]
         : undefined;
     const claimOutcomes = claims?.map((claim) => claim.outcome) ?? [];
     const availableChunkIds = new Set(chunks.map((chunk) => chunk.id));
+    const availableSources = new Set([
+      ...availableChunkIds,
+      ...localEvidence.map((entry) => entry.id)
+    ]);
     const semanticClaims = claims ?? [];
     const claimsHaveEvidence =
       semanticClaims.length > 0 &&
@@ -1623,18 +1665,23 @@ export class RagRuntime {
         (claim) =>
           claim.outcome === 'unsupported' ||
           claim.outcome === 'unverifiable' ||
-          validChunkIds.size > 0 ||
-          claim.citations.some((citation) => availableChunkIds.has(citation))
+          (localEvidence.length
+            ? claim.citations.length > 0 &&
+              claim.citations.every((citation) => availableSources.has(citation))
+            : validChunkIds.size > 0 ||
+              claim.citations.some((citation) => availableChunkIds.has(citation)))
       );
-    const outcome: RagVerificationResult['outcome'] = claimOutcomes.includes('unsupported')
-      ? 'unsupported'
-      : claims && (!claimsHaveEvidence || claimOutcomes.includes('unverifiable'))
-        ? 'unverifiable'
-        : claimOutcomes.includes('partial')
-          ? 'partial'
-          : invalid.length > 0 || (deterministic.length === 0 && !claims)
-            ? 'unverifiable'
-            : 'supported';
+    const outcome: RagVerificationResult['outcome'] = localSnapshot?.invalid
+      ? 'unverifiable'
+      : claimOutcomes.includes('unsupported')
+        ? 'unsupported'
+        : claims && (!claimsHaveEvidence || claimOutcomes.includes('unverifiable'))
+          ? 'unverifiable'
+          : claimOutcomes.includes('partial')
+            ? 'partial'
+            : invalid.length > 0 || (deterministic.length === 0 && !claims)
+              ? 'unverifiable'
+              : 'supported';
     const result = { outcome, deterministic, ...(claims ? { claims } : {}) };
     this.verificationResults.set(turnId, structuredClone(result));
     return result;
@@ -1753,6 +1800,7 @@ export class RagRuntime {
   }
 
   clearTurn(turnId: string): void {
+    this.localReads.delete(turnId);
     this.recoveredTurns.delete(turnId);
     this.remoteChunks.delete(turnId);
     this.receipts.delete(turnId);

@@ -166,6 +166,44 @@ test('remote RAG uses HTTP evidence and never the local index; keeps per-turn re
   });
 });
 
+test('ambiguous collection-prefixed paths fail before HTTP; explicit virtual paths disambiguate', async () => {
+  await fixture(async ({ service, calls }) => {
+    let rewrites = 0;
+    const runtime = new RagRuntime({
+      workspaceRoot: tmpdir(),
+      config: { enabled: true, autoRetrieve: 'off', autoRefresh: false, service },
+      queryRewriter: async () => {
+        rewrites++;
+        return ['another query'];
+      }
+    });
+    for (const path of ['techdocs', 'techdocs/', './techdocs/testing.md', 'techdocs\\testing.md']) {
+      await assert.rejects(
+        runtime.search({ query: 'lifespan', path, signal: signal() }),
+        (error) => error.code === 'rag_ambiguous_path'
+      );
+    }
+    assert.equal(calls.length, 0);
+    assert.equal(rewrites, 0);
+    await runtime.search({
+      query: 'lifespan',
+      path: 'rag://techdocs/techdocs/testing.md',
+      signal: signal()
+    });
+    assert.equal(calls.at(-1).body.path, 'techdocs/testing.md');
+    assert.deepEqual(calls.at(-1).body.collections, ['techdocs']);
+    await runtime.search({ query: 'lifespan', path: 'rag://techdocs', signal: signal() });
+    assert.equal(calls.at(-1).body.path, undefined);
+    await runtime.search({
+      query: 'lifespan',
+      collections: ['techdocs', 'other'],
+      path: 'rag://techdocs/testing.md',
+      signal: signal()
+    });
+    assert.deepEqual(calls.at(-1).body.collections, ['techdocs']);
+  });
+});
+
 test('semantic verifier and repair receive the remote chunks, not local source paths', async () => {
   await fixture(async ({ runtime }) => {
     await runtime.readChunks([chunk.id], 'turn', signal());

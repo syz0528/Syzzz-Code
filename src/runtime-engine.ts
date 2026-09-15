@@ -2100,22 +2100,33 @@ export class QueryEngine {
               semanticOutcome = 'supported';
             }
             if (this.activeRagContextReceipts.length > 0 && this.rag.canVerifySemantically()) {
+              const hasLocalEvidence = this.rag.hasLocalReadEvidence(turnId);
               const verificationEvents: AgentEventData[] = [];
               try {
                 yield event({
                   type: 'rag_verification_started',
                   citationCount: deterministic.length
                 });
-                const verification =
-                  this.rag.getTurnVerification(turnId) ??
-                  (await this.rag.verify(responseParts.join('\n\n'), turnId, signal, (ragEvent) =>
-                    verificationEvents.push(ragEvent)
-                  ));
+                const verification = hasLocalEvidence
+                  ? await this.rag.verifyRepairedAnswer(
+                      responseParts.join('\n\n'),
+                      turnId,
+                      signal,
+                      (ragEvent) => verificationEvents.push(ragEvent)
+                    )
+                  : (this.rag.getTurnVerification(turnId) ??
+                    (await this.rag.verify(responseParts.join('\n\n'), turnId, signal, (ragEvent) =>
+                      verificationEvents.push(ragEvent)
+                    )));
                 for (const ragEvent of verificationEvents) yield event(ragEvent);
                 verificationEvents.length = 0;
                 semanticOutcome = verification.outcome;
                 groundingBlocked = verification.outcome !== 'supported' || needsCitationRepair;
-                if (verification.outcome === 'supported' && needsCitationRepair) {
+                if (
+                  !hasLocalEvidence &&
+                  verification.outcome === 'supported' &&
+                  needsCitationRepair
+                ) {
                   const availableChunkIds = new Set(
                     this.activeRagContextReceipts.map((receipt) => receipt.chunkId)
                   );
@@ -2151,7 +2162,7 @@ export class QueryEngine {
                     if (!groundingBlocked) groundingRepairedResponse = repairedResponse;
                   }
                 }
-                if (groundingBlocked && verification.claims?.length) {
+                if (!hasLocalEvidence && groundingBlocked && verification.claims?.length) {
                   const draftResponse = responseParts.join('\n\n');
                   const availableChunkIds = new Set(
                     this.activeRagContextReceipts.map((receipt) => receipt.chunkId)
@@ -2212,7 +2223,7 @@ export class QueryEngine {
                     }
                   }
                 }
-                if (groundingBlocked && this.rag.canRepairGroundedAnswer()) {
+                if (!hasLocalEvidence && groundingBlocked && this.rag.canRepairGroundedAnswer()) {
                   const repairedResponse = await this.rag.repairGroundedAnswer(
                     userMessage,
                     turnId,
@@ -3724,6 +3735,9 @@ export class QueryEngine {
         signal,
         hookSubject
       );
+      if (toolName === 'Read' && !toolResult.isError && !limited.truncated) {
+        this.rag?.recordLocalRead(turnId, toolResult.data);
+      }
       yield complete(toolResult.isError ? 'error' : 'success', limited.content, metadata);
       return toolMessage(limited.content, Boolean(toolResult.isError));
     } catch (error) {

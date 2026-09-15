@@ -22,8 +22,18 @@ const READ_BUFFER_BYTES = 64 * 1024;
 
 export type FileLineEnding = 'LF' | 'CRLF' | 'mixed' | 'none';
 
+export interface ReadSourceSnapshot {
+  kind: 'file-read';
+  path: string;
+  sourceHash: string;
+  startLine: number;
+  endLine: number;
+  text: string;
+}
+
 export interface ReadRangeSnapshot {
   content: string;
+  data?: ReadSourceSnapshot;
   metadata: {
     sizeBytes: number;
     totalLines: number;
@@ -65,7 +75,7 @@ function classifyLineEnding(lfCount: number, crlfCount: number): FileLineEnding 
   return 'none';
 }
 
-async function readUtf8Range(
+export async function readUtf8Range(
   targetPath: string,
   displayPath: string,
   offset: number,
@@ -252,6 +262,18 @@ async function readUtf8Range(
 
     return {
       content: limited.text,
+      ...(selectedLines.length && !limited.truncated && longLinesTruncated === 0
+        ? {
+            data: {
+              kind: 'file-read' as const,
+              path: displayPath,
+              sourceHash: versionHash,
+              startLine,
+              endLine,
+              text: selectedLines.map((line) => line.content).join('\n')
+            }
+          }
+        : {}),
       metadata: {
         sizeBytes: initialStats.size,
         totalLines,
