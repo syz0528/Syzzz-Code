@@ -253,9 +253,15 @@ async function run(arm, item, repetition) {
       }
     };
     const read = rag.readChunks.bind(rag);
-    rag.readChunks = async (ids, turnId, signal) => {
-      trace({ phase: 'read-input', chunkIds: ids });
-      return read(ids, turnId, signal);
+    rag.readChunks = async (...parameters) => {
+      trace({ phase: 'read-input', chunkIds: parameters[0], budget: parameters[3] });
+      const result = await read(...parameters);
+      trace({
+        phase: 'read-output',
+        chunkIds: result.chunks.map((chunk) => chunk.id),
+        deferredChunkIds: result.deferredChunkIds ?? []
+      });
+      return result;
     };
   }
   const engine = new api.QueryEngine({
