@@ -444,7 +444,7 @@ export class InteractionController implements InteractionPort {
       kind: 'assistant',
       markdown: '',
       status: 'streaming',
-      live: true
+      live: this.commandRuntime.context.streamOutput
     });
     const result = await consumeInteractiveTurn(
       this.commandRuntime.context.engine,
@@ -818,7 +818,7 @@ export class InteractionController implements InteractionPort {
       kind: 'assistant',
       markdown: '',
       status: 'streaming',
-      live: true
+      live: this.commandRuntime.context.streamOutput
     });
     return this.activeAssistantId;
   }
@@ -861,6 +861,7 @@ export class InteractionController implements InteractionPort {
                 ? { markdown: result.response }
                 : {}),
               status: result.status,
+              live: this.commandRuntime.context.streamOutput,
               summary: {
                 durationMs: result.durationMs,
                 workingDurationMs,

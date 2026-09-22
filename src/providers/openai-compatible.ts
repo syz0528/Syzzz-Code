@@ -10,7 +10,12 @@ import type {
   ProviderUsage,
   ToolCall
 } from './base.js';
-import { isProviderAbort, normalizeProviderError, ProviderError } from './errors.js';
+import { isProviderAbort, ProviderError } from './errors.js';
+import {
+  validateProviderHeaders,
+  providerHeaderFetch,
+  normalizeHeaderProviderError
+} from './headers.js';
 
 export function convertMessagesToOpenAI(
   messages: ConversationMessage[],
@@ -68,12 +73,12 @@ export function convertToolsToOpenAI(tools: ProviderTool[]): Array<Record<string
   }));
 }
 
-function getReasoningContent(message: unknown): string | undefined {
+function getReasoningContent(message: unknown, field = 'reasoning_content'): string | undefined {
   if (!message || typeof message !== 'object') {
     return undefined;
   }
 
-  const reasoningContent = (message as Record<string, unknown>).reasoning_content;
+  const reasoningContent = (message as Record<string, unknown>)[field];
   return typeof reasoningContent === 'string' && reasoningContent ? reasoningContent : undefined;
 }
 
@@ -114,10 +119,21 @@ interface ToolCallAccumulator {
   arguments: string;
 }
 
-function supportsDeepSeekThinkingToggle(providerName: string, model: string): boolean {
-  return (
-    providerName.toLowerCase().includes('deepseek') || model.toLowerCase().includes('deepseek-v4-')
-  );
+function supportsDeepSeekThinkingToggle(model: string): boolean {
+  // A user-editable display name is not a protocol capability declaration.
+  return model.toLowerCase().includes('deepseek');
+}
+
+function usesOpenCodeLingReasoning(baseURL: string, model: string): boolean {
+  if (model !== 'ling-3.0-flash-fin-free') {
+    return false;
+  }
+  try {
+    const url = new URL(baseURL);
+    return url.origin === 'https://opencode.ai' && url.pathname.replace(/\/+$/, '') === '/zen/v1';
+  } catch {
+    return false;
+  }
 }
 
 export class OpenAICompatibleProvider implements AIProvider {
@@ -129,6 +145,7 @@ export class OpenAICompatibleProvider implements AIProvider {
   private readonly modelContextWindows: Readonly<Record<string, number>>;
   private readonly apiKey: string;
   private readonly baseURL: string;
+  private readonly headers?: Readonly<Record<string, string>>;
 
   constructor(
     apiKey: string,
@@ -136,12 +153,15 @@ export class OpenAICompatibleProvider implements AIProvider {
     model: string,
     providerName: string = 'OpenAI',
     supportsReasoningToggle?: boolean,
-    modelContextWindows: Readonly<Record<string, number>> = {}
+    modelContextWindows: Readonly<Record<string, number>> = {},
+    headers?: Readonly<Record<string, string>>
   ) {
     this.apiKey = apiKey;
+    this.headers = validateProviderHeaders(headers);
     this.baseURL = baseURL;
     this.client = new OpenAI({
       apiKey,
+      ...(this.headers ? { fetch: providerHeaderFetch(this.headers) } : {}),
       baseURL,
       maxRetries: 0,
       logLevel: 'off'
@@ -151,7 +171,8 @@ export class OpenAICompatibleProvider implements AIProvider {
     this.reasoningToggleOverride = supportsReasoningToggle;
     this.modelContextWindows = modelContextWindows;
     this.supportsReasoningToggle =
-      supportsReasoningToggle ?? supportsDeepSeekThinkingToggle(providerName, model);
+      supportsReasoningToggle ??
+      (supportsDeepSeekThinkingToggle(model) || usesOpenCodeLingReasoning(baseURL, model));
   }
 
   async chat(request: ProviderChatRequest): Promise<ProviderChatResponse> {
@@ -182,17 +203,21 @@ export class OpenAICompatibleProvider implements AIProvider {
         const canRecover =
           this.supportsReasoningToggle &&
           choice.finish_reason === 'stop' &&
-          reasoningContent !== undefined;
+          (reasoningContent !== undefined ||
+            (usesOpenCodeLingReasoning(this.baseURL, this.model) &&
+              getReasoningContent(message, 'reasoning') !== undefined));
         if (!canRecover) {
           throw this.malformed(
-            `Provider returned an empty response (finish reason: ${choice.finish_reason ?? 'unknown'})`
+            getReasoningContent(message, 'reasoning')
+              ? `Provider returned only reasoning, without answer text or tool calls (model: ${this.model}; finish reason: ${choice.finish_reason ?? 'unknown'})`
+              : `Provider returned an empty response (finish reason: ${choice.finish_reason ?? 'unknown'})`
           );
         }
 
         completion = await this.createCompletion(
           {
             ...completionRequest,
-            thinking: { type: 'disabled' }
+            ...this.disabledReasoningParameters()
           },
           request.signal
         );
@@ -232,7 +257,7 @@ export class OpenAICompatibleProvider implements AIProvider {
       if (request.signal?.aborted || isProviderAbort(error)) {
         throw error;
       }
-      throw normalizeProviderError(error, this.providerName);
+      throw normalizeHeaderProviderError(error, this.providerName, this.headers);
     }
   }
 
@@ -249,7 +274,7 @@ export class OpenAICompatibleProvider implements AIProvider {
         ...(request.tools.length > 0 ? { tools: convertToolsToOpenAI(request.tools) } : {}),
         stream: true,
         ...(attemptOptions.includeUsage ? { stream_options: { include_usage: true } } : {}),
-        ...(attemptOptions.disableReasoning ? { thinking: { type: 'disabled' } } : {})
+        ...(attemptOptions.disableReasoning ? this.disabledReasoningParameters() : {})
       };
 
       const requestPromise = this.client.chat.completions.create(completionRequest as any, {
@@ -268,6 +293,7 @@ export class OpenAICompatibleProvider implements AIProvider {
 
       let content = '';
       let reasoningContent = '';
+      let gatewayReasoningSeen = false;
       let finishReason: string | null | undefined;
       let usage: ProviderUsage | undefined;
       let reportedModel: string | undefined;
@@ -297,6 +323,13 @@ export class OpenAICompatibleProvider implements AIProvider {
         if (reasoningDelta) {
           reasoningContent += reasoningDelta;
           yield { type: 'reasoning_delta', text: reasoningDelta };
+        } else {
+          const gatewayReasoning = getReasoningContent(delta, 'reasoning');
+          if (gatewayReasoning) {
+            gatewayReasoningSeen = true;
+            // Activity only: do not expose as an answer or replay under a different wire field.
+            yield { type: 'reasoning_delta', text: gatewayReasoning };
+          }
         }
 
         if (typeof delta.content === 'string' && delta.content) {
@@ -354,7 +387,16 @@ export class OpenAICompatibleProvider implements AIProvider {
 
       if (!content.trim() && toolCalls.length === 0 && !reasoningContent) {
         throw this.malformed(
-          `Provider returned an empty stream (finish reason: ${finishReason ?? 'unknown'})`
+          gatewayReasoningSeen
+            ? `Provider returned only reasoning, without answer text or tool calls (model: ${this.model}; finish reason: ${finishReason ?? 'unknown'})`
+            : `Provider returned an empty stream (finish reason: ${finishReason ?? 'unknown'}; model: ${this.model})`,
+          gatewayReasoningSeen &&
+            finishReason === 'stop' &&
+            this.supportsReasoningToggle &&
+            !attemptOptions.disableReasoning &&
+            usesOpenCodeLingReasoning(this.baseURL, this.model)
+            ? 'reasoning-only'
+            : undefined
         );
       }
       if (finishReason === undefined) {
@@ -384,7 +426,7 @@ export class OpenAICompatibleProvider implements AIProvider {
       if (attemptOptions.signal.aborted || isProviderAbort(error)) {
         throw error;
       }
-      throw normalizeProviderError(error, this.providerName);
+      throw normalizeHeaderProviderError(error, this.providerName, this.headers);
     }
   }
 
@@ -409,7 +451,8 @@ export class OpenAICompatibleProvider implements AIProvider {
     }
     this.model = model;
     this.supportsReasoningToggle =
-      this.reasoningToggleOverride ?? supportsDeepSeekThinkingToggle(this.providerName, model);
+      this.reasoningToggleOverride ??
+      (supportsDeepSeekThinkingToggle(model) || usesOpenCodeLingReasoning(this.baseURL, model));
   }
 
   fork(): AIProvider {
@@ -419,7 +462,8 @@ export class OpenAICompatibleProvider implements AIProvider {
       this.model,
       this.providerName,
       this.reasoningToggleOverride,
-      this.modelContextWindows
+      this.modelContextWindows,
+      this.headers
     );
   }
 
@@ -463,9 +507,17 @@ export class OpenAICompatibleProvider implements AIProvider {
     return parsedToolCalls;
   }
 
-  private malformed(message: string): ProviderError {
+  private disabledReasoningParameters(): Record<string, unknown> {
+    // Gateway-specific wire parameters are not interchangeable with DeepSeek's thinking field.
+    return usesOpenCodeLingReasoning(this.baseURL, this.model)
+      ? { reasoning: { enabled: false } }
+      : { thinking: { type: 'disabled' } };
+  }
+
+  private malformed(message: string, recovery?: 'reasoning-only'): ProviderError {
     return new ProviderError('malformed_response', {
       provider: this.providerName,
+      ...(recovery ? { recovery } : {}),
       message: `${this.providerName} API Error: ${message}`
     });
   }

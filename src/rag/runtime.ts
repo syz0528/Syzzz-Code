@@ -142,6 +142,7 @@ interface LexicalDocument {
 
 export interface RagSemanticVerifierInput {
   draft: string;
+  question?: string;
   chunks: RagChunk[];
   localEvidence?: LocalReadEvidence[];
   signal: AbortSignal;
@@ -404,6 +405,8 @@ export class RagRuntime {
   private readonly verifiedTurns = new Set<string>();
   private readonly recoveredTurns = new Set<string>();
   private readonly verificationResults = new Map<string, RagVerificationResult>();
+  private readonly verificationDraftHashes = new Map<string, string>();
+  private readonly turnQuestions = new Map<string, string>();
   private semanticVerifier?: RagSemanticVerifier;
   private answerRepairer?: RagGroundedAnswerRepairer;
   private queryRewriter?: RagQueryRewriter;
@@ -1186,10 +1189,22 @@ export class RagRuntime {
     const queries = [...new Set(initialQueries)];
     const first = await this.searchOnce({ ...options, query: undefined, queries });
     throwIfAborted(options.signal);
-    // Recover one empty query, never successful retrieval or a failed backend request.
+    // A nonempty English candidate list can still miss the operation in a CJK query.
+    // This is a language-gap heuristic, not a factual relevance or confidence score.
+    const languageGap =
+      /[\u3400-\u9fff]/u.test(queries[0]) &&
+      first.length > 0 &&
+      first
+        .slice(0, 3)
+        .every(
+          (hit) =>
+            hit.channels.every((channel) => channel === 'lexical') &&
+            !/[\u3400-\u9fff]/u.test(hit.summary)
+        );
+    // Recover at most once, never a failed backend request.
     // Multi-query searches remain intact rather than merging independent constraints.
     if (
-      first.length ||
+      (first.length > 0 && !languageGap) ||
       !this.queryRewriter ||
       queries.length !== 1 ||
       queries[0].length > 4_096 ||
@@ -1207,7 +1222,7 @@ export class RagRuntime {
       });
     } catch {
       throwIfAborted(options.signal);
-      const warning = 'Empty-search recovery failed; the original search returned no evidence.';
+      const warning = 'RAG query recovery failed; retaining the original search results.';
       this.runtimeWarnings = [...this.runtimeWarnings.filter((item) => item !== warning), warning];
       return first;
     }
@@ -1220,7 +1235,15 @@ export class RagRuntime {
       return first;
     const recovered = [...new Set([...queries, ...rewritten.map((query) => query.trim())])];
     if (recovered.length === queries.length) return first;
-    return this.searchOnce({ ...options, query: undefined, queries: recovered });
+    try {
+      const results = await this.searchOnce({ ...options, query: undefined, queries: recovered });
+      return results.length ? results : first;
+    } catch {
+      throwIfAborted(options.signal);
+      const warning = 'RAG query recovery retrieval failed; retaining the original search results.';
+      this.runtimeWarnings = [...this.runtimeWarnings.filter((item) => item !== warning), warning];
+      return first;
+    }
   }
 
   private async searchOnce(options: RagSearchOptions): Promise<RagRetrievalHit[]> {
@@ -1675,6 +1698,7 @@ export class RagRuntime {
     const verifierClaims = this.semanticVerifier
       ? await this.semanticVerifier({
           draft: draft.slice(0, 20 * 1024),
+          question: this.turnQuestions.get(turnId),
           chunks,
           ...(localEvidence.length ? { localEvidence } : {}),
           signal,
@@ -1718,6 +1742,7 @@ export class RagRuntime {
               : 'supported';
     const result = { outcome, deterministic, ...(claims ? { claims } : {}) };
     this.verificationResults.set(turnId, structuredClone(result));
+    this.verificationDraftHashes.set(turnId, hashRagContent(draft));
     return result;
   }
 
@@ -1725,7 +1750,15 @@ export class RagRuntime {
     return Boolean(this.semanticVerifier);
   }
 
-  getTurnVerification(turnId: string): RagVerificationResult | undefined {
+  setTurnQuestion(turnId: string, question: string): void {
+    this.turnQuestions.set(turnId, question.slice(0, 8 * 1024));
+    this.verificationResults.delete(turnId);
+    this.verificationDraftHashes.delete(turnId);
+  }
+
+  getTurnVerification(turnId: string, draft?: string): RagVerificationResult | undefined {
+    if (draft !== undefined && this.verificationDraftHashes.get(turnId) !== hashRagContent(draft))
+      return undefined;
     const result = this.verificationResults.get(turnId);
     return result ? structuredClone(result) : undefined;
   }
@@ -1735,10 +1768,12 @@ export class RagRuntime {
     turnId: string,
     signal: AbortSignal
   ): Promise<RagCitationCheck[]> {
-    const tokens = [...draft.matchAll(/\[\[rag:([a-f0-9]{16,64})\]\]/g)].map((match) => ({
-      token: match[0],
-      chunkId: match[1]
-    }));
+    // Account for every citation start, including truncated or malformed tokens.
+    const tokens = [...draft.matchAll(/\[\[rag:/g)].map((match) => {
+      const tail = draft.slice(match.index, match.index + 80);
+      const valid = /^\[\[rag:([a-f0-9]{16,64})\]\]/.exec(tail);
+      return { token: valid?.[0] ?? tail.split(/[\s\n]/, 1)[0], chunkId: valid?.[1] ?? '' };
+    });
     const turnReceipts = this.receipts.get(turnId) ?? new Map();
     const deterministic: RagCitationCheck[] = [];
     if (this.service) {
@@ -1834,6 +1869,8 @@ export class RagRuntime {
   }
 
   clearTurn(turnId: string): void {
+    this.turnQuestions.delete(turnId);
+    this.verificationDraftHashes.delete(turnId);
     this.toolReadChunks.delete(turnId);
     this.localReads.delete(turnId);
     this.recoveredTurns.delete(turnId);

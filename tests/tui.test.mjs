@@ -6,7 +6,7 @@ import { PassThrough } from 'node:stream';
 import test from 'node:test';
 import React from 'react';
 import xtermHeadless from '@xterm/headless';
-import { render as renderInk } from 'ink';
+import { render as renderInk, Text } from 'ink';
 import { render } from 'ink-testing-library';
 import stringWidth from 'string-width';
 import {
@@ -21,7 +21,11 @@ import {
   compactConservativeTerminalOutput,
   ConservativeTuiOutput
 } from '../dist/tui/output-adapter.js';
-import { TranscriptView, transcriptLayoutForTest } from '../dist/tui/transcript-view.js';
+import {
+  TranscriptView,
+  transcriptLayoutForTest,
+  useTranscriptLayout
+} from '../dist/tui/transcript-view.js';
 import {
   detectTerminalHost,
   inspectTerminalKeyboard,
@@ -1093,7 +1097,74 @@ test('a single large live Provider delta is revealed by Markdown lines with an h
   await wait(700);
   assert.match(view.lastFrame(), /STREAM_BLOCK_17/);
   assert.doesNotMatch(view.lastFrame(), /Rendering response/);
+  // Typing or a status update must not replay an already presented live answer.
+  view.stdin.write('next');
+  await wait();
+  assert.match(view.lastFrame(), /STREAM_BLOCK_17/);
+  assert.doesNotMatch(view.lastFrame(), /Rendering response/);
+  controller.snapshot = {
+    ...controller.snapshot,
+    transcript: controller.snapshot.transcript.map((block) => ({ ...block }))
+  };
+  controller.emit();
+  await wait();
+  assert.match(view.lastFrame(), /STREAM_BLOCK_17/);
+  assert.doesNotMatch(view.lastFrame(), /Rendering response/);
   view.unmount();
+});
+
+test('settled answers stay complete across resize, subsequent turns and cancelled streams', async () => {
+  function Probe({ blocks, width = 40 }) {
+    const layout = useTranscriptLayout(blocks, width);
+    return React.createElement(
+      Text,
+      null,
+      `pending=${layout.pendingPresentationRows}\n` +
+        layout.rows.map((row) => row.spans.map((span) => span.text).join('')).join('\n')
+    );
+  }
+  const first = {
+    id: 'first',
+    turnId: 'one',
+    kind: 'assistant',
+    markdown: 'START\n\nMIDDLE\n\nEND',
+    status: 'completed',
+    live: true
+  };
+  const view = render(React.createElement(Probe, { blocks: [first] }));
+  try {
+    await wait(500);
+    assert.match(view.lastFrame(), /pending=0/);
+    assert.match(view.lastFrame(), /END/);
+    view.rerender(React.createElement(Probe, { blocks: [{ ...first }], width: 20 }));
+    await wait();
+    assert.match(view.lastFrame(), /pending=0/);
+    assert.match(view.lastFrame(), /END/);
+    const next = { ...first, id: 'next', turnId: 'two', markdown: 'PARTIAL', status: 'streaming' };
+    view.rerender(React.createElement(Probe, { blocks: [first, next] }));
+    await wait();
+    assert.match(view.lastFrame(), /END/);
+    assert.match(view.lastFrame(), /PARTIAL/);
+    view.rerender(
+      React.createElement(Probe, { blocks: [first, { ...next, status: 'cancelled' }] })
+    );
+    await wait(500);
+    assert.match(view.lastFrame(), /pending=0/);
+    assert.match(view.lastFrame(), /END/);
+    assert.match(view.lastFrame(), /PARTIAL/);
+    // A genuinely revised body must not be suppressed by the completed-source marker.
+    view.rerender(
+      React.createElement(Probe, {
+        blocks: [{ ...first, markdown: 'REVISED\n\nFINAL', live: false }]
+      })
+    );
+    await wait();
+    assert.match(view.lastFrame(), /pending=0/);
+    assert.match(view.lastFrame(), /FINAL/);
+    assert.doesNotMatch(view.lastFrame(), /END|PARTIAL/);
+  } finally {
+    view.unmount();
+  }
 });
 
 test('TUI renders bounded tool details, notices, omissions and every local interaction panel', async () => {

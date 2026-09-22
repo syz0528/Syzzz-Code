@@ -222,7 +222,7 @@ test('Engine supplies actual current-turn Read snapshots and never repairs a mix
           return call('RagSearch', { query: 'TestClient lifespan', path: 'docs.md' }, 's');
         if (tools.length === 2)
           return call('RagRead', { chunkIds: [/\b[a-f0-9]{32}\b/.exec(tools[1].content)[0]] }, 'r');
-        assert.equal(request.maxOutputTokens, 256);
+        assert.equal(request.maxOutputTokens, 512);
         assert.equal(request.stopSequences, undefined);
         assert.match(request.systemPrompt, /observed local file\/range/);
         assert.match(request.systemPrompt, /successful Read is not a test execution result/);

@@ -4,6 +4,8 @@ export type ProviderErrorCode =
   | 'authentication'
   | 'permission'
   | 'model_not_found'
+  | 'model_unavailable'
+  | 'invalid_request'
   | 'not_found'
   | 'rate_limit'
   | 'timeout'
@@ -37,6 +39,8 @@ const SAFE_ERROR_MESSAGES: Record<ProviderErrorCode, string> = {
   authentication: 'authentication failed',
   permission: 'permission denied',
   model_not_found: 'configured model was not found',
+  model_unavailable: '上游报告当前模型不可用，请切换其他可用模型或稍后重试',
+  invalid_request: '服务端拒绝了请求参数，请检查模型、协议及请求配置',
   not_found: 'requested API resource was not found',
   rate_limit: 'rate limit exceeded',
   timeout: 'request timed out',
@@ -183,6 +187,11 @@ function classifyError(
   if (status === 429 || searchable.includes('ratelimiterror')) {
     return { code: 'rate_limit' };
   }
+  if (status === 400 || status === 422) {
+    return /\bmodel (?:is |currently |is currently )?unavailable\b/.test(searchable)
+      ? { code: 'model_unavailable' }
+      : { code: 'invalid_request' };
+  }
   if (status !== undefined && status >= 500) {
     return { code: 'provider_internal' };
   }
@@ -214,12 +223,24 @@ export function normalizeProviderError(
   }
 
   const record = asRecord(error);
+  const body = asRecord(record?.error);
+  const detail = asRecord(body?.error) ?? body;
   const status = getNumber(record, 'status');
-  const sdkCode = getString(record, 'code');
+  const sdkCode = getString(record, 'code', 'type') ?? getString(detail, 'code', 'type');
   const requestId = getString(record, 'requestID', 'request_id');
   const name = error instanceof Error ? error.name : '';
   const message = error instanceof Error ? error.message : String(error);
-  const classification = classifyError(status, sdkCode, name, message);
+  const upstreamMessage = getString(detail, 'message') ?? message;
+  const classification = classifyError(status, sdkCode, name, `${message} ${upstreamMessage}`);
+  // Anthropic can report a typed error inside an HTTP 200 SSE stream.
+  // Do not invent an HTTP status for these application-level failures.
+  if (status === undefined && sdkCode === 'rate_limit_error') classification.code = 'rate_limit';
+  if (status === undefined && (sdkCode === 'overloaded_error' || sdkCode === 'api_error')) {
+    classification.code = 'provider_internal';
+  }
+  const openCodeFreeTierDenied =
+    status === 403 &&
+    upstreamMessage.includes("OpenCode's free tier can only be used from within OpenCode");
 
   return new ProviderError(classification.code, {
     provider,
@@ -227,6 +248,17 @@ export function normalizeProviderError(
     requestId,
     retryAfterMs: parseRetryAfter(record?.headers, now),
     feature: classification.feature,
+    ...(classification.code === 'invalid_request' || classification.code === 'model_unavailable'
+      ? { message: `${provider}: ${SAFE_ERROR_MESSAGES[classification.code]}（HTTP ${status}）` }
+      : {}),
+    ...(status === undefined && (sdkCode === 'overloaded_error' || sdkCode === 'api_error')
+      ? { feature: 'anthropic_stream_transient' }
+      : {}),
+    ...(openCodeFreeTierDenied
+      ? {
+          message: `${provider}: OpenCode 免费模型仅允许在 OpenCode 内使用（HTTP 403 / FreeTierError）。请求已被服务端拒绝，请使用获准外部调用的 API。`
+        }
+      : {}),
     cause: error
   });
 }
@@ -248,8 +280,8 @@ export function isRetryableProviderError(error: ProviderError): boolean {
 
   return (
     error.code === 'provider_internal' &&
-    error.status !== undefined &&
-    [500, 502, 503, 504].includes(error.status)
+    (error.feature === 'anthropic_stream_transient' ||
+      (error.status !== undefined && [500, 502, 503, 504, 529].includes(error.status)))
   );
 }
 

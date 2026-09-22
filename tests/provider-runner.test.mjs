@@ -1,7 +1,11 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { calculateBackoffDelay, runProviderRequest } from '../dist/providers/runner.js';
-import { normalizeProviderError, ProviderError } from '../dist/providers/errors.js';
+import {
+  normalizeProviderError,
+  ProviderError,
+  toPublicProviderError
+} from '../dist/providers/errors.js';
 
 function info(streaming = false, reasoningToggle = false) {
   return {
@@ -43,6 +47,45 @@ async function collectFailure(generator) {
     return { events, error };
   }
 }
+
+test('OpenCode free-tier denial is actionable, private, and never retried', async () => {
+  const message =
+    "Error from provider (Console): OpenCode's free tier can only be used from within OpenCode";
+  for (const body of [
+    { type: 'FreeTierError', message },
+    { error: { type: 'FreeTierError', message } }
+  ]) {
+    let calls = 0;
+    const sdkError = Object.assign(new Error('403 secret-reflection'), {
+      status: 403,
+      error: body
+    });
+    const provider = {
+      getInfo: () => info(),
+      async chat() {
+        calls++;
+        throw sdkError;
+      }
+    };
+    const result = await collectFailure(runProviderRequest(provider, request));
+    assert.equal(calls, 1);
+    assert.equal(result.error.code, 'permission');
+    assert.equal(result.error.status, 403);
+    assert.match(result.error.message, /OpenCode.*403.*FreeTierError/);
+    assert.ok(!JSON.stringify(toPublicProviderError(result.error)).includes('secret-reflection'));
+  }
+  const generic = normalizeProviderError(
+    Object.assign(new Error('403 forbidden secret'), { status: 403 }),
+    'Test'
+  );
+  assert.equal(generic.message, 'Test: permission denied');
+  const otherStatus = normalizeProviderError(
+    Object.assign(new Error(message), { status: 401 }),
+    'Test'
+  );
+  assert.equal(otherStatus.code, 'authentication');
+  assert.doesNotMatch(otherStatus.message, /FreeTierError/);
+});
 
 test('retries a network error with deterministic exponential backoff', async () => {
   let attempts = 0;
@@ -412,7 +455,9 @@ test('maps SDK errors into stable public categories', () => {
       },
       'network'
     ],
-    [{ status: 422, message: 'bad input' }, 'unknown']
+    [{ status: 400, message: 'bad input' }, 'invalid_request'],
+    [{ status: 422, message: 'bad input' }, 'invalid_request'],
+    [{ status: 400, message: 'Model is unavailable.' }, 'model_unavailable']
   ];
 
   for (const [shape, expectedCode] of cases) {

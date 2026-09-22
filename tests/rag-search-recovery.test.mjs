@@ -100,20 +100,79 @@ test('empty RAG search retries once, retaining original query, collection and ex
   );
 });
 
-test('nonempty retrieval does not invoke a rewriter, even for Chinese queries', async () => {
+test('nonempty same-language retrieval does not invoke a rewriter', async () => {
   await fixture(
     async ({ runtime, calls }) => {
       let rewrites = 0;
       const hits = await runtime(async () => {
         rewrites++;
         return ['test'];
-      }).search({ query: '测试 TestClient', signal: signal() });
+      }).search({ query: 'testing TestClient', signal: signal() });
       assert.equal(hits.length, 1);
       assert.equal(rewrites, 0);
       assert.equal(calls.length, 1);
     },
     () => [hit]
   );
+});
+
+test('CJK query with lexical English hits recovers once without widening scope', async () => {
+  await fixture(
+    async ({ runtime, calls }) => {
+      let rewrites = 0;
+      const rag = runtime(async () => {
+        rewrites++;
+        return ['TestClient lifespan with statement'];
+      });
+      const options = {
+        query: '测试 lifespan 如何执行',
+        collections: ['techdocs'],
+        path: 'guide',
+        turnId: 'gap',
+        signal: signal()
+      };
+      await rag.search(options);
+      await rag.search(options);
+      assert.equal(rewrites, 1);
+      assert.equal(calls.length, 3);
+      assert.deepEqual(calls[1].queries, [options.query, 'TestClient lifespan with statement']);
+      assert.ok(calls.every((call) => call.path === 'guide' && call.collections[0] === 'techdocs'));
+    },
+    () => [hit]
+  );
+});
+
+test('language recovery retains existing candidates on rewrite or second search failure', async () => {
+  for (const failure of ['rewrite', 'search', 'empty']) {
+    await fixture(
+      async ({ runtime }) => {
+        const rag = runtime(async () => {
+          if (failure === 'rewrite') throw new Error('offline');
+          return ['TestClient with statement'];
+        });
+        assert.deepEqual(await rag.search({ query: '测试生命周期', signal: signal() }), [hit]);
+      },
+      (_body, n) => (n === 1 ? [hit] : failure === 'empty' ? [] : 503)
+    );
+  }
+});
+
+test('Chinese candidates and non-lexical retrieval do not trigger language recovery', async () => {
+  for (const candidate of [
+    { ...hit, summary: '测试 with 语句' },
+    { ...hit, channels: ['lexical', 'vector'] }
+  ]) {
+    await fixture(
+      async ({ runtime, calls }) => {
+        const rag = runtime(async () => {
+          throw new Error('must not rewrite');
+        });
+        assert.equal((await rag.search({ query: '测试', signal: signal() })).length, 1);
+        assert.equal(calls.length, 1);
+      },
+      () => [candidate]
+    );
+  }
 });
 
 test('empty English retrieval can recover; another empty result never loops or drops path', async () => {

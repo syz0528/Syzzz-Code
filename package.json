@@ -45,7 +45,7 @@
     "format:check": "prettier --check --ignore-unknown .",
     "test": "npm run build && node --test tests/*.test.mjs",
     "test:coverage": "npm run build && node --test --test-concurrency=4 --experimental-test-coverage --test-coverage-include=dist/**/*.js --test-coverage-lines=82 --test-coverage-branches=74 --test-coverage-functions=84 tests/*.test.mjs",
-    "test:providers": "npm run build && node --test tests/provider-contracts.test.mjs tests/openai-stream.test.mjs tests/openai-responses.test.mjs tests/anthropic-provider.test.mjs tests/provider-runner.test.mjs",
+    "test:providers": "npm run build && node --test tests/provider-contracts.test.mjs tests/provider-headers.test.mjs tests/openai-stream.test.mjs tests/openai-responses.test.mjs tests/anthropic-provider.test.mjs tests/provider-runner.test.mjs tests/cli-provider-routing.test.mjs",
     "test:tui": "npm run build && node --test tests/phase8-runtime.test.mjs tests/tui.test.mjs",
     "test:context": "npm run build && node --test tests/context-manager.test.mjs tests/context-runtime.test.mjs",
     "test:stability": "npm run build && node scripts/stability-run.mjs",
@@ -67,7 +67,7 @@
     "prepublishOnly": "npm run release:verify"
   },
   "dependencies": {
-    "@anthropic-ai/sdk": "^0.32.1",
+    "@anthropic-ai/sdk": "0.126.0",
     "@lancedb/lancedb": "0.33.0",
     "@modelcontextprotocol/client": "2.0.0",
     "@vscode/ripgrep": "^1.18.0",

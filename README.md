@@ -433,6 +433,8 @@ Chat Completions 和 Responses 不能放在同一个 Provider 配置中自动猜
 
 完整示例和常见协议错误见 [Provider 配置指南](docs/PROVIDERS.md)。
 
+需要额外请求头时，可在对应 Provider 内添加可选 `headers` 对象，与 `env` 同级。不填写、`null`、空对象或空字符串项均不添加头；旧配置保持兼容。修改后重启 CLI。填写的值保存在本地配置中，请勿公开额外凭证；限制与示例见上述指南。
+
 ## 数据、隐私与安全
 
 Syzzz Code 默认在本机保存以下数据：

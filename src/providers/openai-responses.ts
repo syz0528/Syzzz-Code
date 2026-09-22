@@ -10,7 +10,12 @@ import type {
   ProviderUsage,
   ToolCall
 } from './base.js';
-import { isProviderAbort, normalizeProviderError, ProviderError } from './errors.js';
+import { isProviderAbort, ProviderError } from './errors.js';
+import {
+  validateProviderHeaders,
+  providerHeaderFetch,
+  normalizeHeaderProviderError
+} from './headers.js';
 
 const PRIVATE_OUTPUT_PREFIX = 'openai-responses-output-v1:';
 const MAX_PRIVATE_OUTPUT_BYTES = 256 * 1024;
@@ -274,18 +279,22 @@ export class OpenAIResponsesProvider implements AIProvider {
   private readonly modelContextWindows: Readonly<Record<string, number>>;
   private readonly apiKey: string;
   private readonly baseURL: string;
+  private readonly headers?: Readonly<Record<string, string>>;
 
   constructor(
     apiKey: string,
     baseURL: string,
     model: string,
     providerName: string = 'OpenAI Responses',
-    modelContextWindows: Readonly<Record<string, number>> = {}
+    modelContextWindows: Readonly<Record<string, number>> = {},
+    headers?: Readonly<Record<string, string>>
   ) {
     this.apiKey = apiKey;
+    this.headers = validateProviderHeaders(headers);
     this.baseURL = normalizeResponsesBaseURL(baseURL);
     this.client = new OpenAI({
       apiKey,
+      ...(this.headers ? { fetch: providerHeaderFetch(this.headers) } : {}),
       baseURL: this.baseURL,
       maxRetries: 0,
       logLevel: 'off'
@@ -303,7 +312,7 @@ export class OpenAIResponsesProvider implements AIProvider {
       if (request.signal?.aborted || isProviderAbort(error)) {
         throw error;
       }
-      throw normalizeProviderError(error, this.providerName);
+      throw normalizeHeaderProviderError(error, this.providerName, this.headers);
     }
   }
 
@@ -443,7 +452,7 @@ export class OpenAIResponsesProvider implements AIProvider {
       if (attemptOptions.signal.aborted || isProviderAbort(error)) {
         throw error;
       }
-      throw normalizeProviderError(error, this.providerName);
+      throw normalizeHeaderProviderError(error, this.providerName, this.headers);
     }
   }
 
@@ -472,7 +481,8 @@ export class OpenAIResponsesProvider implements AIProvider {
       this.baseURL,
       this.model,
       this.providerName,
-      this.modelContextWindows
+      this.modelContextWindows,
+      this.headers
     );
   }
 

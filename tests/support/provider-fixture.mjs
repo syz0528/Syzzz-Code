@@ -1,4 +1,5 @@
 import { createServer } from 'node:http';
+import { writeAnthropicSse } from './anthropic-sse.mjs';
 
 function readJson(request) {
   return new Promise((resolve, reject) => {
@@ -311,6 +312,23 @@ function handleOpenAI(profile, body, response, requestCount) {
 
   if (userText.includes('tool-contract')) {
     writeOpenAITool(response, model, userText.includes('multi-tool-contract'));
+    return;
+  }
+
+  if (!body.stream) {
+    json(response, 200, {
+      id: 'chatcmpl-contract',
+      object: 'chat.completion',
+      model,
+      choices: [
+        {
+          index: 0,
+          message: { role: 'assistant', content: 'compatible_OK' },
+          finish_reason: 'stop'
+        }
+      ],
+      usage: { prompt_tokens: 11, completion_tokens: 3, total_tokens: 14 }
+    });
     return;
   }
 
@@ -645,33 +663,31 @@ function handleAnthropic(body, response) {
     });
     return;
   }
-  json(
-    response,
-    200,
-    {
-      id: 'msg_contract',
-      type: 'message',
-      role: 'assistant',
-      model: typeof body.model === 'string' ? body.model : 'claude-contract',
-      content: toolRequest
-        ? [
-            {
-              type: 'tool_use',
-              id: 'toolu_contract',
-              name: 'Read',
-              input: { path: 'README.md' }
-            }
-          ]
-        : [{ type: 'text', text: 'ANTHROPIC_OK' }],
-      stop_reason: toolRequest ? 'tool_use' : 'end_turn',
-      stop_sequence: null,
-      usage: {
-        input_tokens: 9,
-        output_tokens: 4
-      }
-    },
-    { 'request-id': 'request-anthropic-contract' }
-  );
+  const message = {
+    id: 'msg_contract',
+    type: 'message',
+    role: 'assistant',
+    model: typeof body.model === 'string' ? body.model : 'claude-contract',
+    content: toolRequest
+      ? [
+          {
+            type: 'tool_use',
+            id: 'toolu_contract',
+            name: 'Read',
+            input: { path: 'README.md' }
+          }
+        ]
+      : [{ type: 'text', text: 'ANTHROPIC_OK' }],
+    stop_reason: toolRequest ? 'tool_use' : 'end_turn',
+    stop_sequence: null,
+    usage: {
+      input_tokens: 9,
+      output_tokens: 4
+    }
+  };
+  const headers = { 'request-id': 'request-anthropic-contract' };
+  if (body.stream) writeAnthropicSse(response, message, headers);
+  else json(response, 200, message, headers);
 }
 
 export async function startProviderFixture(profile) {

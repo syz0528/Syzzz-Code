@@ -17,12 +17,13 @@ const allowedLicenses = new Set([
   'LGPL-3.0-or-later',
   'MIT'
 ]);
-// These packages ship a reviewed license file but omit or generalize package.json metadata.
+// Exact packages with separately reviewed license files, including metadata exceptions.
 // Keep the exception tied to the exact package version so an update requires a fresh review.
 const reviewedMetadataExceptions = new Map([
   ['base-64@0.1.0', 'MIT (LICENSE-MIT.txt)'],
   ['flatbuffers@1.12.0', 'Apache-2.0 (LICENSE.txt)'],
   ['flatbuffers@24.12.23', 'Apache-2.0 (LICENSE)'],
+  ['fast-sha256@1.3.0', 'Unlicense (LICENSE; Anthropic SDK via standardwebhooks)'],
   ['json-bignum@0.0.3', 'MIT (LICENSE)']
 ]);
 const packages = [];

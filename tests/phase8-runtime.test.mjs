@@ -796,6 +796,7 @@ test('controller runs streamed and buffered turns without mixing local commands 
     historyBaseDirectory: baseDirectory
   });
   await controller.submit('hello');
+  assert.equal(controller.getSnapshot().transcript.at(-1).live, false);
   assert.ok(
     controller
       .getSnapshot()
@@ -885,6 +886,7 @@ test('changing /stream updates the active TUI renderer instead of keeping its st
   );
   release();
   await turn;
+  assert.equal(controller.getSnapshot().transcript.at(-1).live, true);
   assert.ok(
     controller
       .getSnapshot()
@@ -1355,6 +1357,16 @@ test('streaming presenter retains queued rows and catches up under bounded press
     // Catch-up remains bounded per frame rather than replacing the whole answer.
   }
   assert.equal(burst.snapshot().queueDepth, 0);
+});
+
+test('stream completion preserves the first queued row after an already visible prefix', () => {
+  const presenter = new StreamingTextPresenter();
+  presenter.sync('FIRST', 40, false, 0, true);
+  presenter.sync('FIRST\n\nSECOND\n\nTHIRD', 40, true, 10, true);
+  presenter.flush();
+  const complete = new StreamingTextPresenter();
+  complete.sync('FIRST\n\nSECOND\n\nTHIRD', 40, true, 10);
+  assert.deepEqual(presenter.visibleRows(), complete.visibleRows());
 });
 
 test('controller keeps assistant segments in event order around tools and pauses for AskUser', async () => {

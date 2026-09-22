@@ -7,6 +7,7 @@ import { loadConfig, resolveProviderCredential } from './config.js';
 import { TaskCompositionError } from './composition/runtime.js';
 import type { CompositionStatus, TaskCompositionRuntimeLike } from './composition/types.js';
 import type { RagRuntime } from './rag/runtime.js';
+import { isPureRagAbstention } from './rag/verifier.js';
 import type { RagContextReceipt, RagStatus } from './rag/types.js';
 import {
   applyCompactionPlan,
@@ -90,7 +91,7 @@ import {
 
 const DEFAULT_MAX_TOOL_ROUNDS = 10;
 const MAX_COMPACTIONS_PER_PROVIDER_CALL = 3;
-const RAG_ANSWER_MAX_OUTPUT_TOKENS = 128;
+const RAG_ANSWER_MAX_OUTPUT_TOKENS = 512;
 
 const COMPACTION_SYSTEM_PROMPT = [
   'Compress the supplied conversation transcript into a concise continuation summary.',
@@ -1693,6 +1694,7 @@ export class QueryEngine {
           throw error;
         }
       }
+      this.rag?.setTurnQuestion(turnId, userMessage);
       if (this.rag?.shouldAutoRetrieve(this.mode) && !/(^|\s)@(?:"|[^@\s])/.test(userMessage)) {
         yield event({ type: 'phase_changed', phase: 'rag' });
         const ragEvents: AgentEventData[] = [];
@@ -1823,20 +1825,24 @@ export class QueryEngine {
             .map((receipt) => `[[rag:${receipt.chunkId}]]`)
             .join(', ');
           runtimeInstructions.push(
-            'RAG evidence was read in this turn. The final answer MUST copy at least one applicable citation token exactly from this allowed list: ' +
+            'RAG evidence was read in this turn. For an evidence-backed conclusion, copy at least one applicable citation token exactly from this allowed list: ' +
               `${allowedCitationTokens}. ` +
               (taskExecution.active && !finalizationReason
                 ? 'Tools remain available: finish the other requested authorized steps before your final answer; reading RAG alone does not complete a combined task. '
                 : hasLocalReadEvidence
-                  ? 'In at most three short sentences, separate: documented rule with its citation; observed local file/range; comparison and what remains unverified. A successful Read is not a test execution result. '
-                  : 'Start the response with the applicable citation token, then answer in at most two short sentences and stop. ') +
+                  ? 'Before finalizing, finish remaining requested authorized reads or report their actual limitation. Concisely separate: documented rule with its citation; observed local file/range; comparison and what remains unverified. A successful Read is not a test execution result. '
+                  : 'Tools remain available: before finalizing, finish every requested authorized part or report its actual limitation. Reading RAG is not completion of a combined task. In the final answer, use the applicable citation and keep the answer concise. ') +
+              'A Read result proves only its returned line range. If the requested fact is not in that range and more content is available, inspect the necessary remaining range before claiming the file lacks it; respect explicitly requested ranges and prohibitions. ' +
               (taskExecution.active || hasLocalReadEvidence
                 ? "Do not invent or alter citation tokens. Answer in the user's language and only the operation or claim requested. Use only conclusions and code literally visible in the cited excerpts for RAG claims; an include directive or link is not code evidence. Do not add unrelated definitions, alternative methods, setup code, packages, parameters, examples, or source metadata. If the excerpts do not answer the question, state that evidence is insufficient."
                 : "Do not invent or alter citation tokens. Answer in the user's language and only the operation or claim requested. Use only conclusions and code literally visible in the cited excerpts; an include directive or link is not code evidence. Do not add related definitions, alternative methods, setup code, packages, parameters, examples, or source metadata. If the excerpts do not answer the question, state that evidence is insufficient.")
           );
+          runtimeInstructions.push(
+            'If the excerpts cannot answer the question and there are no other task results to report, you may answer exactly "证据不足。" or "Evidence is insufficient." without a citation. This is abstention, not proof that the entire collection lacks an answer.'
+          );
         } else if (ragSearchSucceeded) {
           runtimeInstructions.push(
-            'RAG search candidates were returned, but no evidence was read with RagRead. Search result IDs are not citations: the final answer MUST NOT contain any [[rag:...]] token. If no candidate directly supports the request, state that evidence is insufficient without adding outside facts or recommendations.'
+            'RAG search candidates were returned, but no evidence was read with RagRead. Search summaries are discovery hints, not verified evidence. If a candidate looks relevant, call RagRead before answering document facts. Search result IDs are not citations: without RagRead the final answer MUST NOT contain any [[rag:...]] token. If no candidate is relevant, state that evidence is insufficient, not that the whole collection lacks the answer. For a combined request, also perform the requested authorized local reads before finalizing; do not claim you cannot read a file without an actual failure or denial. Do not add outside facts or recommendations.'
           );
         }
         if (finalizationReason === 'hook-denial') {
@@ -1866,9 +1872,7 @@ export class QueryEngine {
           this.activeRagContextReceipts.length > 0
             ? taskExecution.active && !finalizationReason
               ? 512
-              : hasLocalReadEvidence
-                ? 256
-                : RAG_ANSWER_MAX_OUTPUT_TOKENS
+              : RAG_ANSWER_MAX_OUTPUT_TOKENS
             : undefined;
         // Successful tools can add RAG rules or nested instructions after the initial output cap.
         // Rebudget only fresh tool results against the exact next request, preserving call/result pairs.
@@ -1954,12 +1958,7 @@ export class QueryEngine {
               tools: providerToolsForRound,
               systemPrompt,
               ...(maximumOutputTokens !== undefined
-                ? {
-                    maxOutputTokens: maximumOutputTokens,
-                    ...((!taskExecution.active || finalizationReason) && !hasLocalReadEvidence
-                      ? { stopSequences: ['\n\n'] }
-                      : {})
-                  }
+                ? { maxOutputTokens: maximumOutputTokens }
                 : {}),
               signal
             },
@@ -2084,6 +2083,10 @@ export class QueryEngine {
           let groundingRepairedResponse: string | undefined;
           if (
             this.rag &&
+            !(
+              isPureRagAbstention(responseParts.join('\n\n')) &&
+              !this.rag.hasLocalReadEvidence(turnId)
+            ) &&
             (this.activeRagContextReceipts.length > 0 ||
               responseParts.some((part) => part.includes('[[rag:')))
           ) {
@@ -2128,9 +2131,12 @@ export class QueryEngine {
                       signal,
                       (ragEvent) => verificationEvents.push(ragEvent)
                     )
-                  : (this.rag.getTurnVerification(turnId) ??
-                    (await this.rag.verify(responseParts.join('\n\n'), turnId, signal, (ragEvent) =>
-                      verificationEvents.push(ragEvent)
+                  : (this.rag.getTurnVerification(turnId, responseParts.join('\n\n')) ??
+                    (await this.rag.verifyRepairedAnswer(
+                      responseParts.join('\n\n'),
+                      turnId,
+                      signal,
+                      (ragEvent) => verificationEvents.push(ragEvent)
                     )));
                 for (const ragEvent of verificationEvents) yield event(ragEvent);
                 verificationEvents.length = 0;
@@ -2223,7 +2229,18 @@ export class QueryEngine {
                     const repairedInvalidCount = repairedChecks.filter(
                       (check) => check.status !== 'valid'
                     ).length;
-                    if (repairedChecks.length > 0 && repairedInvalidCount === 0) {
+                    const subsetVerification =
+                      repairedChecks.length > 0 && repairedInvalidCount === 0
+                        ? await this.rag.verifyRepairedAnswer(
+                            repairedResponse,
+                            turnId,
+                            signal,
+                            (ragEvent) => verificationEvents.push(ragEvent)
+                          )
+                        : undefined;
+                    for (const ragEvent of verificationEvents) yield event(ragEvent);
+                    verificationEvents.length = 0;
+                    if (subsetVerification?.outcome === 'supported') {
                       responseParts.splice(0, responseParts.length, repairedResponse);
                       workingMessages[workingMessages.length - 1] = {
                         ...response.message,
@@ -2252,16 +2269,22 @@ export class QueryEngine {
                   const repairedInvalidCount = repairedChecks.filter(
                     (check) => check.status !== 'valid'
                   ).length;
-                  if (repairedChecks.length > 0 && repairedInvalidCount === 0) {
-                    const repairedVerification = await this.rag.verifyRepairedAnswer(
-                      repairedResponse,
-                      turnId,
-                      signal,
-                      (ragEvent) => verificationEvents.push(ragEvent)
-                    );
+                  const repairedAbstention = isPureRagAbstention(repairedResponse);
+                  if (
+                    repairedAbstention ||
+                    (repairedChecks.length > 0 && repairedInvalidCount === 0)
+                  ) {
+                    const repairedVerification = repairedAbstention
+                      ? undefined
+                      : await this.rag.verifyRepairedAnswer(
+                          repairedResponse,
+                          turnId,
+                          signal,
+                          (ragEvent) => verificationEvents.push(ragEvent)
+                        );
                     for (const ragEvent of verificationEvents) yield event(ragEvent);
                     verificationEvents.length = 0;
-                    if (repairedVerification.outcome === 'supported') {
+                    if (repairedAbstention || repairedVerification?.outcome === 'supported') {
                       responseParts.splice(0, responseParts.length, repairedResponse);
                       workingMessages[workingMessages.length - 1] = {
                         ...response.message,
@@ -2271,7 +2294,7 @@ export class QueryEngine {
                       invalidCount = 0;
                       groundingBlocked = false;
                       groundingRepairedResponse = repairedResponse;
-                      semanticOutcome = 'supported';
+                      semanticOutcome = repairedAbstention ? 'unverifiable' : 'supported';
                     }
                   }
                 }

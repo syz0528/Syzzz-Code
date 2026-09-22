@@ -34,6 +34,28 @@ test('validates and normalizes a provider configuration', () => {
   assert.equal(config.providers.local.env.BASE_URL, 'http://localhost:8080/v1');
 });
 
+test('provider headers persist across disk save/load and unrelated setting changes', () => {
+  const testHome = mkdtempSync(join(tmpdir(), 'syzzz-config-headers-'));
+  try {
+    const config = createValidConfig();
+    config.providers.local.headers = { 'X-Client': 'persisted-client', 'x-empty': '' };
+    const configModuleUrl = pathToFileURL(join(projectDirectory, 'dist', 'config.js')).href;
+    const script = `const m = await import(${JSON.stringify(configModuleUrl)});
+      m.saveConfig(m.validateConfig(${JSON.stringify(config)}));
+      const c = m.loadConfig(); c.ui.streamOutput = false; m.saveConfig(c);
+      console.log(JSON.stringify(m.loadConfig().providers.local.headers));`;
+    const result = spawnSync(process.execPath, ['--input-type=module', '--eval', script], {
+      cwd: projectDirectory,
+      encoding: 'utf8',
+      env: { ...process.env, HOME: testHome, USERPROFILE: testHome }
+    });
+    assert.equal(result.status, 0, result.stderr);
+    assert.deepEqual(JSON.parse(result.stdout), { 'x-client': 'persisted-client' });
+  } finally {
+    rmSync(testHome, { recursive: true, force: true });
+  }
+});
+
 test('rejects an unknown provider protocol type', () => {
   const config = createValidConfig();
   config.providers.local.type = 'custom';

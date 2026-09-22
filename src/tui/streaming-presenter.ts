@@ -82,8 +82,10 @@ export class StreamingTextPresenter {
       this.stableRows = nextStable.slice(0, prefix);
       this.queue = nextStable.slice(prefix).map((line) => ({ line, enqueuedAt: now }));
       this.mutableRows = [];
-      const first = this.queue.shift();
-      if (this.stableRows.length === 0 && first) this.stableRows.push(first.line);
+      if (this.stableRows.length === 0) {
+        const first = this.queue.shift();
+        if (first) this.stableRows.push(first.line);
+      }
       return;
     }
 

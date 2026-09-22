@@ -66,7 +66,7 @@ export function createProviderRagQueryRewriter(provider: AIProvider): RagQueryRe
           tools: [],
           maxOutputTokens: 256,
           systemPrompt: [
-            'An initial lexical search returned no evidence. Rewrite its query, not its answer.',
+            'A lexical search needs empty-result or cross-language recovery. Rewrite its query, not its answer.',
             'Return up to three concise keyword queries, or an empty list if no faithful rewrite is possible.',
             'Keep the original language where useful; a query mixing Chinese and English technical terms may also need an English variant.',
             'Preserve identifiers and the exact requested operation or relationship.',

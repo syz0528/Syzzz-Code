@@ -10,6 +10,7 @@ export interface ProviderConfig {
   type: 'anthropic' | 'openai-compatible' | 'openai-responses';
   model: string;
   modelContextWindows?: Record<string, number>;
+  headers?: Readonly<Record<string, string>>;
   env: {
     BASE_URL: string;
     API_KEY: string;
@@ -21,7 +22,7 @@ export function createProvider(
   config: ProviderConfig,
   environment: NodeJS.ProcessEnv = process.env
 ): AIProvider {
-  const { name, type, model, modelContextWindows, env } = config;
+  const { name, type, model, modelContextWindows, env, headers } = config;
   const { BASE_URL } = env;
   const API_KEY = resolveProviderCredential(config, environment).value;
 
@@ -30,10 +31,17 @@ export function createProvider(
   }
 
   if (type === 'anthropic') {
-    return new AnthropicProvider(API_KEY, BASE_URL, model, modelContextWindows);
+    return new AnthropicProvider(API_KEY, BASE_URL, model, modelContextWindows, headers);
   }
   if (type === 'openai-responses') {
-    return new OpenAIResponsesProvider(API_KEY, BASE_URL, model, name, modelContextWindows);
+    return new OpenAIResponsesProvider(
+      API_KEY,
+      BASE_URL,
+      model,
+      name,
+      modelContextWindows,
+      headers
+    );
   }
   return new OpenAICompatibleProvider(
     API_KEY,
@@ -41,6 +49,7 @@ export function createProvider(
     model,
     name,
     undefined,
-    modelContextWindows
+    modelContextWindows,
+    headers
   );
 }

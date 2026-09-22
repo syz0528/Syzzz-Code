@@ -103,7 +103,7 @@ async function collect(engine, prompt, options) {
   }
 }
 
-test('default runtime does not enable the experimental review or change RAG output limits', async () => {
+test('default runtime allows remaining work after RAG without enabling experimental review', async () => {
   await fixture(async ({ workspace, rag }) => {
     let calls = 0;
     const provider = {
@@ -118,9 +118,11 @@ test('default runtime does not enable the experimental review or change RAG outp
         if (!tools.length) return call('RagSearch', { query: 'TestClient lifespan' }, 's');
         if (tools.length === 1)
           return call('RagRead', { chunkIds: [/\b[a-f0-9]{32}\b/.exec(tools[0].content)[0]] }, 'r');
-        assert.equal(request.maxOutputTokens, 128);
-        assert.deepEqual(request.stopSequences, ['\n\n']);
-        assert.match(request.systemPrompt, /two short sentences and stop/);
+        assert.equal(request.maxOutputTokens, 512);
+        assert.equal(request.stopSequences, undefined);
+        assert.match(request.systemPrompt, /finish every requested authorized part/);
+        assert.match(request.systemPrompt, /returned line range/);
+        assert.doesNotMatch(request.systemPrompt, /two short sentences and stop/);
         return reply(
           `Use TestClient with a with statement ${/\[\[rag:[a-f0-9]{32}\]\]/.exec(tools[1].content)[0]}`
         );

@@ -215,11 +215,18 @@ export function useTranscriptLayout(
   language: ResolvedUiLanguage = 'en'
 ): TranscriptLayout {
   const presenters = useRef(new Map<string, StreamingTextPresenter>());
+  const presentedSources = useRef(new Map<string, string>());
   const [streamRevision, setStreamRevision] = useState(0);
   const activeIds = new Set<string>();
+  const retainedIds = new Set<string>();
 
   for (const block of blocks) {
     if (block.kind !== 'assistant') continue;
+    retainedIds.add(block.id);
+    if (block.status !== 'streaming' && presentedSources.current.get(block.id) === block.markdown) {
+      continue;
+    }
+    presentedSources.current.delete(block.id);
     let presenter = presenters.current.get(block.id);
     if (!presenter && block.status !== 'streaming' && block.live !== true) continue;
     if (!presenter) {
@@ -235,12 +242,17 @@ export function useTranscriptLayout(
       block.live === true
     );
     if (block.status !== 'streaming' && presenter.snapshot().queueDepth === 0) {
+      // Live marks provenance, not unfinished presentation. Do not animate the same answer again.
+      presentedSources.current.set(block.id, block.markdown);
       presenters.current.delete(block.id);
       activeIds.delete(block.id);
     }
   }
   for (const id of presenters.current.keys()) {
     if (!activeIds.has(id)) presenters.current.delete(id);
+  }
+  for (const id of presentedSources.current.keys()) {
+    if (!retainedIds.has(id)) presentedSources.current.delete(id);
   }
 
   const hasPendingRows = [...presenters.current.values()].some(

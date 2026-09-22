@@ -3,6 +3,9 @@ dist/
 coverage/
 artifacts/
 eval-results/
+.codex-temp/
+.syzzz-gui/
+output/
 *.tgz
 .env
 *.log

@@ -14,6 +14,7 @@ import {
 import { randomUUID } from 'node:crypto';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
+import { validateProviderHeaders } from './providers/headers.js';
 
 export const CONFIG_SCHEMA_VERSION = 1 as const;
 const CONFIG_DIR = join(homedir(), '.syzzz-code');
@@ -25,6 +26,7 @@ export interface ProviderConfigItem {
   model: string;
   models: string[];
   modelContextWindows?: Record<string, number>;
+  headers?: Readonly<Record<string, string>>;
   env: {
     BASE_URL: string;
     API_KEY: string;
@@ -558,12 +560,14 @@ export function validateConfig(value: unknown): Config {
       providerValue.env.API_KEY_ENV,
       `${providerPath}.env.API_KEY_ENV`
     );
+    const headers = validateProviderHeaders(providerValue.headers, `${providerPath}.headers`);
     providers[providerId] = {
       name: requireNonEmptyString(providerValue.name, `${providerPath}.name`),
       type,
       model,
       models,
       ...(modelContextWindows ? { modelContextWindows } : {}),
+      ...(headers ? { headers } : {}),
       env: {
         BASE_URL: validateBaseURL(providerValue.env.BASE_URL, `${providerPath}.env.BASE_URL`),
         API_KEY: typeof providerValue.env.API_KEY === 'string' ? providerValue.env.API_KEY : '',

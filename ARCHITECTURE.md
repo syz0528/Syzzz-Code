@@ -70,7 +70,7 @@ CLI / Slash commands / NDJSON
 - `src/providers/runner.ts` 是 timeout、有限重试、取消和错误分类的唯一所有者。
 - OpenAI-compatible Provider 实现 Chat Completions SSE、工具碎片聚合和 DeepSeek reasoning 恢复。
 - OpenAI Responses Provider 实现语义流事件、function call 聚合与无状态工具续接；受限私有 output items 只存在于当前内存工具链，持久化时继续剥离。
-- Anthropic Provider 保持非流式兼容路径。
+- Anthropic Provider 在统一 Runner 中使用 Messages SSE 流式；直接 `chat()` 保留非流式兼容路径。完整结束前不提交工具调用，取消会释放 HTTP 流，SDK 原始日志及内部重试关闭。
 - Provider、协议、URL、模型和凭证只来自用户配置；工厂按 `anthropic | openai-compatible | openai-responses` 显式路由，不自动探测或跨协议回退。
 
 ### 工具与扩展

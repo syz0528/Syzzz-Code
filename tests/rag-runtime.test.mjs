@@ -588,7 +588,7 @@ test('semantic RAG verification emits isolated Provider purpose and bounded usag
     assert.equal(result.isError, undefined);
     assert.equal(result.metadata.outcome, 'supported');
     assert.equal(verifierRequest.maxOutputTokens, 512);
-    assert.deepEqual(verifierRequest.stopSequences, ['\n\n']);
+    assert.equal(verifierRequest.stopSequences, undefined);
     assert.deepEqual(
       events.filter((event) => event.type.startsWith('provider_')).map((event) => event.type),
       ['provider_request_started', 'provider_request_completed']
@@ -655,8 +655,8 @@ test('RAG answer repair uses an isolated bounded evidence-only request', async (
   });
 
   assert.match(answer, /^\[\[rag:/);
-  assert.equal(repairRequest.maxOutputTokens, 96);
-  assert.deepEqual(repairRequest.stopSequences, ['\n\n']);
+  assert.equal(repairRequest.maxOutputTokens, 256);
+  assert.equal(repairRequest.stopSequences, undefined);
   assert.deepEqual(repairRequest.tools, []);
   assert.doesNotMatch(repairRequest.messages[0].content, /sourceHash|virtualPath/);
   assert.ok(
@@ -668,7 +668,11 @@ test('RAG answer repair uses an isolated bounded evidence-only request', async (
 
 test('RAG verification rejects generated code that is absent from evidence', async () => {
   await withWorkspace(async ({ workspace, ragDirectory }) => {
-    await writeFile(join(workspace, 'README.md'), '# Evidence\nUse the documented operation.\n', 'utf8');
+    await writeFile(
+      join(workspace, 'README.md'),
+      '# Evidence\nUse the documented operation.\n',
+      'utf8'
+    );
     const runtime = new RagRuntime({
       workspaceRoot: workspace,
       config: lexicalConfig,
@@ -693,8 +697,7 @@ test('RAG verification rejects generated code that is absent from evidence', asy
     assert.equal(result.outcome, 'unsupported');
     assert.ok(
       result.claims.some(
-        (claim) =>
-          claim.outcome === 'unsupported' && claim.claim.includes('code block')
+        (claim) => claim.outcome === 'unsupported' && claim.claim.includes('code block')
       )
     );
   });
@@ -811,7 +814,7 @@ test('Engine exposes read-only RAG tools in ask mode and validates final citatio
     assert.deepEqual(seenGroundedAnswerBounds, [
       { maxOutputTokens: undefined, stopSequences: undefined },
       { maxOutputTokens: undefined, stopSequences: undefined },
-      { maxOutputTokens: 128, stopSequences: ['\n\n'] }
+      { maxOutputTokens: 512, stopSequences: undefined }
     ]);
     assert.ok(events.some((event) => event.type === 'rag_retrieval_completed'));
     assert.ok(
@@ -1015,22 +1018,30 @@ test('Engine blocks a RAG answer that omits citations after reading evidence', a
 test('Engine keeps only supported cited claims when a RAG draft mixes grounded and invented text', async () => {
   await withWorkspace(async ({ workspace, ragDirectory }) => {
     await writeFile(join(workspace, 'README.md'), '# Evidence\nSINGLE_GROUNDED_FACT\n', 'utf8');
+    const verifiedDrafts = [];
     const rag = new RagRuntime({
       workspaceRoot: workspace,
       config: lexicalConfig,
       store: new RagStore(ragDirectory),
-      semanticVerifier: async ({ chunks }) => [
-        {
-          claim: 'SINGLE_GROUNDED_FACT',
-          outcome: 'supported',
-          citations: [chunks[0].id]
-        },
-        {
-          claim: 'INVENTED_EXTRA',
-          outcome: 'unsupported',
-          citations: []
-        }
-      ]
+      semanticVerifier: async ({ chunks, draft }) => {
+        verifiedDrafts.push(draft);
+        return [
+          {
+            claim: 'SINGLE_GROUNDED_FACT',
+            outcome: 'supported',
+            citations: [chunks[0].id]
+          },
+          ...(draft.includes('INVENTED_EXTRA')
+            ? [
+                {
+                  claim: 'INVENTED_EXTRA',
+                  outcome: 'unsupported',
+                  citations: []
+                }
+              ]
+            : [])
+        ];
+      }
     });
     await rag.index({ signal: signal() });
     let step = 0;
@@ -1097,6 +1108,8 @@ test('Engine keeps only supported cited claims when a RAG draft mixes grounded a
     }
 
     assert.equal(result.status, 'completed');
+    assert.equal(verifiedDrafts.length, 2);
+    assert.doesNotMatch(verifiedDrafts[1], /INVENTED_EXTRA/);
     assert.match(result.response, /SINGLE_GROUNDED_FACT \[\[rag:[a-f0-9]{32}\]\]/);
     assert.doesNotMatch(result.response, /INVENTED_EXTRA/);
     assert.doesNotMatch(result.response, /RAG grounding blocked/);
@@ -1212,8 +1225,7 @@ test('Engine repairs an unsupported RAG draft with an isolated evidence-only ans
               citations: []
             }
       ],
-      answerRepairer: async ({ chunks }) =>
-        `[[rag:${chunks[0].id}]] REPAIRED_GROUNDED_FACT`
+      answerRepairer: async ({ chunks }) => `[[rag:${chunks[0].id}]] REPAIRED_GROUNDED_FACT`
     });
     await rag.index({ signal: signal() });
     let step = 0;
@@ -1226,7 +1238,11 @@ test('Engine repairs an unsupported RAG draft with an isolated evidence-only ans
               role: 'assistant',
               content: '',
               toolCalls: [
-                { id: 'repair-search', name: 'RagSearch', input: { query: 'REPAIRED_GROUNDED_FACT' } }
+                {
+                  id: 'repair-search',
+                  name: 'RagSearch',
+                  input: { query: 'REPAIRED_GROUNDED_FACT' }
+                }
               ]
             },
             finishReason: 'tool_calls'

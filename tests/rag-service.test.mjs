@@ -325,7 +325,7 @@ test('Engine completes remote search/read/citation and exports recoverable recei
               ]
             }
           };
-        assert.equal(request.maxOutputTokens, 128);
+        assert.equal(request.maxOutputTokens, 512);
         assert.ok(
           request.messages.some(
             (message) =>
