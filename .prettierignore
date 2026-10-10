@@ -1,4 +1,6 @@
 archive/
+# Immutable generated experiment receipts; maintained scripts/tests remain checked.
+.qa/
 artifacts/
 coverage/
 dist/

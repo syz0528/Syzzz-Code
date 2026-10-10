@@ -53,6 +53,27 @@ function send(res, events, end = true) {
   if (end) res.end();
 }
 
+for (const streaming of [false, true])
+  test(`Anthropic forwards explicit tool closure (${streaming ? 'stream' : 'chat'}) and leaves defaults unchanged`, async (t) => {
+    const { provider, requests } = await fixture(t, (res) => {
+      if (streaming) send(res, anthropicEvents(message()));
+      else {
+        res.writeHead(200, { 'content-type': 'application/json' });
+        res.end(JSON.stringify(message()));
+      }
+    });
+    for (const toolChoice of ['none', undefined]) {
+      const request = input(toolChoice ? { toolChoice } : {});
+      if (streaming) {
+        const run = runProviderRequest(provider, request);
+        while (!(await run.next()).done) {}
+      } else await provider.chat(request);
+    }
+    assert.deepEqual(requests[0].body.tool_choice, { type: 'none' });
+    assert.equal(requests[0].body.tools, undefined);
+    assert.equal(requests[1].body.tool_choice, undefined);
+  });
+
 test('Anthropic normalizes root, versioned and full Messages URLs without duplicating v1', async () => {
   const requests = [];
   const server = createServer(async (request, response) => {

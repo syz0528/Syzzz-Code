@@ -25,6 +25,8 @@ import {
   type UiMode
 } from './config.js';
 import { TaskCompositionRuntime } from './composition/runtime.js';
+import { formatSkillDiscovery } from './composition/skill-discovery.js';
+import { resolveUiLanguage } from './ui-language.js';
 import { SkillInstaller, type SkillInstallPreview } from './composition/skill-installer.js';
 import {
   createSkill,
@@ -963,7 +965,7 @@ program
   .description('Discover, inspect, validate, or manage Agent Skills')
   .argument(
     '<action>',
-    'Action: list, inspect, doctor, create, validate, test, install, update, rollback, remove'
+    'Action: list, discover, inspect, doctor, create, validate, test, install, update, rollback, remove'
   )
   .argument('[target]', 'Skill name or public HTTPS Git URL')
   .option('--ref <ref>', 'Git ref to resolve and pin')
@@ -971,6 +973,10 @@ program
   .option('--scope <scope>', 'Installation scope: user or project', 'user')
   .option('--description <text>', 'Description for a newly created Skill')
   .option('--body-file <path>', 'Markdown body for a newly created Skill')
+  .option('--offset <number>', 'Skill discovery page offset', '0')
+  .option('--limit <number>', 'Skill discovery page size (1-8)', '8')
+  .option('--category <name>', 'Local heuristic Skill category')
+  .option('--revision <hash>', 'Reject pagination after Skill metadata changes')
   .option('-y, --yes', 'Skip confirmation')
   .option('--json', 'Emit machine-readable JSON')
   .action(async (action, target, options) => {
@@ -988,6 +994,24 @@ program
       const runtime = await TaskCompositionRuntime.create({
         workspaceRoot: process.cwd()
       });
+      if (normalizedAction === 'discover') {
+        const page = await runtime.discoverSkills(
+          {
+            ...(target ? { query: String(target) } : {}),
+            offset: Number(options.offset),
+            limit: Number(options.limit),
+            ...(options.category ? { category: String(options.category) } : {}),
+            ...(options.revision ? { revision: String(options.revision) } : {})
+          },
+          abortController.signal
+        );
+        console.log(
+          options.json
+            ? JSON.stringify(page)
+            : formatSkillDiscovery(page, resolveUiLanguage(loadConfig().ui.language) === 'zh-CN')
+        );
+        return;
+      }
       if (normalizedAction === 'list') {
         const skills = runtime.listSkills();
         if (options.json) {
@@ -1166,7 +1190,7 @@ program
         return;
       }
       throw new Error(
-        'skills action must be list, inspect, doctor, create, validate, test, install, update, rollback, or remove'
+        'skills action must be list, discover, inspect, doctor, create, validate, test, install, update, rollback, or remove'
       );
     } catch (error) {
       const reason = error instanceof Error ? error.message : String(error);

@@ -153,7 +153,14 @@ export function toAuditRecord(event: AgentEvent, workspaceId: string): AuditEnve
         model: event.model,
         attempt: event.attempt,
         attemptId: event.attemptId,
-        ...(event.purpose ? { purpose: event.purpose } : {})
+        ...(event.purpose ? { purpose: event.purpose } : {}),
+        ...(event.budget
+          ? {
+              estimatedInputTokens: event.budget.estimatedInputTokens,
+              requestedOutputTokens: event.budget.reservedOutputTokens,
+              contextWindowTokens: event.budget.contextWindowTokens
+            }
+          : {})
       };
     case 'provider_request_failed':
       return {
@@ -209,6 +216,16 @@ export function toAuditRecord(event: AgentEvent, workspaceId: string): AuditEnve
         contextWindowTokens: event.contextWindowTokens,
         triggerTokens: event.triggerTokens,
         source: event.source
+      };
+    case 'delivery_updated':
+      return {
+        ...base,
+        stage: event.stage,
+        outcome: event.snapshot.outcome,
+        satisfied: event.snapshot.satisfied,
+        protection: event.snapshot.protection,
+        unresolvedOperations: event.snapshot.unresolvedOperations?.length ?? 0,
+        states: event.snapshot.items.map(({ kind, state }) => ({ kind, state }))
       };
     case 'context_resolved':
       return {

@@ -100,7 +100,11 @@ test('RagSearch schemas accept examples and reject blank, excessive and unknown 
   assert.match(schema.properties.path.description, /Never use absolute host paths/);
   assert.match(schema.properties.limit.description, /Fewer matches may be returned/);
   assert.ok(search.description.length < 407);
-  assert.ok(JSON.stringify(schema).length < 1068);
+  const { additionalProperties, ...originalFields } = schema;
+  assert.equal(additionalProperties, false);
+  assert.ok(JSON.stringify(originalFields).length < 1068);
+  const strictFieldBytes = JSON.stringify({ additionalProperties: false }).length - 1;
+  assert.ok(JSON.stringify(schema).length < 1068 + strictFieldBytes);
 });
 
 test('empty searches and infrastructure errors receive different guidance, not answer contracts', async () => {

@@ -53,6 +53,9 @@ import {
 } from './ui-language.js';
 import { inspectTerminalKeyboard, installTerminalShiftEnter } from './tui/terminal-keyboard.js';
 import { manageRag } from './rag/management.js';
+import { formatTaskDelivery } from './task-delivery.js';
+import { formatSkillDiscovery } from './composition/skill-discovery.js';
+import { createProjectMemoryCommand } from './project-memory-command.js';
 
 const DOUBLE_INTERRUPT_WINDOW_MS = 2_000;
 const COMMAND_PRIORITIES = {
@@ -60,11 +63,13 @@ const COMMAND_PRIORITIES = {
   plan: 20,
   code: 30,
   status: 40,
+  task: 45,
   permissions: 50,
   model: 60,
   provider: 70,
   stream: 80,
   context: 81,
+  memory: 82,
   rag: 82,
   skills: 83,
   language: 84,
@@ -999,6 +1004,14 @@ export function createCommandRegistry(): CommandRegistry<InteractiveCommandConte
       if (result.warning) {
         console.log(chalk.yellow(`${result.warning}\n`));
       }
+      if (result.delivery)
+        commandContext.interaction.notice({
+          tone: result.delivery.satisfied ? 'success' : 'warning',
+          text: formatTaskDelivery(
+            result.delivery,
+            resolveUiLanguage(commandContext.uiLanguage) === 'zh-CN' ? 'zh' : 'en'
+          )
+        });
       return 'continue';
     }
   });
@@ -1299,6 +1312,102 @@ export function createCommandRegistry(): CommandRegistry<InteractiveCommandConte
   });
 
   register({
+    name: 'task',
+    category: 'runtime',
+    priority: COMMAND_PRIORITIES.task,
+    description:
+      'Track an explicit workspace delivery contract and inspect real execution receipts.',
+    argumentHint: '[start <contract.json>|status|resolve <operation-id>|clear]',
+    async execute(argument, commandContext, signal): Promise<CommandExecutionResult> {
+      const value = argument?.trim() ?? 'status';
+      const language = resolveUiLanguage(commandContext.uiLanguage) === 'zh-CN' ? 'zh' : 'en';
+      if (value === 'clear') {
+        if (
+          commandContext.engine.getStatus().delivery?.unresolvedOperations?.length &&
+          !(await commandContext.interaction.confirm(
+            {
+              title: localText(
+                commandContext,
+                'Clear unresolved delivery record?',
+                '清除含未决操作的交付记录？'
+              ),
+              message: localText(
+                commandContext,
+                'This removes recovery guards, not side effects. Inspect affected files or services first.',
+                '这会移除恢复保护，但不会撤销副作用。请先检查受影响的文件或服务。'
+              ),
+              confirmToken: 'y'
+            },
+            signal
+          ))
+        )
+          return 'continue';
+        commandContext.engine.clearTaskDelivery();
+        await commandContext.session?.stateChanged();
+        commandContext.interaction.notice({
+          tone: 'info',
+          text: localText(
+            commandContext,
+            'Delivery record cleared; workspace files were not changed.',
+            '交付记录已清除；工作区文件未改动。'
+          )
+        });
+        return 'continue';
+      }
+      if (value.startsWith('resolve ')) {
+        const id = value.slice(8).trim();
+        if (
+          !commandContext.engine
+            .getStatus()
+            .delivery?.unresolvedOperations?.some(({ toolCallId }) => toolCallId === id)
+        )
+          throw new Error(
+            localText(
+              commandContext,
+              'No unresolved operation matches that ID.',
+              '没有匹配该 ID 的未决操作。'
+            )
+          );
+        const confirmed = await commandContext.interaction.confirm(
+          {
+            title: localText(commandContext, 'Confirm effects inspected?', '确认已检查操作影响？'),
+            message: localText(
+              commandContext,
+              'Acknowledgement allows a later separately approved attempt; it does not certify success or run anything.',
+              '确认只允许后续另行审批尝试，不认证成功，也不执行任何操作。'
+            ),
+            confirmToken: 'y'
+          },
+          signal
+        );
+        if (confirmed)
+          commandContext.interaction.notice({
+            tone: 'warning',
+            text: formatTaskDelivery(await commandContext.engine.resolveTaskOperation(id), language)
+          });
+        return 'continue';
+      }
+      const snapshot = value.startsWith('start ')
+        ? await commandContext.engine.startTaskDelivery(value.slice(6).trim())
+        : value === 'status'
+          ? await commandContext.engine.inspectTaskDelivery()
+          : undefined;
+      if (snapshot) await commandContext.session?.stateChanged();
+      commandContext.interaction.notice({
+        tone: 'info',
+        text: snapshot
+          ? formatTaskDelivery(snapshot, language)
+          : localText(
+              commandContext,
+              'No active delivery record. Use /task start <contract.json> | status | resolve <operation-id> | clear. Session saves include this bounded record.',
+              '暂无交付记录。用法：/task start <contract.json> | status | resolve <operation-id> | clear。会话保存包含有界交付记录。'
+            )
+      });
+      return 'continue';
+    }
+  });
+
+  register({
     name: 'context',
     category: 'runtime',
     priority: COMMAND_PRIORITIES.context,
@@ -1375,6 +1484,49 @@ export function createCommandRegistry(): CommandRegistry<InteractiveCommandConte
           `${engineStatus.context.contextWindowTokens} tokens`
       );
       console.log(`  Fallback: ${formatTokenWindow(commandContext.contextWindowTokens)}`);
+      const request = engineStatus.context.lastRequest;
+      if (request?.breakdown) {
+        const parts = request.segments ?? request.breakdown;
+        console.log(
+          localText(
+            commandContext,
+            '  Last request breakdown (estimated tokens):',
+            '  上次请求分项（估算 tokens）：'
+          )
+        );
+        const labels: Record<string, string> = {
+          systemRules: '系统规则',
+          dynamicRules: '动态规则',
+          taskState: '任务状态',
+          tools: '工具定义',
+          agents: 'AGENTS',
+          skillsCatalog: 'Skills 目录',
+          skillBodies: 'Skill 工具结果',
+          evidence: '本轮文件/RAG 工具证据',
+          history: '历史/压缩摘要',
+          turn: '本轮其他消息',
+          overhead: '协议余量',
+          system: '系统提示',
+          messages: '消息'
+        };
+        for (const [name, tokens] of Object.entries(parts)) {
+          console.log(`    ${localText(commandContext, name, labels[name] ?? name)}: ${tokens}`);
+        }
+        console.log(
+          localText(
+            commandContext,
+            `  Requested output maximum: ${request.reservedOutputTokens} tokens`,
+            `  请求输出上限：${request.reservedOutputTokens} tokens`
+          )
+        );
+        console.log(
+          localText(
+            commandContext,
+            '  Input estimates are not billed usage or a confirmed server capacity; cache cost is unknown.',
+            '  输入为估算，不是账单用量或已确认的服务端容量；缓存费用未知。'
+          )
+        );
+      }
       if (runtime) {
         const status = runtime.getStatus();
         console.log(`  AGENTS.md: ${status.instructions.loaded} loaded`);
@@ -1567,18 +1719,46 @@ export function createCommandRegistry(): CommandRegistry<InteractiveCommandConte
     }
   });
 
+  register(createProjectMemoryCommand(COMMAND_PRIORITIES.memory));
+
   register({
     name: 'skills',
     category: 'extensions',
     priority: COMMAND_PRIORITIES.skills,
     description: 'Discover or safely manage Agent Skills.',
     argumentHint:
-      '[list|inspect|reload|doctor|create|validate|test|enable|disable|install|update|rollback|remove] [target]',
+      '[list|discover|browse|catalog|inspect|reload|doctor|create|validate|test|enable|disable|install|update|rollback|remove] [target]',
     isEnabled: (commandContext) => Boolean(commandContext.engine.getCompositionRuntime?.()),
     choices: (commandContext) => {
       const runtime = commandContext.engine.getCompositionRuntime?.();
       const skills = runtime?.listSkills().filter((skill) => !skill.shadowed) ?? [];
       return [
+        {
+          value: 'discover',
+          label: localText(commandContext, 'Search metadata', '查询元数据'),
+          description: localText(
+            commandContext,
+            'Local keyword discovery, not activation',
+            '本地关键词发现，不自动加载'
+          )
+        },
+        {
+          value: 'browse 0',
+          label: localText(commandContext, 'Browse pages', '分页浏览'),
+          description: localText(
+            commandContext,
+            'Browse 8 Skill metadata entries at a time',
+            '每页浏览 8 个 Skill 元数据'
+          )
+        },
+        ...(['auto', 'full', 'progressive'] as const).map((mode) => ({
+          value: `catalog ${mode}`,
+          description: localText(
+            commandContext,
+            `Catalog mode: ${mode}`,
+            `目录模式：${mode === 'auto' ? '自动' : mode === 'full' ? '有界完整元数据' : '渐进发现'}`
+          )
+        })),
         {
           value: 'list',
           label: localText(commandContext, 'List', '列出'),
@@ -1627,6 +1807,44 @@ export function createCommandRegistry(): CommandRegistry<InteractiveCommandConte
       const [rawAction = 'list', ...rest] = (argument?.trim() || 'list').split(/\s+/);
       const action = rawAction.toLowerCase();
       const name = rest[0]?.toLowerCase() ?? '';
+      if (action === 'discover' || action === 'browse') {
+        if (!runtime.discoverSkills) throw new Error('Skill discovery is unavailable');
+        const page = await runtime.discoverSkills(
+          action === 'discover'
+            ? { query: rest.join(' ') }
+            : {
+                offset: Number(rest[0] ?? 0),
+                ...(rest[1] ? { category: rest[1] } : {}),
+                ...(rest[2] ? { revision: rest[2] } : {})
+              },
+          signal
+        );
+        commandContext.interaction.notice({
+          tone: 'info',
+          text: formatSkillDiscovery(page, resolveUiLanguage(commandContext.uiLanguage) === 'zh-CN')
+        });
+        return 'continue';
+      }
+      if (action === 'catalog') {
+        if (!['auto', 'full', 'progressive'].includes(name) || !runtime.setSkillCatalogMode)
+          throw new Error(
+            localText(
+              commandContext,
+              'Use /skills catalog auto|full|progressive',
+              '用法：/skills catalog auto|full|progressive'
+            )
+          );
+        runtime.setSkillCatalogMode(name as 'auto' | 'full' | 'progressive');
+        commandContext.interaction.notice({
+          tone: 'info',
+          text: localText(
+            commandContext,
+            `Skill catalog mode saved: ${name}`,
+            `Skill 目录模式已保存：${name}`
+          )
+        });
+        return 'continue';
+      }
       if (action === 'reload') {
         await runtime.reload();
         console.log(chalk.green('\nSkills reloaded.\n'));
@@ -1847,6 +2065,15 @@ export function createCommandRegistry(): CommandRegistry<InteractiveCommandConte
         return 'continue';
       }
       const skills = runtime.listSkills();
+      const state = runtime.getStatus().skills;
+      commandContext.interaction.notice({
+        tone: 'info',
+        text: localText(
+          commandContext,
+          `Catalog: ${state.catalogMode ?? 'full'}; last discovery: ${state.lastDiscovery?.names.join(', ') || 'none'}; active this turn: ${state.activeNames?.join(', ') || 'none'}. Discovery is not activation or execution.`,
+          `目录：${state.catalogMode ?? 'full'}；最近发现：${state.lastDiscovery?.names.join(', ') || '无'}；本轮已加载：${state.activeNames?.join(', ') || '无'}。候选不代表已加载或执行。`
+        )
+      });
       console.log(chalk.cyan('\nAgent Skills\n'));
       if (skills.length === 0) {
         console.log(chalk.gray('  No Skills discovered.\n'));
@@ -2971,6 +3198,17 @@ export async function runInteractiveSession(
   });
   terminal.replaceHistory(history.list());
   const interaction = new InlineInteractionPort(terminal, history);
+  if (typeof engine.getStatus === 'function' && engine.getStatus().delivery?.restored) {
+    const delivery = await engine.inspectTaskDelivery();
+    if (delivery)
+      interaction.notice({
+        tone: delivery.satisfied ? 'success' : 'warning',
+        text: formatTaskDelivery(
+          delivery,
+          resolveUiLanguage(options.uiLanguage ?? 'auto') === 'zh-CN' ? 'zh' : 'en'
+        )
+      });
+  }
   const commandRuntime = createInteractiveCommandRuntime(
     engine,
     options,
@@ -3070,6 +3308,7 @@ export async function runInteractiveSession(
       const spinner = ora({ text: 'Thinking...', discardStdin: false }).start();
       const renderer = new HumanEventRenderer({
         streamOutput: commandContext.streamOutput,
+        language: resolveUiLanguage(commandContext.uiLanguage) === 'zh-CN' ? 'zh' : 'en',
         spinner
       });
       const turnAbortController = new AbortController();

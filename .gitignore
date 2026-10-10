@@ -4,6 +4,7 @@ coverage/
 artifacts/
 eval-results/
 .codex-temp/
+.qa/
 .syzzz-gui/
 output/
 *.tgz

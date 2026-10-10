@@ -71,6 +71,7 @@ export interface SkillsConfig {
   enabled: boolean;
   allowImplicit: boolean;
   disabled: string[];
+  catalogMode?: 'auto' | 'full' | 'progressive';
 }
 
 export type RagAutoRetrieve = 'off' | 'ask-plan' | 'all';
@@ -376,10 +377,20 @@ function validateSkillsConfig(value: unknown): SkillsConfig {
   if (new Set(disabled).size !== disabled.length) {
     throw new Error('skills.disabled must not contain duplicates');
   }
+  if (
+    value.catalogMode !== undefined &&
+    (typeof value.catalogMode !== 'string' ||
+      !['auto', 'full', 'progressive'].includes(value.catalogMode))
+  ) {
+    throw new Error('skills.catalogMode must be auto, full, or progressive');
+  }
   return {
     enabled: value.enabled,
     allowImplicit: value.allowImplicit,
-    disabled
+    disabled,
+    ...(value.catalogMode === undefined
+      ? {}
+      : { catalogMode: value.catalogMode as SkillsConfig['catalogMode'] })
   };
 }
 

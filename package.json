@@ -48,6 +48,9 @@
     "test:providers": "npm run build && node --test tests/provider-contracts.test.mjs tests/provider-headers.test.mjs tests/openai-stream.test.mjs tests/openai-responses.test.mjs tests/anthropic-provider.test.mjs tests/provider-runner.test.mjs tests/cli-provider-routing.test.mjs",
     "test:tui": "npm run build && node --test tests/phase8-runtime.test.mjs tests/tui.test.mjs",
     "test:context": "npm run build && node --test tests/context-manager.test.mjs tests/context-runtime.test.mjs",
+    "test:delivery": "npm run build && node --test tests/task-delivery.test.mjs tests/task-recovery.test.mjs",
+    "test:skills-discovery": "npm run build && node --test tests/skill-discovery.test.mjs",
+    "test:memory": "npm run build && node --test tests/project-memory.test.mjs",
     "test:stability": "npm run build && node scripts/stability-run.mjs",
     "eval:offline": "npm run build && node scripts/eval-runner.mjs --suite offline",
     "eval:live": "npm run build && node scripts/eval-runner.mjs --suite live",
@@ -69,7 +72,7 @@
   "dependencies": {
     "@anthropic-ai/sdk": "0.126.0",
     "@lancedb/lancedb": "0.33.0",
-    "@modelcontextprotocol/client": "2.0.0",
+    "@modelcontextprotocol/client": "2.3.1",
     "@vscode/ripgrep": "^1.18.0",
     "chalk": "^5.3.0",
     "commander": "^12.0.0",
@@ -89,7 +92,7 @@
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",
-    "@modelcontextprotocol/server": "2.0.0",
+    "@modelcontextprotocol/server": "2.3.1",
     "@types/node": "^22.20.1",
     "@types/picomatch": "^4.0.3",
     "@types/react": "^19.2.14",
@@ -102,6 +105,6 @@
     "typescript-eslint": "^8.65.0"
   },
   "overrides": {
-    "sharp": "0.35.3"
+    "sharp": "0.35.5"
   }
 }

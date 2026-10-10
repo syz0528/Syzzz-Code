@@ -60,6 +60,8 @@ export interface ContextMeasurement {
   targetTokens: number;
   fixedTokens: number;
   messageTokens: number;
+  reservedOutputTokens: number;
+  breakdown: { system: number; tools: number; messages: number; overhead: number };
   shouldCompact: boolean;
 }
 
@@ -331,6 +333,13 @@ export class ContextManager {
     return positiveInteger(providerInfo.contextWindowTokens, this.options.defaultWindowTokens);
   }
 
+  outputBudget(providerInfo: ProviderInfo): number {
+    return Math.min(
+      this.options.reservedOutputTokens,
+      Math.max(1, Math.floor(this.contextWindowTokens(providerInfo) * MAX_RESERVED_OUTPUT_RATIO))
+    );
+  }
+
   measure(
     messages: readonly ConversationMessage[],
     systemPrompt: string,
@@ -340,13 +349,15 @@ export class ContextManager {
   ): ContextMeasurement {
     const contextWindowTokens = this.contextWindowTokens(providerInfo);
     const messageTokens = estimateMessagesTokens(messages);
-    const fixedTokens =
-      estimateUtf8Tokens(systemPrompt) + estimateUtf8Tokens(JSON.stringify(tools)) + 64;
+    const breakdown = {
+      system: estimateUtf8Tokens(systemPrompt),
+      tools: estimateUtf8Tokens(JSON.stringify(tools)),
+      messages: messageTokens,
+      overhead: 64
+    };
+    const fixedTokens = breakdown.system + breakdown.tools + breakdown.overhead;
     const estimatedInputTokens = fixedTokens + messageTokens;
-    const defaultReserve = Math.min(
-      this.options.reservedOutputTokens,
-      Math.max(1, Math.floor(contextWindowTokens * MAX_RESERVED_OUTPUT_RATIO))
-    );
+    const defaultReserve = this.outputBudget(providerInfo);
     const reservedOutputTokens = positiveInteger(maximumOutputTokens, defaultReserve);
     const triggerTokens = Math.max(
       1,
@@ -363,6 +374,8 @@ export class ContextManager {
       targetTokens,
       fixedTokens,
       messageTokens,
+      reservedOutputTokens,
+      breakdown,
       shouldCompact:
         this.options.autoCompact && !this.circuitOpen && estimatedInputTokens >= triggerTokens
     };

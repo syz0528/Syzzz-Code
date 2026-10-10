@@ -33,6 +33,7 @@ import type {
   TextInputRequest
 } from './types.js';
 import { resolveUiLanguage, type ResolvedUiLanguage } from '../ui-language.js';
+import { formatTaskDelivery } from '../task-delivery.js';
 
 const MAX_VIEW_ENTRIES = 2_000;
 const MAX_VIEW_BYTES = 4 * 1024 * 1024;
@@ -208,6 +209,19 @@ export class InteractionController implements InteractionPort {
     for (const warning of warnings) {
       controller.notice({ tone: 'warning', text: warning });
     }
+    if (options.engine.getStatus().delivery?.restored) {
+      const delivery = await options.engine.inspectTaskDelivery();
+      if (delivery)
+        controller.notice({
+          tone: delivery.satisfied ? 'success' : 'warning',
+          text: formatTaskDelivery(
+            delivery,
+            resolveUiLanguage(options.sessionOptions?.uiLanguage ?? 'auto') === 'zh-CN'
+              ? 'zh'
+              : 'en'
+          )
+        });
+    }
     return controller;
   }
 
@@ -294,6 +308,11 @@ export class InteractionController implements InteractionPort {
         ? `已继续 ${result.title} [${result.sessionId.slice(0, 8)}]。`
         : `Resumed ${result.title} [${result.sessionId.slice(0, 8)}].`
     });
+    if (result.delivery)
+      this.notice({
+        tone: result.delivery.satisfied ? 'success' : 'warning',
+        text: formatTaskDelivery(result.delivery, chinese ? 'zh' : 'en')
+      });
   }
 
   private emit(): void {
@@ -467,6 +486,15 @@ export class InteractionController implements InteractionPort {
       this.flushText();
     }
     switch (event.type) {
+      case 'delivery_updated':
+        if (event.stage === 'final') {
+          this.notice({
+            tone: event.snapshot.satisfied ? 'success' : 'warning',
+            text: formatTaskDelivery(event.snapshot, chinese ? 'zh' : 'en')
+          });
+          return;
+        }
+        break;
       case 'phase_changed':
         this.phase = event.phase;
         if (this.activity && typeof this.activity !== 'string' && event.phase !== 'completed') {

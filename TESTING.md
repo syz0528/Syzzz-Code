@@ -36,6 +36,24 @@ Windows PowerShell 5.1 手工创建包含中文的 `AGENTS.md` 或 `SKILL.md` �
 
 ## 自动化层级
 
+### 交付记录开发切片
+
+`npm run test:memory` 验证 M4 显式项目记忆的确认、来源失效、并发保存、损坏与链接边界、取消、真实交互历史隔离、模式安全和无额外 Provider 调用。测试使用临时目录和固定响应，不声明真实模型记忆收益；完整 `check` 自动包含这些回归。用法见 [可审阅项目记忆](docs/project-memory.md)。
+
+`npm run test:delivery` 使用固定 Provider 响应序列驱动真实 QueryEngine、Read/Write/Shell、临时工作区与独立 Node 断言脚本。它验证回执链路，不代表自然语言模型在真实任务中的交付成功率。覆盖文件版本过期、保护文件、审批与模式拒绝、取消、输出上限、截断、成功标记、TUI/inline/NDJSON 一致性和审计隐私。
+
+`node --test` 的测试进程会向子进程继承测试环境；其中再次运行 `node --test` 可能被跳过而返回 0。专项使用 `node importer.test.mjs` 实际执行断言，并核对仅在断言通过后输出的成功标记，不能把跳过测试算作通过。手工验证示例见 [显式任务交付记录](docs/task-delivery.md)。
+
+M2 的 `tests/task-recovery.test.mjs` 还覆盖既有会话的原子保存、旧字段兼容、恢复核对、未决确认、保存失败关闭执行与恢复后的重新审批。强制退出子进程用例先真实写入一行副作用，再终止进程，读取磁盘检查点并恢复；它验证同一操作不重复执行，不是远程事务或任意语义等价命令的 exactly-once 保证。取消、审批答案和检查确认不进入输入历史。
+
+### Skills 渐进发现开发切片
+
+`npm run test:skills-discovery` 验证百级元数据目录、稳定分页、目录变更失效、中英文别名、资源名称、disabled/allowlist/explicit-only、加载前策略复核，以及真实 QueryEngine 的发现与激活事件。Slash 和 CLI 发现不调用 Provider、不写模型历史；Hook 拒绝、取消、越界根和有界 JSON 不得绕过。固定响应仅证明协议与安全链路，真实模型对照需另行记录目录省略、激活回执、交付结果、用量与耗时，不能把候选命中当成任务成功。
+
+旧 S2 回归使用随仓库提交的 `tests/fixtures/skills-s2-catalog.json`，仅保留冻结目录的 125 个名称、描述和原材料 hash，不依赖相邻私有研究目录或旧模型回答。测试内的超时模拟保持有界计时器，避免 Node 22 将仅有未引用超时信号的进程提前结束；这不改变生产请求超时。
+
+### 现有验证层级
+
 1. 单元测试：配置、路径、权限、上下文、事件和工具。
 2. Runtime 集成：流式、取消、重试、会话、扩展和终端渲染。
 3. Provider 契约：真实 loopback HTTP/SSE，不依赖外网或正式 Key。
@@ -47,6 +65,8 @@ Windows PowerShell 5.1 手工创建包含中文的 `AGENTS.md` 或 `SKILL.md` �
 ## TUI 验证
 
 `npm run test:tui` 覆盖 InteractionController、语义 ConversationBlock、`AskUser`、UI 自动路由、grapheme Composer、工作区历史、source-backed 流式 Presenter、Markdown、滚动锚点、候选刷新、Ink 布局、审批和 alternate screen/raw mode 恢复。真实屏幕断言通过 `@xterm/headless` 回放 ANSI，不依赖原生 PTY。
+
+Ink testing-library 的普通布局测试显式固定 100 列、24 行，并在重新渲染时保持同一包装组件；不能依赖运行测试的 shell 尺寸。独立 TTY、极小终端和 resize 用例仍使用各自的实际尺寸，不因普通测试固定尺寸而省略。
 
 人工 dogfood 使用 Windows Terminal，至少验证：
 

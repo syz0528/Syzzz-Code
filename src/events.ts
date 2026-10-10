@@ -43,6 +43,14 @@ export interface ProviderRequestStartedEvent extends AgentEventEnvelope {
   attempt: number;
   attemptId: string;
   purpose?: ProviderPurpose;
+  budget?: Pick<
+    import('./context-manager.js').ContextMeasurement,
+    | 'estimatedInputTokens'
+    | 'triggerTokens'
+    | 'contextWindowTokens'
+    | 'reservedOutputTokens'
+    | 'breakdown'
+  > & { segments?: Record<string, number> };
 }
 
 export interface ProviderRequestFailedEvent extends AgentEventEnvelope {
@@ -384,6 +392,12 @@ export interface AgentErrorDetails {
   requestId?: string;
 }
 
+export interface DeliveryUpdatedEvent extends AgentEventEnvelope {
+  type: 'delivery_updated';
+  stage: 'active' | 'final';
+  snapshot: import('./task-delivery.js').TaskDeliverySnapshot;
+}
+
 export interface TurnCompletedEvent extends AgentEventEnvelope {
   type: 'turn_completed';
   durationMs: number;
@@ -445,6 +459,7 @@ export type AgentEvent =
   | SubagentProgressEvent
   | SubagentCompletedEvent
   | ToolCompletedEvent
+  | DeliveryUpdatedEvent
   | TurnCompletedEvent
   | TurnFailedEvent
   | TurnCancelledEvent;

@@ -812,8 +812,8 @@ test('Engine exposes read-only RAG tools in ask mode and validates final citatio
     assert.ok(seenTools.every((tools) => tools.includes('RagSearch') && tools.includes('RagRead')));
     assert.ok(seenTools.every((tools) => !tools.includes('RagVerify')));
     assert.deepEqual(seenGroundedAnswerBounds, [
-      { maxOutputTokens: undefined, stopSequences: undefined },
-      { maxOutputTokens: undefined, stopSequences: undefined },
+      { maxOutputTokens: 8192, stopSequences: undefined },
+      { maxOutputTokens: 8192, stopSequences: undefined },
       { maxOutputTokens: 512, stopSequences: undefined }
     ]);
     assert.ok(events.some((event) => event.type === 'rag_retrieval_completed'));

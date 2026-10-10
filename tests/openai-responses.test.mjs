@@ -41,6 +41,28 @@ async function collect(generator) {
   }
 }
 
+for (const streaming of [false, true])
+  test(`Responses forwards explicit tool closure (${streaming ? 'stream' : 'chat'}) and preserves ordinary requests`, async () => {
+    const fixture = await startProviderFixture('openai-responses');
+    try {
+      const provider = new OpenAIResponsesProvider(
+        'fixture-key',
+        fixture.openAIBaseURL,
+        'responses-test'
+      );
+      for (const toolChoice of ['none', undefined]) {
+        const input = { ...request('hello'), ...(toolChoice ? { toolChoice } : {}) };
+        if (streaming) await collect(runProviderRequest(provider, input));
+        else await provider.chat(input);
+      }
+      assert.equal(fixture.requests[0].body.tool_choice, 'none');
+      assert.equal(fixture.requests[0].body.tools, undefined);
+      assert.equal(fixture.requests[1].body.tool_choice, undefined);
+    } finally {
+      await fixture.close();
+    }
+  });
+
 test('OpenAI Responses streams semantic text, usage, model and request metadata', async () => {
   const fixture = await startProviderFixture('openai-responses');
   try {

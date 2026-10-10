@@ -51,7 +51,8 @@ export async function runSkillActivationEval(options: {
         allowImplicit: true,
         disabled: []
       },
-      skillAllowlist: [options.descriptor.name]
+      skillAllowlist: [options.descriptor.name],
+      projectMemory: false
     });
     const activateSkill = runtime.getTools().find((tool) => tool.name === 'ActivateSkill');
     if (!activateSkill) {

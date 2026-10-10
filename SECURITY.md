@@ -129,6 +129,8 @@ Subagent 使用当前 Provider 和 model 的隔离 fork，因此委派任务和�
 
 ## 本地数据
 
+M4 开发切片的项目记忆保存在 `~/.syzzz-code/memory/<canonicalWorkspaceSha256>.json`，本地明文保存，只通过 `/memory` 的预览确认入口管理，不自动保存聊天。普通文件工具拒绝直接访问该目录；已授权的 Shell、扩展或同用户外部进程仍可能修改文件，它不是 OS sandbox。文件来源变化后停止注入，损坏或不安全存储不静默覆盖。记忆正文与确认答案不进入审计或 Composer 历史，但有效记忆会发送给当前 Provider；不要保存秘密。无来源条目只是用户确认的约定，不是已核验事实。完整边界见 [项目记忆](docs/project-memory.md)。
+
 会话快照未加密，可能包含用户提示、代码、工具结果、MCP 返回和 Subagent 报告。审计仅保存 allowlist 元数据，不保存 prompt、URL、认证头、工具输入输出、Hook payload 或 Subagent transcript。
 
 工作区输入历史保存在 `~/.syzzz-code/history/<workspaceHash>.json`，只记录用户从 Composer 主动提交的消息和 Slash 命令。它不记录审批答案、确认 token、`AskUser` 回答、隐藏输入或未提交草稿，但仍可能包含敏感提示，且当前不加密；可使用 `/history off` 停止后续记录，或 `/history clear` 清理当前工作区。

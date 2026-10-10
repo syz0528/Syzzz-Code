@@ -1,5 +1,6 @@
 import chalk from 'chalk';
 import type { AgentEvent, TurnResult } from './events.js';
+import { formatTaskDelivery } from './task-delivery.js';
 
 export interface SpinnerController {
   readonly isSpinning: boolean;
@@ -23,6 +24,7 @@ export interface HumanEventRendererOptions {
   streamOutput: boolean;
   spinner?: SpinnerController;
   output?: RendererOutput;
+  language?: 'zh' | 'en';
 }
 
 const PERSISTENT_SUCCESS_TOOLS = new Set(['Write', 'Edit', 'Patch', 'Shell']);
@@ -119,6 +121,7 @@ export class HumanEventRenderer {
   private readonly streamOutput: boolean;
   private readonly spinner?: SpinnerController;
   private readonly output: RendererOutput;
+  private readonly language: 'zh' | 'en';
   private assistantStarted = false;
   private openTextLine = false;
   private readonly stats: HumanTurnStats = {
@@ -132,10 +135,17 @@ export class HumanEventRenderer {
     this.streamOutput = options.streamOutput;
     this.spinner = options.spinner;
     this.output = options.output ?? process.stdout;
+    this.language = options.language ?? 'en';
   }
 
   handle(event: AgentEvent): void {
     switch (event.type) {
+      case 'delivery_updated':
+        if (event.stage === 'final') {
+          this.stopForStatus();
+          this.writeLine(formatTaskDelivery(event.snapshot, this.language));
+        }
+        break;
       case 'phase_changed':
         if (event.phase === 'composition') {
           this.startSpinner('Resolving context...');

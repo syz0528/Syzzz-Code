@@ -2,6 +2,8 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { OpenAICompatibleProvider } from '../dist/providers/openai-compatible.js';
 import { runProviderRequest } from '../dist/providers/runner.js';
+import { QueryEngine } from '../dist/engine.js';
+import { z } from 'zod';
 
 function streamFrom(chunks) {
   return {
@@ -39,6 +41,38 @@ const basicRequest = {
   ],
   systemPrompt: 'system'
 };
+
+for (const streaming of [false, true])
+  test(`OpenAI-compatible forwards explicit tool closure (${streaming ? 'stream' : 'chat'}) only when requested`, async () => {
+    const bodies = [];
+    const provider = new OpenAICompatibleProvider('key', 'http://localhost', 'test-model');
+    provider.client = {
+      chat: {
+        completions: {
+          create: async (body) => {
+            bodies.push(body);
+            return streaming
+              ? streamFrom([
+                  { choices: [{ delta: { content: 'final report' }, finish_reason: 'stop' }] }
+                ])
+              : { choices: [{ message: { content: 'final report' }, finish_reason: 'stop' }] };
+          }
+        }
+      }
+    };
+    const closed = { ...basicRequest, tools: [], toolChoice: 'none' };
+    if (streaming) {
+      await collect(runProviderRequest(provider, closed));
+      await collect(runProviderRequest(provider, basicRequest));
+    } else {
+      await provider.chat(closed);
+      await provider.chat(basicRequest);
+    }
+    assert.equal(bodies[0].tool_choice, 'none');
+    assert.equal(bodies[0].tools, undefined);
+    assert.equal(bodies[1].tool_choice, undefined);
+    assert.equal(bodies[1].tools.length, 1);
+  });
 
 const lingModel = 'ling-3.0-flash-fin-free';
 function lingProvider(override) {
@@ -657,4 +691,67 @@ test('streaming rejects malformed aggregated tool JSON', async () => {
     ),
     (error) => error?.code === 'malformed_response'
   );
+});
+
+test('mixed valid and malformed tool arguments fail the whole response without execution or retry', async () => {
+  for (const malformed of ['{"value":', '{"value":"PRIVATE_SENTINEL",}', '{bad']) {
+    let requests = 0;
+    let executions = 0;
+    const provider = new OpenAICompatibleProvider(
+      'test-key',
+      'https://example.invalid/v1',
+      'model',
+      'Compatible'
+    );
+    mockCompletions(provider, () => {
+      requests++;
+      return streamFrom([
+        {
+          choices: [
+            {
+              finish_reason: 'tool_calls',
+              delta: {
+                tool_calls: [
+                  {
+                    index: 0,
+                    id: 'valid',
+                    function: { name: 'Inspect', arguments: '{"value":"ok"}' }
+                  },
+                  { index: 1, id: 'invalid', function: { name: 'Inspect', arguments: malformed } }
+                ]
+              }
+            }
+          ]
+        }
+      ]);
+    });
+    const engine = new QueryEngine({
+      provider,
+      audit: false,
+      tools: [
+        {
+          name: 'Inspect',
+          description: 'Inspect fixture',
+          risk: 'read',
+          approval: 'never',
+          modeAccess: 'all-modes',
+          inputSchema: z.object({ value: z.string() }).strict(),
+          async execute() {
+            executions++;
+            return { content: 'Observed' };
+          }
+        }
+      ]
+    });
+    const { response: result, deltas: events } = await collect(engine.runTurn('Inspect fixture'));
+    assert.equal(result.status, 'failed');
+    assert.equal(result.error.code, 'malformed_response');
+    assert.doesNotMatch(JSON.stringify(events), /PRIVATE_SENTINEL|test-key/);
+    assert.equal(
+      events.some(({ type }) => type === 'tool_requested'),
+      false
+    );
+    assert.equal(requests, 1);
+    assert.equal(executions, 0);
+  }
 });

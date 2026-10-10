@@ -12,6 +12,8 @@ import type { RagContextReceipt, RagStatus } from './rag/types.js';
 import {
   applyCompactionPlan,
   ContextManager,
+  estimateMessageTokens,
+  estimateUtf8Tokens,
   formatMessagesForCompactionBounded,
   type ContextManagerOptions,
   type ContextMeasurement
@@ -36,6 +38,11 @@ import { requiresUserApproval } from './permissions/policy.js';
 import { createProvider } from './providers/factory.js';
 import { CORE_RUNTIME_INSTRUCTIONS } from './runtime-instructions.js';
 import { TaskExecutionLedger } from './task-execution.js';
+import {
+  TaskDelivery,
+  type TaskDeliverySnapshot,
+  type TaskDeliveryStateV1
+} from './task-delivery.js';
 import type {
   AIProvider,
   ConversationMessage,
@@ -451,6 +458,7 @@ export interface QueryEngineStateV1 {
   displayMessages?: ConversationDisplayMessage[];
   pendingFileChangeReceipts: FileChangeReceipt[];
   ragContextReceipts?: RagContextReceipt[];
+  taskDelivery?: TaskDeliveryStateV1;
   compactionCount: number;
   totalUsage: ProviderUsage;
   lastReportedModel?: string;
@@ -480,6 +488,7 @@ export interface EngineStatus {
   extensions: ExtensionStatus;
   composition: CompositionStatus;
   rag: RagStatus;
+  delivery?: TaskDeliverySnapshot;
   context: {
     estimatedInputTokens: number;
     contextWindowTokens: number;
@@ -488,8 +497,12 @@ export interface EngineStatus {
     compactionCircuitOpen: boolean;
     lastRequest?: Pick<
       ContextMeasurement,
-      'estimatedInputTokens' | 'triggerTokens' | 'contextWindowTokens'
-    >;
+      | 'estimatedInputTokens'
+      | 'triggerTokens'
+      | 'contextWindowTokens'
+      | 'reservedOutputTokens'
+      | 'breakdown'
+    > & { segments?: Record<string, number> };
   };
 }
 
@@ -524,7 +537,7 @@ export type CompactContextResult =
       reason: string;
     };
 
-export type EngineCheckpointReason = 'file-side-effect';
+export type EngineCheckpointReason = 'file-side-effect' | 'task-state' | 'task-operation-started';
 
 export type EngineCheckpointHandler = (
   reason: EngineCheckpointReason,
@@ -532,6 +545,12 @@ export type EngineCheckpointHandler = (
 ) => void | Promise<void>;
 
 export type EnginePersistenceStatusProvider = () => EnginePersistenceStatus;
+
+/** Opt-in experiment: host-selected skills still use the normal tool policy pipeline. */
+export interface ExperimentalSkillRouting {
+  next(context: { message: string; signal: AbortSignal }): Promise<string | undefined>;
+  resolved(result: { name: string; content: string; isError: boolean }): Promise<void>;
+}
 
 export interface QueryEngineOptions {
   provider?: AIProvider;
@@ -562,6 +581,7 @@ export interface QueryEngineOptions {
   systemPromptSuffix?: string;
   /** Development-only experiment; live evaluation has not established a quality gain. */
   experimentalTaskCompletionReview?: boolean;
+  experimentalSkillRouting?: ExperimentalSkillRouting;
 }
 
 export interface ChatOptions {
@@ -586,6 +606,7 @@ export class QueryEngine {
   private audit?: AgentEventSink;
   private contextManager: ContextManager;
   private lastContextRequest?: EngineStatus['context']['lastRequest'];
+  private taskDelivery?: TaskDelivery;
   private pendingCompactionReason?: CompactionReason;
   private pendingFileChangeReceipts: FileChangeReceipt[] = [];
   private activeFileChangeReceipts: FileChangeReceipt[] = [];
@@ -614,6 +635,7 @@ export class QueryEngine {
   private hardTokenBudget?: number;
   private systemPromptSuffix?: string;
   private experimentalTaskCompletionReview: boolean;
+  private experimentalSkillRouting?: ExperimentalSkillRouting;
   private activeDelegateCalls = 0;
   private activeSubagentUsage?: ProviderUsage;
   private activeUserInputCalls = 0;
@@ -623,6 +645,7 @@ export class QueryEngine {
     this.composition = options.composition;
     this.rag = options.rag;
     this.experimentalTaskCompletionReview = options.experimentalTaskCompletionReview === true;
+    this.experimentalSkillRouting = options.experimentalSkillRouting;
     this.tools =
       options.tools ??
       createToolSet({
@@ -631,6 +654,13 @@ export class QueryEngine {
         compositionTools: this.composition?.getTools(),
         ragTools: this.rag?.getTools()
       });
+    // Opt-in historical routing experiments provide their own discovery contract last.
+    if (this.experimentalSkillRouting) {
+      const discovery = [...this.tools].reverse().find((tool) => tool.name === 'DiscoverSkills');
+      this.tools = this.tools.filter(
+        (tool) => tool.name !== 'DiscoverSkills' || tool === discovery
+      );
+    }
     this.workspaceRoot = options.workspaceRoot ?? process.cwd();
     this.permissionMode = options.permissionMode ?? DEFAULT_PERMISSION_MODE;
     this.mode = options.mode ?? DEFAULT_AGENT_MODE;
@@ -772,6 +802,36 @@ export class QueryEngine {
     return this.workspaceRoot;
   }
 
+  async startTaskDelivery(contractPath: string): Promise<TaskDeliverySnapshot> {
+    if (this.isProcessing) throw new Error('Cannot replace task delivery during a turn');
+    if (this.taskDelivery)
+      throw new Error('Clear the existing delivery record before starting another task');
+    const delivery = await TaskDelivery.load(this.workspaceRoot, contractPath);
+    if (this.isProcessing || this.taskDelivery)
+      throw new Error('Engine state changed while loading the task contract');
+    this.taskDelivery = delivery;
+    await this.requestCheckpoint('task-state');
+    return delivery.snapshot();
+  }
+
+  async inspectTaskDelivery(): Promise<TaskDeliverySnapshot | undefined> {
+    if (this.isProcessing) return this.taskDelivery?.snapshot();
+    return this.taskDelivery?.reconcile();
+  }
+
+  clearTaskDelivery(): void {
+    if (this.isProcessing) throw new Error('Cannot clear task delivery during a turn');
+    this.taskDelivery = undefined;
+  }
+
+  async resolveTaskOperation(toolCallId: string): Promise<TaskDeliverySnapshot> {
+    if (this.isProcessing) throw new Error('Cannot resolve task operations during a turn');
+    if (!this.taskDelivery) throw new Error('No active task delivery record');
+    const snapshot = await this.taskDelivery.resolveOperation(toolCallId);
+    await this.requestCheckpoint('task-state');
+    return snapshot;
+  }
+
   setCheckpointHandler(
     checkpoint: EngineCheckpointHandler | undefined,
     onError?: (error: unknown) => void
@@ -790,14 +850,16 @@ export class QueryEngine {
     this.persistenceStatus = provider;
   }
 
-  private async requestCheckpoint(reason: EngineCheckpointReason): Promise<void> {
+  private async requestCheckpoint(reason: EngineCheckpointReason): Promise<boolean> {
     if (!this.checkpoint) {
-      return;
+      return true;
     }
     try {
       await this.checkpoint(reason, this.exportState());
+      return true;
     } catch (error) {
       this.onCheckpointError?.(error);
+      return false;
     }
   }
 
@@ -843,6 +905,7 @@ export class QueryEngine {
       this.getProviderInfo()
     );
     return {
+      ...(this.taskDelivery ? { delivery: this.taskDelivery.snapshot() } : {}),
       sessionId: this.sessionId,
       workspaceRoot: this.workspaceRoot,
       mode: this.mode,
@@ -929,7 +992,9 @@ export class QueryEngine {
         triggerTokens: measurement.triggerTokens,
         compactions: this.contextManager.compactions,
         compactionCircuitOpen: this.contextManager.circuitOpen,
-        ...(this.lastContextRequest ? { lastRequest: { ...this.lastContextRequest } } : {})
+        ...(this.lastContextRequest
+          ? { lastRequest: structuredClone(this.lastContextRequest) }
+          : {})
       }
     };
   }
@@ -945,6 +1010,7 @@ export class QueryEngine {
       ...(this.ragContextReceipts.length > 0
         ? { ragContextReceipts: structuredClone(this.ragContextReceipts) }
         : {}),
+      ...(this.taskDelivery ? { taskDelivery: this.taskDelivery.exportState() } : {}),
       compactionCount: this.contextManager.compactions,
       totalUsage: { ...this.totalUsage },
       ...(this.lastReportedModel ? { lastReportedModel: this.lastReportedModel } : {})
@@ -956,6 +1022,11 @@ export class QueryEngine {
       throw new Error('Cannot restore engine state while a turn is processing');
     }
     validateEngineState(state);
+    const restoredDelivery =
+      state.taskDelivery === undefined
+        ? undefined
+        : TaskDelivery.restore(this.workspaceRoot, state.taskDelivery);
+    this.taskDelivery = restoredDelivery;
     this.lastContextRequest = undefined;
     this.messages = structuredClone(portableMessages(state.messages));
     this.displayMessages = structuredClone(
@@ -1131,7 +1202,10 @@ export class QueryEngine {
               model: providerEvent.model,
               attempt: providerEvent.attempt,
               attemptId: providerEvent.attemptId,
-              purpose
+              purpose,
+              ...(purpose === 'turn' && this.lastContextRequest
+                ? { budget: structuredClone(this.lastContextRequest) }
+                : {})
             };
             break;
           case 'request_failed':
@@ -1298,7 +1372,9 @@ export class QueryEngine {
     this.lastContextRequest = {
       estimatedInputTokens: measurement.estimatedInputTokens,
       triggerTokens: measurement.triggerTokens,
-      contextWindowTokens: measurement.contextWindowTokens
+      contextWindowTokens: measurement.contextWindowTokens,
+      reservedOutputTokens: measurement.reservedOutputTokens,
+      breakdown: measurement.breakdown
     };
     let compactions = 0;
     let targetingCompactionGoal = false;
@@ -1508,7 +1584,9 @@ export class QueryEngine {
         this.lastContextRequest = {
           estimatedInputTokens: measurement.estimatedInputTokens,
           triggerTokens: measurement.triggerTokens,
-          contextWindowTokens: measurement.contextWindowTokens
+          contextWindowTokens: measurement.contextWindowTokens,
+          reservedOutputTokens: measurement.reservedOutputTokens,
+          breakdown: measurement.breakdown
         };
         const durationMs = Math.max(0, this.now() - startedAt);
         yield {
@@ -1594,6 +1672,7 @@ export class QueryEngine {
     let sequence = 0;
     let ownsProcessingLock = false;
     let turnCommitted = false;
+    let deliveryFinalized = false;
 
     const event = (data: AgentEventData): AgentEvent => {
       const nextEvent = {
@@ -1653,6 +1732,14 @@ export class QueryEngine {
         return result;
       }
 
+      this.taskDelivery?.startTurn();
+      if (this.taskDelivery) {
+        yield event({
+          type: 'delivery_updated',
+          stage: 'active',
+          snapshot: await this.taskDelivery.reconcile()
+        });
+      }
       this.activeFileChangeReceipts = [];
       this.activeRagContextReceipts = [];
       this.invalidRestoredRagReceiptIds.clear();
@@ -1750,7 +1837,8 @@ export class QueryEngine {
       );
       if (this.activeRagContextReceipts.length > 0)
         taskExecution.observe('AutoRagRead', {}, 'success');
-      let forcedFinalizationReason: 'delegate-failure' | 'hook-denial' | undefined;
+      let forcedFinalizationReason:
+        'delegate-failure' | 'hook-denial' | 'recovery-required' | undefined;
       let forcedBudgetStopReason: BudgetStopReason | undefined;
       let appliedBudgetStopReason: BudgetStopReason | undefined;
       const providerCallBudget: ProviderCallBudget = {
@@ -1778,38 +1866,221 @@ export class QueryEngine {
       throwIfAborted(signal);
       for (let toolRound = 0; toolRound <= this.maxToolRounds; toolRound++) {
         throwIfAborted(signal);
+        if (
+          this.experimentalSkillRouting &&
+          !forcedFinalizationReason &&
+          !forcedBudgetStopReason &&
+          toolRound < this.maxToolRounds
+        ) {
+          const name = await this.experimentalSkillRouting.next({ message: userMessage, signal });
+          throwIfAborted(signal);
+          if (name !== undefined) {
+            if (this.maxToolCalls !== undefined && executedToolCalls >= this.maxToolCalls) {
+              forcedBudgetStopReason = 'tool-call-limit';
+              await this.experimentalSkillRouting.resolved({
+                name,
+                content: 'Runtime Skill activation skipped: tool-call budget exhausted.',
+                isError: true
+              });
+            } else {
+              executedToolCalls += 1;
+              const run = this.executeToolCall(
+                turnId,
+                `runtime-skill-route-${this.idFactory()}`,
+                'ActivateSkill',
+                { name },
+                signal,
+                options.requestApproval,
+                options.requestUserInput
+              );
+              let result: ToolResultMessage | undefined;
+              try {
+                while (true) {
+                  const next = await run.next();
+                  if (next.done) {
+                    result = next.value;
+                    break;
+                  }
+                  if (
+                    next.value.type === 'tool_completed' &&
+                    next.value.metadata?.reason === 'hook-policy'
+                  ) {
+                    forcedFinalizationReason = 'hook-denial';
+                  }
+                  yield event(next.value);
+                }
+              } finally {
+                if (!result) await run.return(undefined as never);
+              }
+              if (result) {
+                // This is a host action receipt, not a model-authored tool call.
+                workingMessages.push({
+                  role: 'user',
+                  content:
+                    '<runtime_skill_activation source="experimental-router">\n' +
+                    'Unprivileged workflow guidance from a real runtime activation. ' +
+                    'No permissions are granted.\n' +
+                    result.content +
+                    '\n</runtime_skill_activation>'
+                });
+                await this.experimentalSkillRouting.resolved({
+                  name,
+                  content: result.content,
+                  isError: result.isError === true || Boolean(forcedFinalizationReason)
+                });
+              }
+            }
+          }
+        }
         currentPrefixMessages =
           (await this.composition?.getPreludeMessages(compositionPreludeOptions)) ?? [];
+        const providerFinalizationDue = () =>
+          this.finalizeOnToolBudget &&
+          providerCallBudget.maximum !== undefined &&
+          providerCallBudget.count >= providerCallBudget.maximum - 1;
         const budgetFinalizationReason =
           this.finalizeOnToolBudget &&
-          toolRound > 0 &&
-          (forcedBudgetStopReason !== undefined ||
-            toolRound === this.maxToolRounds ||
-            (this.softTokenBudget !== undefined &&
-              this.observedBudgetTokens(providerCallBudget, cumulativeUsage) >=
-                this.softTokenBudget) ||
-            (this.toolSoftDeadlineMs !== undefined &&
-              this.now() - turnStartedAt >= this.toolSoftDeadlineMs))
+          (providerFinalizationDue() ||
+            (toolRound > 0 &&
+              (forcedBudgetStopReason !== undefined ||
+                toolRound === this.maxToolRounds ||
+                (this.softTokenBudget !== undefined &&
+                  this.observedBudgetTokens(providerCallBudget, cumulativeUsage) >=
+                    this.softTokenBudget) ||
+                (this.toolSoftDeadlineMs !== undefined &&
+                  this.now() - turnStartedAt >= this.toolSoftDeadlineMs))))
             ? (forcedBudgetStopReason ??
               (toolRound === this.maxToolRounds
                 ? 'tool-round-limit'
-                : this.softTokenBudget !== undefined &&
-                    this.observedBudgetTokens(providerCallBudget, cumulativeUsage) >=
-                      this.softTokenBudget
-                  ? 'soft-token-limit'
-                  : 'soft-timeout'))
+                : providerFinalizationDue()
+                  ? 'provider-call-limit'
+                  : this.softTokenBudget !== undefined &&
+                      this.observedBudgetTokens(providerCallBudget, cumulativeUsage) >=
+                        this.softTokenBudget
+                    ? 'soft-token-limit'
+                    : 'soft-timeout'))
             : undefined;
         if (budgetFinalizationReason) {
           appliedBudgetStopReason = budgetFinalizationReason;
         }
-        const finalizationReason = forcedFinalizationReason ?? budgetFinalizationReason;
+        let finalizationReason = forcedFinalizationReason ?? budgetFinalizationReason;
         const runtimeInstructions: string[] = [];
+        const deliveryBudgetHint = () => {
+          const providerRequestsRemaining =
+            providerCallBudget.maximum === undefined
+              ? null
+              : Math.max(0, providerCallBudget.maximum - providerCallBudget.count);
+          const reservedFinalRequests =
+            this.finalizeOnToolBudget && providerCallBudget.maximum !== undefined ? 1 : 0;
+          const toolCallsRemaining =
+            this.maxToolCalls === undefined
+              ? null
+              : Math.max(0, this.maxToolCalls - executedToolCalls);
+          const toolRequestsRemaining =
+            finalizationReason || toolCallsRemaining === 0
+              ? 0
+              : Math.min(
+                  Math.max(0, this.maxToolRounds - toolRound),
+                  providerRequestsRemaining === null
+                    ? Infinity
+                    : Math.max(0, providerRequestsRemaining - reservedFinalRequests)
+                );
+          return (
+            '<delivery_budget>\n' +
+            JSON.stringify({
+              scope: 'engine-requests-including-compaction-not-provider-retry-attempts',
+              includesCurrentRequest: true,
+              providerRequestsRemaining,
+              reservedFinalRequests,
+              toolRequestsRemaining,
+              toolCallsRemaining
+            }) +
+            '\n</delivery_budget>\n' +
+            'Plan required authorized reads, artifacts, checks and the report within these ceilings, not a guaranteed completion allowance. ' +
+            'Batch independent known reads or writes only when dependencies and authorization permit. ' +
+            'A diagnostic baseline check is valid; leave room for repair, recheck and report. ' +
+            'Skill guidance does not require optional exploration. Null means no configured cap, not unlimited time or context. ' +
+            'This is not permission, a tool filter or an extension of any budget.'
+          );
+        };
+        const deliveryBudgetIndex = this.taskDelivery ? runtimeInstructions.length : undefined;
+        if (deliveryBudgetIndex !== undefined) runtimeInstructions.push(deliveryBudgetHint());
+        if (
+          this.finalizeOnToolBudget &&
+          !finalizationReason &&
+          providerCallBudget.maximum !== undefined &&
+          providerCallBudget.maximum - providerCallBudget.count <= 3
+        ) {
+          runtimeInstructions.push(
+            'Only ' +
+              (providerCallBudget.maximum - providerCallBudget.count - 1) +
+              ' tool-capable model requests remain before the reserved final report. Stop optional discovery. Finish the requested authorized artifact and run its exact verification command now, using the tool schema. If blocked or unchecked, report that honestly; do not bypass approval or fabricate a passing check.'
+          );
+        }
+        if (this.taskDelivery) {
+          const deliverySummary = this.taskDelivery.contextSummary();
+          currentPrefixMessages = currentPrefixMessages.filter(
+            (message) => !message.content.startsWith('<delivery_state>\n')
+          );
+          currentPrefixMessages.push({
+            role: 'user',
+            kind: 'compaction-summary',
+            content: `<delivery_state>\n${deliverySummary}\n</delivery_state>`
+          });
+          runtimeInstructions.push(
+            'Delivery state is a bounded receipt summary, not permission or semantic proof. ' +
+              'While tools are open, follow focus: read-sources means Read the listed source paths directly, ' +
+              'without listing a known directory or rereading a current complete source; produce-artifacts means finish the requested paths; ' +
+              'run-checks means use the exact checks input, with optional Shell fields omitted. ' +
+              'A final check must cover the final versions of every checks.paths file, including required documentation. ' +
+              'Create all required artifacts before the final check; diagnostic or baseline checks do not replace it. ' +
+              'Creating or modifying a dependent file after a check requires an explicit recheck. ' +
+              'For check-scope-unverified with no denied or unresolved operation, finish the missing artifacts and rerun the exact authorized check with normal approval before claiming verified completion. ' +
+              'Do not add an inspection Shell, cd, wrappers or invented cwd/workdir. Extra reads or discovery need a specific missing fact or independent capability. ' +
+              'inspect-blockers means diagnose the recorded uncertainty or failure, not repeat a denied or unresolved operation. ' +
+              'Complete only authorized steps; never retry denied or unresolved operations. ' +
+              'A blocked/error contract check with no unresolved operation is a known failed check: repair authorized files and explicitly reverify with normal approval. ' +
+              'report or receiptRequirementsComplete means stop optional tools and return actual results and limitations. ' +
+              'If tools are closed, return answer text only regardless of focus. Never claim planned, stale, blocked or unknown work was verified.'
+          );
+          if (JSON.parse(deliverySummary).receiptRequirementsComplete) {
+            runtimeInstructions.push(
+              'Required delivery receipts are complete and current. Return the requested final report now, after any explicitly requested Skill loading. ' +
+                'This takes precedence over optional Skill follow-ups: do not polish, reformat, reread or rewrite already accepted artifacts. ' +
+                'Only a concrete defect or an explicitly unmet user requirement justifies another tool call; a new mutation needs another final check. ' +
+                'Report only actual results and limitations; receipts are not semantic proof.'
+            );
+          }
+          const skills = this.composition?.getStatus().skills;
+          if (
+            this.taskDelivery.snapshot().restored &&
+            !finalizationReason &&
+            skills?.enabled &&
+            skills.allowImplicit &&
+            skills.available > 0 &&
+            skills.activeThisTurn === 0 &&
+            providerTools.some((tool) => tool.name === 'ActivateSkill')
+          ) {
+            runtimeInstructions.push(
+              'Restored task/file receipts do not restore an active Skill body for this turn. ' +
+                'No Skill is currently active. When the user requests Skill-assisted continuation, ' +
+                'you MUST load a suitable Skill with ActivateSkill before producing artifacts, running final checks or reporting completion. ' +
+                'This loading step takes precedence over delivery focus produce-artifacts, run-checks or report; necessary source reads may come first. ' +
+                'DiscoverSkills returns metadata only: searching is not loading or following a workflow. ' +
+                'Once a suitable candidate is found, the next workflow action is ActivateSkill, not implementation or more browsing. ' +
+                'Loading after implementation is not Skill-assisted execution. ' +
+                'If no suitable Skill can be activated, report that limitation; do not claim Skill use. ' +
+                'Activation does not grant permissions or authorize replay of completed scripts. ' +
+                'Do not activate a Skill for an unrelated request or when the user forbids it.'
+            );
+          }
+        }
         const hasLocalReadEvidence = Boolean(this.rag?.hasLocalReadEvidence(turnId));
         const executionInstructions = taskExecution.instructions();
         if (executionInstructions) runtimeInstructions.push(executionInstructions);
         if (options.requestUserInput && !finalizationReason) {
           runtimeInstructions.push(
-            'Interactive AskUser is available. When an activated Skill or workflow requires the user to answer, choose, or clarify before you can continue, you MUST call AskUser before emitting assistant prose. Do not print a numbered question list or simulated menu as ordinary text. For a design decision with honest bounded alternatives, prefer a single-select question with 2-6 options and identify the recommended option in its label or description. The client always lets the user supply a bounded custom answer in addition to your choices. Use free text only when predefined choices would be misleading. Use AskUser only for genuine blocking input, not rhetorical questions.'
+            'Interactive AskUser is available. For genuine blocking Skill/workflow input, you MUST call AskUser before prose. Do not print a numbered question list or simulated menu. For honest alternatives, prefer a single-select question with 2-6 options and a recommended label; custom answers are available. Use text when choices mislead, never for rhetorical questions.'
           );
         }
         if (confirmedFileSideEffects.size > 0) {
@@ -1845,7 +2116,11 @@ export class QueryEngine {
             'RAG search candidates were returned, but no evidence was read with RagRead. Search summaries are discovery hints, not verified evidence. If a candidate looks relevant, call RagRead before answering document facts. Search result IDs are not citations: without RagRead the final answer MUST NOT contain any [[rag:...]] token. If no candidate is relevant, state that evidence is insufficient, not that the whole collection lacks the answer. For a combined request, also perform the requested authorized local reads before finalizing; do not claim you cannot read a file without an actual failure or denial. Do not add outside facts or recommendations.'
           );
         }
-        if (finalizationReason === 'hook-denial') {
+        if (finalizationReason === 'recovery-required') {
+          runtimeInstructions.push(
+            'A side effect is unconfirmed, a recovery guard denied access, or a durable checkpoint failed. Tool access is closed this turn. Report the uncertainty or persistence failure; never retry, bypass it or claim completion. The user must inspect effects before /task resolve.'
+          );
+        } else if (finalizationReason === 'hook-denial') {
           runtimeInstructions.push(
             'A local Hook definitively denied an operation. Tool access is now ' +
               'closed for this turn. Do not retry it or use another tool to ' +
@@ -1863,17 +2138,19 @@ export class QueryEngine {
           runtimeInstructions.push(
             'The bounded tool budget is now closed. Do not call tools. Return ' +
               'the concise final report now using only evidence already gathered. ' +
-              'State any remaining uncertainty instead of requesting more evidence.'
+              'State any remaining uncertainty instead of requesting more evidence. ' +
+              'This response must contain answer text only, never tool_calls or a proposed tool invocation. ' +
+              'A check still planned or blocked was not verified; no automatic retry is authorized.'
           );
         }
-        const systemPrompt = this.getSystemPrompt(runtimeInstructions);
-        const providerToolsForRound = finalizationReason ? [] : providerTools;
+        let systemPrompt = this.getSystemPrompt(runtimeInstructions);
+        let providerToolsForRound = finalizationReason ? [] : providerTools;
         const maximumOutputTokens =
           this.activeRagContextReceipts.length > 0
             ? taskExecution.active && !finalizationReason
               ? 512
               : RAG_ANSWER_MAX_OUTPUT_TOKENS
-            : undefined;
+            : this.contextManager.outputBudget(this.getProviderInfo());
         // Successful tools can add RAG rules or nested instructions after the initial output cap.
         // Rebudget only fresh tool results against the exact next request, preserving call/result pairs.
         for (const message of pendingToolResults) {
@@ -1886,12 +2163,14 @@ export class QueryEngine {
             message.toolName,
             maximumOutputTokens
           );
-          message.content = this.contextManager.limitToolResult(
+          const delivered = this.contextManager.limitToolResult(
             message.toolName,
             message.content,
             Boolean(message.isError),
             resultBudget
-          ).content;
+          );
+          message.content = delivered.content;
+          if (delivered.truncated) this.taskDelivery?.markTruncated(message.toolCallId);
         }
         pendingToolResults.clear();
         if (this.rag) {
@@ -1936,6 +2215,25 @@ export class QueryEngine {
           }
         }
 
+        // Compaction consumes the same budget; it must not spend the last call on more tools.
+        if (!finalizationReason && providerFinalizationDue()) {
+          finalizationReason = 'provider-call-limit';
+          appliedBudgetStopReason = 'provider-call-limit';
+          responseParts.length = 0;
+          runtimeInstructions.push(
+            'The bounded tool budget is now closed. Do not call tools. Return the concise final report now using only evidence already gathered. State any remaining uncertainty instead of requesting more evidence. This response must contain answer text only, never tool_calls or a proposed tool invocation. A check still planned or blocked was not verified; no automatic retry is authorized.'
+          );
+          systemPrompt = this.getSystemPrompt(runtimeInstructions);
+          providerToolsForRound = [];
+          latestMeasurement = this.contextManager.measure(
+            [...currentPrefixMessages, ...workingMessages],
+            systemPrompt,
+            providerToolsForRound,
+            this.getProviderInfo(),
+            maximumOutputTokens
+          );
+        }
+
         let response: ProviderChatResponse | undefined;
         let responseUsageReported = false;
         let recoveredFromContextExceeded = false;
@@ -1945,6 +2243,21 @@ export class QueryEngine {
         const bufferedRagTextEvents: Array<Extract<AgentEventData, { type: 'text_delta' }>> = [];
         while (!response) {
           throwIfAborted(signal);
+          // Compaction and context recovery share this counter; refresh before the actual request.
+          if (deliveryBudgetIndex !== undefined) {
+            const hint = deliveryBudgetHint();
+            if (runtimeInstructions[deliveryBudgetIndex] !== hint) {
+              runtimeInstructions[deliveryBudgetIndex] = hint;
+              systemPrompt = this.getSystemPrompt(runtimeInstructions);
+              latestMeasurement = this.contextManager.measure(
+                [...currentPrefixMessages, ...workingMessages],
+                systemPrompt,
+                providerToolsForRound,
+                this.getProviderInfo(),
+                maximumOutputTokens
+              );
+            }
+          }
           this.consumeProviderCallBudget(
             providerCallBudget,
             cumulativeUsage,
@@ -1952,10 +2265,62 @@ export class QueryEngine {
           );
           yield event({ type: 'phase_changed', phase: 'provider' });
           const progress: ProviderProgress = { visibleContentOrTool: false };
+          const segments: Record<string, number> = {
+            systemRules: 0,
+            dynamicRules: 0,
+            taskState: 0,
+            tools: latestMeasurement.breakdown.tools,
+            agents: 0,
+            skillsCatalog: 0,
+            skillBodies: 0,
+            evidence: 0,
+            history: 0,
+            turn: 0,
+            overhead: latestMeasurement.breakdown.overhead
+          };
+          segments.systemRules = Math.min(
+            latestMeasurement.breakdown.system,
+            estimateUtf8Tokens(this.getSystemPrompt())
+          );
+          segments.dynamicRules = latestMeasurement.breakdown.system - segments.systemRules;
+          for (const prefix of currentPrefixMessages) {
+            const category =
+              prefix.role === 'user' && prefix.content.startsWith('<project_instructions>')
+                ? 'agents'
+                : prefix.role === 'user' && prefix.content.startsWith('<delivery_state>')
+                  ? 'taskState'
+                  : prefix.role === 'user' && prefix.content.startsWith('<available_skills>')
+                    ? 'skillsCatalog'
+                    : 'turn';
+            segments[category] += estimateMessageTokens(prefix);
+          }
+          for (const message of workingMessages) {
+            const category =
+              this.messages.includes(message) ||
+              (message.role === 'user' && message.kind === 'compaction-summary')
+                ? 'history'
+                : message.role === 'tool' &&
+                    ['ActivateSkill', 'ReadSkillResource'].includes(message.toolName)
+                  ? 'skillBodies'
+                  : message.role === 'tool' &&
+                      ['Read', 'RagRead', 'RagSearch'].includes(message.toolName)
+                    ? 'evidence'
+                    : 'turn';
+            segments[category] += estimateMessageTokens(message);
+          }
+          this.lastContextRequest = {
+            estimatedInputTokens: latestMeasurement.estimatedInputTokens,
+            triggerTokens: latestMeasurement.triggerTokens,
+            contextWindowTokens: latestMeasurement.contextWindowTokens,
+            reservedOutputTokens: maximumOutputTokens,
+            breakdown: latestMeasurement.breakdown,
+            segments
+          };
           const providerRun = this.runProviderWithEvents(
             {
               messages: [...currentPrefixMessages, ...workingMessages],
               tools: providerToolsForRound,
+              ...(finalizationReason ? { toolChoice: 'none' as const } : {}),
               systemPrompt,
               ...(maximumOutputTokens !== undefined
                 ? { maxOutputTokens: maximumOutputTokens }
@@ -2408,6 +2773,17 @@ export class QueryEngine {
           this.ragReceiptsNeedValidation = false;
           this.invalidRestoredRagReceiptIds.clear();
           turnCommitted = true;
+          if (this.taskDelivery) {
+            const incomplete =
+              ['length', 'max_tokens', 'max_output_tokens'].includes(result.finishReason ?? '') ||
+              Boolean(result.budgetStopReason);
+            const snapshot = await this.taskDelivery.finish(
+              incomplete ? 'incomplete' : 'completed'
+            );
+            deliveryFinalized = true;
+            await this.requestCheckpoint('task-state');
+            yield event({ type: 'delivery_updated', stage: 'final', snapshot });
+          }
           yield event({
             type: 'turn_completed',
             durationMs: result.durationMs,
@@ -2509,6 +2885,23 @@ export class QueryEngine {
               }
               if (next.value.type === 'tool_completed') {
                 toolCompletedEvent = next.value;
+                if (this.taskDelivery) {
+                  await this.taskDelivery.observe({
+                    toolCallId: toolCall.id,
+                    turnId,
+                    tool: toolCall.name,
+                    input: toolCall.input,
+                    outcome: next.value.outcome,
+                    metadata: next.value.metadata,
+                    result: next.value.result
+                  });
+                  await this.requestCheckpoint('task-state');
+                  yield event({
+                    type: 'delivery_updated',
+                    stage: 'active',
+                    snapshot: this.taskDelivery.snapshot()
+                  });
+                }
               }
               yield event(next.value);
             }
@@ -2554,6 +2947,17 @@ export class QueryEngine {
             );
           }
           if (
+            toolCompletedEvent?.metadata?.reason === 'task-recovery-required' ||
+            toolCompletedEvent?.metadata?.reason === 'task-checkpoint-failed' ||
+            this.taskDelivery
+              ?.snapshot()
+              .unresolvedOperations?.some(
+                ({ toolCallId, state }) => toolCallId === toolCall.id && state === 'unknown'
+              )
+          ) {
+            forcedFinalizationReason = 'recovery-required';
+            closeRemainingTools = true;
+          } else if (
             toolCompletedEvent?.outcome === 'denied' &&
             toolCompletedEvent.metadata?.reason === 'hook-policy'
           ) {
@@ -2583,6 +2987,12 @@ export class QueryEngine {
         for await (const hookEvent of terminalHooks) {
           yield event(hookEvent);
         }
+        if (this.taskDelivery && ownsProcessingLock) {
+          const snapshot = await this.taskDelivery.finish('cancelled');
+          deliveryFinalized = true;
+          await this.requestCheckpoint('task-state');
+          yield event({ type: 'delivery_updated', stage: 'final', snapshot });
+        }
         yield event({ type: 'turn_cancelled', durationMs, reason });
         return result;
       }
@@ -2600,6 +3010,12 @@ export class QueryEngine {
       for await (const hookEvent of terminalHooks) {
         yield event(hookEvent);
       }
+      if (this.taskDelivery && ownsProcessingLock) {
+        const snapshot = await this.taskDelivery.finish('failed');
+        deliveryFinalized = true;
+        await this.requestCheckpoint('task-state');
+        yield event({ type: 'delivery_updated', stage: 'final', snapshot });
+      }
       yield event({
         type: 'turn_failed',
         durationMs,
@@ -2612,6 +3028,10 @@ export class QueryEngine {
         turnController.abort(new OperationAbortedError('Turn consumer closed'));
       }
       if (ownsProcessingLock) {
+        if (this.taskDelivery && !deliveryFinalized) {
+          await this.taskDelivery.finish('cancelled');
+          await this.requestCheckpoint('task-state');
+        }
         if (!turnCommitted) {
           this.preserveActiveFileChangeReceipts();
         }
@@ -3369,7 +3789,7 @@ export class QueryEngine {
     const normalizedInput = tool.name === 'AskUser' ? normalizeAskUserQuestionIds(input) : input;
     const validationResult = validateToolInput(tool, normalizedInput);
     if (!validationResult.success) {
-      yield complete('error', validationResult.message);
+      yield complete('error', validationResult.message, { reason: 'invalid-tool-input' });
       return toolMessage(validationResult.message, true);
     }
 
@@ -3498,6 +3918,15 @@ export class QueryEngine {
           ...(resolvedPolicy.metadata ?? {})
         });
         return toolMessage(providerContent, true);
+      }
+      if (this.taskDelivery && resolvedPolicy.risk !== 'read') {
+        try {
+          await this.taskDelivery.assertOperationAllowed(toolName, validationResult.data);
+        } catch (error) {
+          const content = error instanceof Error ? error.message : 'Task operation needs recovery';
+          yield complete('denied', content, { reason: 'task-recovery-required' });
+          return toolMessage(content, true);
+        }
       }
       let executionContext = baseContext;
       const needsUserApproval = requiresUserApproval(this.permissionMode, effectiveTool);
@@ -3631,6 +4060,16 @@ export class QueryEngine {
         };
       }
 
+      await this.taskDelivery?.beforeTool(toolCallId, toolName);
+      if (this.taskDelivery && resolvedPolicy.risk !== 'read') {
+        await this.taskDelivery.beginOperation(toolCallId, toolName, validationResult.data);
+        if (!(await this.requestCheckpoint('task-operation-started'))) {
+          const content =
+            'Task write-ahead checkpoint failed; operation was not executed. Restore persistence before continuing.';
+          yield complete('denied', content, { reason: 'task-checkpoint-failed' });
+          return toolMessage(content, true);
+        }
+      }
       yield { type: 'phase_changed', phase: 'tool' };
       yield { type: 'tool_started', toolCallId, toolName };
       let toolResult: ToolResult;
@@ -4051,6 +4490,7 @@ export class QueryEngine {
   }
 
   clearMessages(): void {
+    this.taskDelivery = undefined;
     this.lastContextRequest = undefined;
     this.messages = [];
     this.displayMessages = [];

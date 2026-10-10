@@ -40,6 +40,148 @@ function smallContextOptions() {
   };
 }
 
+function budgetFixture(maxProviderCalls, finalizeOnToolBudget = true, ignoresClosure = false) {
+  const requests = [];
+  let executions = 0;
+  const tool = {
+    name: 'Inspect',
+    description: 'Inspect a fixture',
+    inputSchema: z.object({}).strict(),
+    risk: 'read',
+    approval: 'never',
+    modeAccess: 'all-modes',
+    async execute() {
+      executions++;
+      return { content: 'Observed only; not a passing test.' };
+    }
+  };
+  const provider = {
+    getInfo: () => providerInfo(),
+    async chat(request) {
+      requests.push(request);
+      return {
+        message:
+          request.tools.length || ignoresClosure
+            ? {
+                role: 'assistant',
+                content: '',
+                toolCalls: [{ id: `inspect-${requests.length}`, name: 'Inspect', input: {} }]
+              }
+            : { role: 'assistant', content: 'Verification was not run; work remains unchecked.' },
+        finishReason: request.tools.length || ignoresClosure ? 'tool_calls' : 'stop'
+      };
+    }
+  };
+  const engine = new QueryEngine({
+    provider,
+    tools: [tool],
+    audit: false,
+    maxProviderCalls,
+    finalizeOnToolBudget,
+    context: { autoCompact: false, reservedOutputTokens: 512 }
+  });
+  return { engine, requests, executions: () => executions };
+}
+
+test('bounded finalization reserves one provider call and honestly closes tools within the cap', async () => {
+  const { engine, requests, executions } = budgetFixture(3);
+  const { result } = await collectTurn(engine.runTurn('Inspect then verify'));
+  assert.equal(result.status, 'completed');
+  assert.equal(result.budgetStopReason, 'provider-call-limit');
+  assert.equal(requests.length, 3);
+  assert.deepEqual(
+    requests.map((r) => r.tools.length),
+    [1, 1, 0]
+  );
+  assert.match(requests[1].systemPrompt, /1 tool-capable model requests remain/);
+  assert.match(requests[2].systemPrompt, /State any remaining uncertainty/);
+  assert.deepEqual(
+    requests.map((r) => r.toolChoice),
+    [undefined, undefined, 'none']
+  );
+  assert.equal(executions(), 2);
+  assert.match(result.response, /unchecked/);
+});
+
+test('one-call bounded finalization does not execute tools without room for a report', async () => {
+  const { engine, requests, executions } = budgetFixture(1);
+  const { result } = await collectTurn(engine.runTurn('Inspect'));
+  assert.equal(result.status, 'completed');
+  assert.equal(result.budgetStopReason, 'provider-call-limit');
+  assert.equal(requests.length, 1);
+  assert.deepEqual(requests[0].tools, []);
+  assert.equal(requests[0].toolChoice, 'none');
+  assert.equal(executions(), 0);
+});
+
+test('provider finalization is opt-in and does not change the ordinary hard budget', async () => {
+  const { engine, requests, executions } = budgetFixture(2, false);
+  const { result } = await collectTurn(engine.runTurn('Inspect'));
+  assert.equal(result.status, 'failed');
+  assert.equal(result.error.code, 'provider-call-limit');
+  assert.equal(requests.length, 2);
+  assert.equal(executions(), 2);
+});
+
+test('a provider ignoring the reserved tool-free report cannot execute another tool', async () => {
+  const { engine, requests, executions } = budgetFixture(2, true, true);
+  const { result } = await collectTurn(engine.runTurn('Inspect'));
+  assert.equal(result.status, 'failed');
+  assert.equal(requests.length, 2);
+  assert.deepEqual(requests[1].tools, []);
+  assert.equal(requests[1].toolChoice, 'none');
+  assert.equal(executions(), 1);
+  assert.match(requests[1].systemPrompt, /answer text only, never tool_calls/);
+  assert.equal(result.error.message, 'Provider requested tools after tool access was closed');
+});
+
+test('compaction cannot turn the reserved final provider call back into tool execution', async () => {
+  const requests = [];
+  let turnCalls = 0;
+  const provider = {
+    getInfo: () => providerInfo(3500),
+    async chat(request) {
+      requests.push(request);
+      if (request.systemPrompt.includes('Compress the supplied conversation'))
+        return { message: { role: 'assistant', content: 'Earlier context.' } };
+      turnCalls++;
+      return {
+        message: {
+          role: 'assistant',
+          content: turnCalls === 1 ? 'Earlier answer '.repeat(500) : 'Unchecked.'
+        },
+        finishReason: 'stop'
+      };
+    }
+  };
+  const engine = new QueryEngine({
+    provider,
+    tools: [
+      {
+        name: 'Inspect',
+        description: 'Inspect',
+        inputSchema: z.object({}),
+        risk: 'read',
+        approval: 'never',
+        async execute() {
+          assert.fail('No tool execution expected');
+        }
+      }
+    ],
+    audit: false,
+    maxProviderCalls: 2,
+    finalizeOnToolBudget: true,
+    context: { ...smallContextOptions(), defaultWindowTokens: 3500 }
+  });
+  await engine.chat('seed');
+  const { result } = await collectTurn(engine.runTurn('continue'));
+  assert.equal(result.status, 'completed');
+  assert.equal(result.budgetStopReason, 'provider-call-limit');
+  assert.equal(requests.length, 3);
+  assert.match(requests[1].systemPrompt, /Compress the supplied conversation/);
+  assert.deepEqual(requests[2].tools, []);
+});
+
 test('auto compaction summarizes old history without exposing summary text', async () => {
   let normalCalls = 0;
   let summaryCalls = 0;

@@ -182,7 +182,8 @@ export class OpenAICompatibleProvider implements AIProvider {
         messages: convertMessagesToOpenAI(request.messages, request.systemPrompt),
         ...(request.maxOutputTokens ? { max_tokens: request.maxOutputTokens } : {}),
         ...(request.stopSequences?.length ? { stop: request.stopSequences } : {}),
-        ...(request.tools.length > 0 ? { tools: convertToolsToOpenAI(request.tools) } : {})
+        ...(request.tools.length > 0 ? { tools: convertToolsToOpenAI(request.tools) } : {}),
+        ...(request.toolChoice === 'none' ? { tool_choice: 'none' } : {})
       };
 
       let completion = await this.createCompletion(completionRequest, request.signal);
@@ -272,6 +273,7 @@ export class OpenAICompatibleProvider implements AIProvider {
         ...(request.maxOutputTokens ? { max_tokens: request.maxOutputTokens } : {}),
         ...(request.stopSequences?.length ? { stop: request.stopSequences } : {}),
         ...(request.tools.length > 0 ? { tools: convertToolsToOpenAI(request.tools) } : {}),
+        ...(request.toolChoice === 'none' ? { tool_choice: 'none' } : {}),
         stream: true,
         ...(attemptOptions.includeUsage ? { stream_options: { include_usage: true } } : {}),
         ...(attemptOptions.disableReasoning ? this.disabledReasoningParameters() : {})

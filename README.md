@@ -10,6 +10,10 @@ Syzzz Code 是一个本地优先、可扩展的命令行 AI 编程 Agent。你�
 
 开发分支中的 [KnowForge 统一模型与知识服务接入](docs/knowforge-service.md) 为可选功能，尚未发布到 npm；正式版用户仍按下方本地 RAG 说明使用。
 
+开发工作区新增 [显式任务交付记录](docs/task-delivery.md)：用 `/task` 核对文件和测试回执，用 `/context status` 查看请求分项及输出预留。会话保存包含交付记录，恢复时重新核对版本，未决操作需先确认；此切片尚未发布，不改变现有权限或自动续跑。
+
+M4 开发切片新增 [可审阅项目记忆](docs/project-memory.md)：通过 `/memory` 显式确认稳定约定，按工作区隔离，来源变更后停止注入；不自动保存聊天，不执行命令，不授予权限。有效记忆可能发送给当前 Provider，请勿保存敏感资料。
+
 > [!WARNING]
 > Syzzz Code 可以修改文件和执行 Shell 命令。文件工具具有工作区边界、敏感路径检查、并发 hash 校验和原子写入保护，但 Shell 不是操作系统沙箱。请在审批前阅读命令和文件差异，不要在不受信任的项目中启用 `fullAccess`。
 
@@ -503,6 +507,7 @@ npm run check
 - [故障排查](docs/TROUBLESHOOTING.md)
 - [本地 RAG](docs/RAG.md)
 - [扩展使用指南](docs/EXTENSIONS.md)
+- [Skills 渐进发现（开发切片）](docs/skill-discovery.md)
 - [架构说明](ARCHITECTURE.md)
 - [安全策略](SECURITY.md)
 - [测试与发布](TESTING.md)

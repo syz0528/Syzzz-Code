@@ -493,6 +493,7 @@ export class OpenAIResponsesProvider implements AIProvider {
       input: convertMessagesToResponses(request.messages),
       ...(request.maxOutputTokens ? { max_output_tokens: request.maxOutputTokens } : {}),
       ...(request.tools.length ? { tools: convertToolsToResponses(request.tools) } : {}),
+      ...(request.toolChoice === 'none' ? { tool_choice: 'none' } : {}),
       include: ['reasoning.encrypted_content'],
       store: false
     };

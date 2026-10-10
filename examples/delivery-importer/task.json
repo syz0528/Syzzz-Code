@@ -1,0 +1,37 @@
+{
+  "schemaVersion": 1,
+  "title": "导入脚本修订",
+  "requirements": [
+    { "id": "spec", "label": "完整读取导入规范", "kind": "read", "path": "spec.md" },
+    {
+      "id": "importer",
+      "label": "修订导入脚本",
+      "kind": "artifact",
+      "path": "importer.mjs",
+      "contains": ["filter"]
+    },
+    {
+      "id": "tests",
+      "label": "补充回归断言",
+      "kind": "artifact",
+      "path": "importer.test.mjs",
+      "contains": ["assert.deepEqual", "IMPORTER_TEST_OK"]
+    },
+    {
+      "id": "check",
+      "label": "执行回归检查",
+      "kind": "check",
+      "command": "node importer.test.mjs",
+      "paths": ["importer.mjs", "importer.test.mjs"],
+      "outputContains": ["IMPORTER_TEST_OK"]
+    },
+    {
+      "id": "notes",
+      "label": "生成迁移说明",
+      "kind": "artifact",
+      "path": "MIGRATION.md",
+      "contains": ["适用范围", "验证"]
+    }
+  ],
+  "protectedPaths": ["raw.txt"]
+}

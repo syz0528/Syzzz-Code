@@ -136,7 +136,8 @@ export class AnthropicProvider implements AIProvider {
           system: request.systemPrompt,
           messages: convertMessagesToAnthropic(request.messages),
           ...(request.stopSequences?.length ? { stop_sequences: request.stopSequences } : {}),
-          ...(request.tools.length ? { tools: convertToolsToAnthropic(request.tools) } : {})
+          ...(request.tools.length ? { tools: convertToolsToAnthropic(request.tools) } : {}),
+          ...(request.toolChoice === 'none' ? { tool_choice: { type: 'none' as const } } : {})
         },
         { signal: request.signal }
       );
@@ -221,6 +222,7 @@ export class AnthropicProvider implements AIProvider {
             system: request.systemPrompt,
             messages: convertMessagesToAnthropic(request.messages),
             ...(request.tools.length ? { tools: convertToolsToAnthropic(request.tools) } : {}),
+            ...(request.toolChoice === 'none' ? { tool_choice: { type: 'none' as const } } : {}),
             ...(request.stopSequences?.length ? { stop_sequences: request.stopSequences } : {}),
             stream: true
           },

@@ -369,11 +369,23 @@ test('Engine completes remote search/read/citation and exports recoverable recei
     assert.equal(estimates[0].triggerTokens, 12_288);
     assert.equal(estimates.at(-1).triggerTokens, 13_926);
     const lastRequest = engine.getStatus().context.lastRequest;
-    assert.deepEqual(lastRequest, {
-      estimatedInputTokens: estimates.at(-1).inputTokens,
-      contextWindowTokens: 16_384,
-      triggerTokens: 13_926
-    });
+    assert.deepEqual(
+      {
+        estimatedInputTokens: lastRequest.estimatedInputTokens,
+        contextWindowTokens: lastRequest.contextWindowTokens,
+        triggerTokens: lastRequest.triggerTokens
+      },
+      {
+        estimatedInputTokens: estimates.at(-1).inputTokens,
+        contextWindowTokens: 16_384,
+        triggerTokens: 13_926
+      }
+    );
+    assert.equal(lastRequest.reservedOutputTokens, 512);
+    assert.equal(
+      Object.values(lastRequest.segments).reduce((total, value) => total + value, 0),
+      lastRequest.estimatedInputTokens
+    );
     lastRequest.triggerTokens = 0;
     assert.equal(engine.getStatus().context.lastRequest.triggerTokens, 13_926);
     const state = engine.exportState();

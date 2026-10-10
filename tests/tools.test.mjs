@@ -14,7 +14,13 @@ import {
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { z } from 'zod';
-import { editTool, listDirectoryTool, readTool, writeTool } from '../dist/tools/index.js';
+import {
+  editTool,
+  listDirectoryTool,
+  readTool,
+  shellTool,
+  writeTool
+} from '../dist/tools/index.js';
 import { convertToolSchemaToJsonSchema, validateToolInput } from '../dist/tools/runtime.js';
 import { resolveWorkspacePath, validateWorkspacePathSyntax } from '../dist/tools/workspace.js';
 
@@ -67,6 +73,85 @@ test('validates tool input and derives provider JSON schema from Zod', () => {
   assert.deepEqual(schema.required, ['path']);
   assert.equal(schema.properties.path.type, 'string');
   assert.equal(schema.properties.count.type, 'integer');
+  assert.equal(schema.additionalProperties, false);
+});
+
+test('provider schemas retain strict root constraints without making loose tools strict', () => {
+  const loose = { ...listDirectoryTool, inputSchema: z.looseObject({ path: z.string() }) };
+  assert.equal(convertToolSchemaToJsonSchema(loose).additionalProperties, undefined);
+  const shell = convertToolSchemaToJsonSchema(shellTool);
+  assert.equal(shell.additionalProperties, false);
+  assert.match(shell.properties.workingDirectory.description, /Omit.*workspace/);
+  assert.match(shellTool.description, /command exactly/);
+});
+
+test('invalid Shell and directory inputs give bounded schema hints without coercion', () => {
+  for (const input of [
+    { command: 'PRIVATE_COMMAND', workingDirectory: '.' },
+    { command: 'PRIVATE_COMMAND', workdir: '.' },
+    { command: 'PRIVATE_COMMAND', cwd: '.' }
+  ]) {
+    const result = validateToolInput(shellTool, input);
+    assert.equal(result.success, false);
+    assert.match(
+      result.message,
+      /Workspace Shell input: \{"command":"<exact requested command>"\}/
+    );
+    assert.match(result.message, /Omit workingDirectory/);
+    assert.match(result.message, /normal policy and approval/);
+    assert.doesNotMatch(result.message, /PRIVATE_COMMAND/);
+    assert.ok(Buffer.byteLength(result.message) <= 2048);
+  }
+  assert.deepEqual(validateToolInput(shellTool, { command: 'node check.mjs' }), {
+    success: true,
+    data: { command: 'node check.mjs' }
+  });
+  assert.equal(
+    validateToolInput(shellTool, {
+      command: 'node check.mjs',
+      workingDirectory: { type: 'workspace' }
+    }).success,
+    true
+  );
+  assert.match(validateToolInput(listDirectoryTool, { path: [] }).message, /"path":"\."/);
+});
+
+test('minimal workspace examples keep optional fields optional without accepting invalid selectors', () => {
+  const shell = convertToolSchemaToJsonSchema(shellTool);
+  const directory = convertToolSchemaToJsonSchema(listDirectoryTool);
+  assert.deepEqual(shell.required, ['command']);
+  assert.equal(directory.required, undefined);
+  assert.match(shell.properties.workingDirectory.description, /Omit this optional field/);
+  assert.match(directory.properties.path.description, /Omit.*root/);
+  assert.deepEqual(validateToolInput(listDirectoryTool, {}), { success: true, data: {} });
+  assert.equal(validateToolInput(listDirectoryTool, { path: '.' }).success, true);
+  for (const path of ['', '  ', null, [], {}])
+    assert.equal(validateToolInput(listDirectoryTool, { path }).success, false);
+  for (const workingDirectory of ['', '.', null, [], { type: 'other' }])
+    assert.equal(
+      validateToolInput(shellTool, { command: 'node check.mjs', workingDirectory }).success,
+      false
+    );
+  assert.equal(
+    validateToolInput(shellTool, {
+      command: 'node check.mjs',
+      workingDirectory: { type: 'skill', name: 'demo' }
+    }).success,
+    true
+  );
+});
+
+test('many Unicode input failures cannot crowd out the bounded correction guidance', () => {
+  const schema = Object.fromEntries(
+    Array.from({ length: 100 }, (_, i) => [`field${i}`, z.string()])
+  );
+  const tool = { ...listDirectoryTool, inputSchema: z.object(schema).strict() };
+  const result = validateToolInput(tool, { unexpected: '秘密内容'.repeat(1000) });
+  assert.equal(result.success, false);
+  assert.ok(Buffer.byteLength(result.message) <= 2048);
+  assert.match(result.message, /further issues omitted/);
+  assert.match(result.message, /Validation did not execute/);
+  assert.doesNotMatch(result.message, /秘密内容/);
 });
 
 test('keeps file access inside the workspace and blocks sensitive paths', async () => {

@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto';
 import type { AgentMode } from './modes.js';
 import type { QueryEngine, QueryEngineStateV1 } from './engine.js';
 import type { TurnResult } from './events.js';
+import type { TaskDeliverySnapshot } from './task-delivery.js';
 import { PermissionGrantStore, type PermissionGrantScope } from './permissions/grant-store.js';
 import type { PermissionMode } from './permissions/mode.js';
 import {
@@ -59,6 +60,7 @@ export interface SessionSwitchResult {
   title: string;
   providerId: string;
   warning?: string;
+  delivery?: TaskDeliverySnapshot;
 }
 
 function normalizeTitle(value: string): string {
@@ -241,6 +243,7 @@ export class SessionController {
         delete restoredState.lastReportedModel;
       }
       created.engine.restoreState(restoredState);
+      await created.engine.inspectTaskDelivery();
     } catch (error) {
       await nextLease.release();
       throw error;
@@ -265,7 +268,7 @@ export class SessionController {
     this.createdAt = snapshot.createdAt;
     this.updatedAt = snapshot.updatedAt;
     this.turns = snapshot.usage.turns;
-    this.dirty = providerChanged;
+    this.dirty = providerChanged || Boolean(snapshot.engineState.taskDelivery);
     this.degraded = false;
     this.hasWarned = false;
     this.lastSavedAt = snapshot.updatedAt;
@@ -281,6 +284,9 @@ export class SessionController {
       sessionId,
       title: this.title,
       providerId: this.currentProviderId,
+      ...(this.currentEngine.getStatus().delivery
+        ? { delivery: this.currentEngine.getStatus().delivery }
+        : {}),
       ...(created.warning ? { warning: created.warning } : {})
     };
   }

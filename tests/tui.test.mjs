@@ -6,8 +6,8 @@ import { PassThrough } from 'node:stream';
 import test from 'node:test';
 import React from 'react';
 import xtermHeadless from '@xterm/headless';
-import { render as renderInk, Text } from 'ink';
-import { render } from 'ink-testing-library';
+import { render as renderInk, Text, useStdout } from 'ink';
+import { render as renderTestLibrary } from 'ink-testing-library';
 import stringWidth from 'string-width';
 import {
   isExplicitNewlineInput,
@@ -40,6 +40,19 @@ import {
 import { localizeSuggestionDescription, localizeTuiActivity } from '../dist/ui-language.js';
 
 const wait = (milliseconds = 25) => new Promise((resolve) => setTimeout(resolve, milliseconds));
+
+function TestWindow({ children }) {
+  const { stdout } = useStdout();
+  // The testing library supplies columns, but not rows; do not inherit host terminal geometry.
+  stdout.rows = 24;
+  return children;
+}
+
+function render(tree) {
+  const wrap = (content) => React.createElement(TestWindow, null, content);
+  const view = renderTestLibrary(wrap(tree));
+  return { ...view, rerender: (content) => view.rerender(wrap(content)) };
+}
 
 class TtyInput extends PassThrough {
   isTTY = true;

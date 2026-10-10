@@ -105,7 +105,7 @@ const shellInputSchema = z
       .trim()
       .min(1, 'Command cannot be empty')
       .max(MAX_SHELL_COMMAND_CHARACTERS, 'Command is too long')
-      .describe('The shell command to execute'),
+      .describe('The exact shell command. For workspace execution use only {"command":"..."}.'),
     timeoutMs: z
       .number()
       .int()
@@ -119,7 +119,11 @@ const shellInputSchema = z
         z.object({ type: z.literal('skill'), name: z.string().min(1).max(64) }).strict()
       ])
       .optional()
-      .describe('Run in the workspace or in an already activated Skill directory')
+      .describe(
+        'Omit this optional field for the current workspace. ' +
+          'Only for an activated Skill directory use {"type":"skill","name":"skill-name"}. ' +
+          '{"type":"workspace"} is also valid. Never use a path string, null, cwd or workdir.'
+      )
   })
   .strict();
 
@@ -146,7 +150,11 @@ async function resolveShellWorkingDirectory(
 
 export const shellTool = defineTool({
   name: 'Shell',
-  description: 'Execute a non-interactive shell command in the current workspace.',
+  description:
+    'Execute a non-interactive shell command; normal mode and approval rules apply. ' +
+    'For the workspace send only {"command":"..."}; omit optional fields unless needed. ' +
+    'For a declared task check copy its command exactly, with no cd, wrappers or extra commands. ' +
+    'Use Read/ListDirectory for inspection, not an additional Shell inspection command.',
   inputSchema: shellInputSchema,
   risk: 'execute',
   approval: 'always',
@@ -202,14 +210,17 @@ const listDirectoryInputSchema = z
   .object({
     path: pathSchema
       .optional()
-      .describe('Directory path inside the workspace; defaults to the workspace root')
+      .describe(
+        'Omit for the workspace root, or send ".". If present use a nonempty string, never null.'
+      )
   })
   .strict();
 
 export const listDirectoryTool = defineTool({
   name: 'ListDirectory',
   description:
-    'List files and directories inside the current workspace. Prefer this over Shell for exploring project structure.',
+    'List workspace files. Root input is {} or {"path":"."}, never {"path":""} or null. ' +
+    'Use only when directory discovery is needed; read an already known file directly with Read.',
   inputSchema: listDirectoryInputSchema,
   risk: 'read',
   approval: 'never',

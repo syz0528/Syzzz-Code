@@ -6,6 +6,7 @@ import { z } from 'zod';
 import type { AgentMode } from './modes.js';
 import type { ProviderUsage } from './providers/base.js';
 import type { QueryEngineStateV1 } from './runtime-engine.js';
+import { taskDeliveryStateSchema } from './task-delivery.js';
 
 export const SESSION_SCHEMA_VERSION = 1 as const;
 export const MAX_SESSION_STATE_BYTES = 64 * 1024 * 1024;
@@ -93,6 +94,7 @@ const engineStateSchema = z
     displayMessages: z.array(conversationDisplayMessageSchema).optional(),
     pendingFileChangeReceipts: z.array(fileChangeReceiptSchema),
     ragContextReceipts: z.array(ragContextReceiptSchema).max(100).optional(),
+    taskDelivery: taskDeliveryStateSchema.optional(),
     compactionCount: z.number().int().nonnegative(),
     totalUsage: usageSchema,
     lastReportedModel: z.string().min(1).optional()

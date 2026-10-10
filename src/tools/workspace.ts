@@ -105,13 +105,23 @@ async function findNearestExistingAncestor(candidatePath: string): Promise<strin
   }
 }
 
+function isProjectMemoryStoragePath(path: string): boolean {
+  const segments = path.split(/[\\/]+/u).map((segment) => segment.toLowerCase());
+  return segments.some(
+    (segment, index) => segment === '.syzzz-code' && segments[index + 1] === 'memory'
+  );
+}
+
 export function isSensitiveRelativePath(relativePath: string): boolean {
   const pathSegments = relativePath
     .split(/[\\/]+/)
     .filter(Boolean)
     .map((segment) => segment.toLowerCase());
 
-  if (pathSegments.some((segment) => segment === '.git' || segment === '.ssh')) {
+  if (
+    pathSegments.some((segment) => segment === '.git' || segment === '.ssh') ||
+    isProjectMemoryStoragePath(relativePath)
+  ) {
     return true;
   }
 
@@ -174,7 +184,10 @@ export async function resolveWorkspacePath(
   }
 
   const resolvedRelativePath = relative(realWorkspaceRoot, resolvedSecurityTarget);
-  if (isSensitiveRelativePath(resolvedRelativePath)) {
+  if (
+    isSensitiveRelativePath(resolvedRelativePath) ||
+    isProjectMemoryStoragePath(resolvedSecurityTarget)
+  ) {
     throw new WorkspacePathError(
       `Access to sensitive path through a symbolic link or junction is blocked: ${inputPath}`,
       'SENSITIVE_PATH'

@@ -179,7 +179,7 @@ const patchInputSchema = z
 export const patchTool = defineTool({
   name: 'Patch',
   description:
-    'Apply one or more exact, non-overlapping edits to the version returned by Read. Rejects stale or ambiguous context.',
+    'Edit an existing UTF-8 file using required path, expectedHash from latest Read, and operations [{oldText,newText}]. Not a unified diff or patch string. Exact unique matches only; rejects stale or ambiguous context.',
   inputSchema: patchInputSchema,
   risk: 'write',
   approval: 'always',

@@ -1,5 +1,6 @@
 import type { ConversationMessage } from '../providers/base.js';
 import type { AgentEventData } from '../events.js';
+import type { ProjectMemoryStore } from '../project-memory.js';
 
 export interface ContextReference {
   raw: string;
@@ -85,6 +86,42 @@ export interface SkillActivation {
   byteCount: number;
 }
 
+export interface SkillDiscoveryInput {
+  query?: string;
+  category?: string;
+  offset?: number;
+  limit?: number;
+  revision?: string;
+}
+
+export interface SkillDiscoveryCandidate {
+  name: string;
+  displayName: string;
+  description: string;
+  source: SkillSource;
+  categories: string[];
+  invocation: 'explicit-only' | 'explicit+implicit';
+  activeThisTurn: boolean;
+  resourceNames: string[];
+  declaredDependencies: string[];
+  dependencyStatus: 'not-checked';
+  matchedBy: 'name' | 'lexical' | 'browse';
+  score?: number;
+  metadataTruncated: boolean;
+}
+
+export interface SkillDiscoveryPage {
+  schemaVersion: 1;
+  revision: string;
+  eligible: number;
+  matched: number;
+  offset: number;
+  nextOffset?: number;
+  categories: Array<{ name: string; count: number }>;
+  candidates: SkillDiscoveryCandidate[];
+  byteLimited: boolean;
+}
+
 export interface SkillInstallRecordV1 {
   schemaVersion: 1;
   name: string;
@@ -142,6 +179,9 @@ export interface CompositionStatus {
     catalogIncluded: number;
     catalogOmitted: number;
     catalogCharacters: number;
+    catalogMode?: 'full' | 'progressive';
+    activeNames?: string[];
+    lastDiscovery?: { matched: number; shown: number; names: string[]; offset: number };
     autoRefresh: {
       enabled: true;
       lastCheckedAt?: string;
@@ -161,6 +201,7 @@ export interface ComposedTurn {
 
 export interface TaskCompositionRuntimeLike {
   readonly workspaceRoot: string;
+  getProjectMemory?(): ProjectMemoryStore | undefined;
   beginTurn(): void;
   reload(): Promise<CompositionStatus>;
   compose(message: string, signal: AbortSignal): Promise<ComposedTurn>;
@@ -172,6 +213,8 @@ export interface TaskCompositionRuntimeLike {
   getStatus(): CompositionStatus;
   listSkills(): SkillDescriptor[];
   inspectSkill(name: string): SkillDescriptor | undefined;
+  discoverSkills?(input: SkillDiscoveryInput, signal: AbortSignal): Promise<SkillDiscoveryPage>;
+  setSkillCatalogMode?(mode: 'auto' | 'full' | 'progressive'): void;
   setSkillEnabled(name: string, enabled: boolean): void;
   resolveActiveSkillRoot(name: string, signal?: AbortSignal): Promise<string>;
   getTools(): import('../types.js').ToolDefinition[];

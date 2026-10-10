@@ -35,12 +35,14 @@ export interface ProviderTool {
     type: 'object';
     properties: Record<string, unknown>;
     required?: string[];
+    additionalProperties?: boolean;
   };
 }
 
 export interface ProviderChatRequest {
   messages: ConversationMessage[];
   tools: ProviderTool[];
+  toolChoice?: 'none';
   systemPrompt: string;
   maxOutputTokens?: number;
   stopSequences?: string[];
