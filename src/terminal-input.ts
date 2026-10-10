@@ -138,6 +138,8 @@ export class TerminalInputController {
   private fallback?: ReadlineInterface;
   private fallbackResults: TerminalReadResult[] = [];
   private fallbackReaders: Array<(result: TerminalReadResult) => void> = [];
+  private closeEnhancedRead?: () => void;
+  private pendingInputPause?: () => void;
   private closed = false;
 
   constructor(input: TtyReadable = process.stdin, output: TtyWritable = process.stdout) {
@@ -187,6 +189,9 @@ export class TerminalInputController {
     if (options.signal?.aborted) {
       throw new OperationAbortedError();
     }
+    if (this.closed && this.enhanced) {
+      return { type: 'eof' };
+    }
     return this.enhanced ? this.readEnhanced(options) : this.readFallback(options);
   }
 
@@ -195,8 +200,9 @@ export class TerminalInputController {
       return;
     }
     this.closed = true;
+    this.closeEnhancedRead?.();
     this.fallback?.close();
-    if (this.input.isRaw) {
+    if (!this.enhanced && this.input.isRaw) {
       this.input.setRawMode?.(false);
     }
   }
@@ -246,6 +252,7 @@ export class TerminalInputController {
   }
 
   private readEnhanced(options: TerminalReadOptions): Promise<TerminalReadResult> {
+    this.pendingInputPause?.();
     return new Promise<TerminalReadResult>((resolve, reject) => {
       let value = '';
       let cursor = 0;
@@ -261,12 +268,24 @@ export class TerminalInputController {
       let isPasting = false;
       let pasteBuffer = '';
       const wasRaw = Boolean(this.input.isRaw);
+      const wasFlowing = this.input.readableFlowing === true;
 
       const cleanup = () => {
         suggestionsController?.abort();
         options.signal?.removeEventListener('abort', handleAbort);
         this.output.removeListener('resize', handleResize);
         this.input.removeListener('keypress', handleKeypress);
+        this.closeEnhancedRead = undefined;
+        // Pause after the keypress callback, before handing control back to the caller.
+        if (!wasFlowing) {
+          const pauseInput = () => {
+            if (this.pendingInputPause !== pauseInput) return;
+            this.pendingInputPause = undefined;
+            this.input.pause();
+          };
+          this.pendingInputPause = pauseInput;
+          queueMicrotask(pauseInput);
+        }
         this.output.write(DISABLE_BRACKETED_PASTE);
         if (!wasRaw) {
           this.input.setRawMode?.(false);
@@ -582,6 +601,7 @@ export class TerminalInputController {
       };
 
       options.signal?.addEventListener('abort', handleAbort, { once: true });
+      this.closeEnhancedRead = () => finish({ type: 'eof' });
       this.output.on('resize', handleResize);
       this.input.on('keypress', handleKeypress);
       this.input.setRawMode?.(true);
