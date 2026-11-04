@@ -40,6 +40,7 @@ import { CORE_RUNTIME_INSTRUCTIONS } from './runtime-instructions.js';
 import { TaskExecutionLedger } from './task-execution.js';
 import {
   TaskDelivery,
+  type TaskDeliveryContract,
   type TaskDeliverySnapshot,
   type TaskDeliveryStateV1
 } from './task-delivery.js';
@@ -802,11 +803,19 @@ export class QueryEngine {
     return this.workspaceRoot;
   }
 
-  async startTaskDelivery(contractPath: string): Promise<TaskDeliverySnapshot> {
+  async startTaskDelivery(
+    contract: string | TaskDeliveryContract,
+    signal?: AbortSignal
+  ): Promise<TaskDeliverySnapshot> {
+    if (signal) throwIfAborted(signal);
     if (this.isProcessing) throw new Error('Cannot replace task delivery during a turn');
     if (this.taskDelivery)
       throw new Error('Clear the existing delivery record before starting another task');
-    const delivery = await TaskDelivery.load(this.workspaceRoot, contractPath);
+    const delivery =
+      typeof contract === 'string'
+        ? await TaskDelivery.load(this.workspaceRoot, contract)
+        : await TaskDelivery.create(this.workspaceRoot, contract);
+    if (signal) throwIfAborted(signal);
     if (this.isProcessing || this.taskDelivery)
       throw new Error('Engine state changed while loading the task contract');
     this.taskDelivery = delivery;
@@ -817,6 +826,10 @@ export class QueryEngine {
   async inspectTaskDelivery(): Promise<TaskDeliverySnapshot | undefined> {
     if (this.isProcessing) return this.taskDelivery?.snapshot();
     return this.taskDelivery?.reconcile();
+  }
+
+  getTaskDeliveryContract(): TaskDeliveryContract | undefined {
+    return this.taskDelivery?.getContract();
   }
 
   clearTaskDelivery(): void {

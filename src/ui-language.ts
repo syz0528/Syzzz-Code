@@ -8,7 +8,7 @@ const COMMAND_DESCRIPTIONS_ZH: Readonly<Record<string, string>> = {
   plan: '切换到只读规划模式，分析后输出实施计划。',
   code: '切换到代码模式，允许按权限策略执行修改。',
   status: '查看会话、模型、权限、Token 和上下文状态。',
-  task: '加载显式交付契约，核对文件版本、测试回执与未完成步骤。',
+  task: '交互式创建并确认任务清单，查看进度、缺失项和真实工具回执。',
   new: '新建会话，同时保留当前已保存会话。',
   resume: '恢复当前工作区中已保存的会话。',
   rename: '重命名当前会话。',

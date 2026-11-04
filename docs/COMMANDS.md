@@ -71,6 +71,19 @@ syzzz doctor --repair-config
 
 ## 会话管理
 
+开发分支还支持显式任务清单（公开 npm `1.0.0` 尚不包含本轮更新）：
+
+```text
+/task new
+/task status
+/task inspect
+/task start task.json
+/task resolve <operation-id>
+/task clear
+```
+
+`/task new` 通过本地表单建立草稿，预览确认后才启用回执检查；随后仍需正常向 Agent 提交任务。它不自动执行命令或授予权限。TUI 的 `/task` 打开操作菜单，inline 可直接使用 `/task new`。细节见[任务交付记录](task-delivery.md)。
+
 ```bash
 syzzz sessions list
 syzzz sessions delete <id-or-prefix>

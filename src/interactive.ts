@@ -54,6 +54,7 @@ import {
 import { inspectTerminalKeyboard, installTerminalShiftEnter } from './tui/terminal-keyboard.js';
 import { manageRag } from './rag/management.js';
 import { formatTaskDelivery } from './task-delivery.js';
+import { createTaskDraft, inspectTaskItem } from './interaction/task-wizard.js';
 import { formatSkillDiscovery } from './composition/skill-discovery.js';
 import { createProjectMemoryCommand } from './project-memory-command.js';
 
@@ -1315,12 +1316,115 @@ export function createCommandRegistry(): CommandRegistry<InteractiveCommandConte
     name: 'task',
     category: 'runtime',
     priority: COMMAND_PRIORITIES.task,
-    description:
-      'Track an explicit workspace delivery contract and inspect real execution receipts.',
-    argumentHint: '[start <contract.json>|status|resolve <operation-id>|clear]',
+    description: 'Create a confirmed task checklist and inspect actual delivery receipts.',
+    argumentHint: '[new|start <contract.json>|status|inspect|resolve <operation-id>|clear]',
+    choices: (commandContext) => [
+      {
+        value: 'new',
+        label: localText(commandContext, 'Create task checklist', '交互式创建任务清单')
+      },
+      {
+        value: 'status',
+        label: localText(commandContext, 'Progress and missing items', '查看进度与缺失项')
+      },
+      {
+        value: 'inspect',
+        label: localText(commandContext, 'Inspect item receipts', '查看验收项与回执详情')
+      },
+      ...(commandContext.engine.getStatus().delivery?.unresolvedOperations?.length
+        ? [
+            {
+              value: 'resolve',
+              label: localText(
+                commandContext,
+                'Inspect unresolved operations',
+                '处理已核对影响的未决操作'
+              )
+            }
+          ]
+        : []),
+      {
+        value: 'clear',
+        label: localText(commandContext, 'Clear current checklist', '清除当前任务清单')
+      }
+    ],
     async execute(argument, commandContext, signal): Promise<CommandExecutionResult> {
-      const value = argument?.trim() ?? 'status';
+      let value = argument?.trim() ?? 'status';
       const language = resolveUiLanguage(commandContext.uiLanguage) === 'zh-CN' ? 'zh' : 'en';
+      if (value === 'new') {
+        if (commandContext.engine.getStatus().delivery) {
+          commandContext.interaction.notice({
+            tone: 'warning',
+            text: localText(
+              commandContext,
+              'An existing task is retained. Inspect it with /task status; clear it explicitly before creating another.',
+              '已有任务保持不变。请先用 /task status 核对，再显式清除后创建新任务。'
+            )
+          });
+          return 'continue';
+        }
+        const draft = await createTaskDraft(
+          commandContext.interaction,
+          commandContext.engine.getWorkspaceRoot(),
+          language,
+          signal
+        );
+        if (draft) {
+          const snapshot = await commandContext.engine.startTaskDelivery(draft, signal);
+          await commandContext.session?.stateChanged();
+          commandContext.interaction.notice({
+            tone: 'success',
+            text: formatTaskDelivery(snapshot, language)
+          });
+        } else {
+          commandContext.interaction.notice({
+            tone: 'muted',
+            text: localText(
+              commandContext,
+              'Draft discarded; no task was enabled.',
+              '草稿已放弃；没有启用任务记录。'
+            )
+          });
+        }
+        return 'continue';
+      }
+      if (value === 'inspect') {
+        const snapshot = await commandContext.engine.inspectTaskDelivery();
+        const contract = commandContext.engine.getTaskDeliveryContract();
+        if (snapshot && contract) {
+          await commandContext.session?.stateChanged();
+          await inspectTaskItem(commandContext.interaction, contract, snapshot, language, signal);
+          return 'continue';
+        }
+        value = 'status';
+      }
+      if (value === 'resolve') {
+        const operations = commandContext.engine.getStatus().delivery?.unresolvedOperations ?? [];
+        if (!operations.length) {
+          commandContext.interaction.notice({
+            tone: 'info',
+            text: localText(commandContext, 'No unresolved operations.', '暂无未决操作。')
+          });
+          return 'continue';
+        }
+        const id = await commandContext.interaction.select(
+          {
+            title: localText(commandContext, 'Choose inspected operation', '选择已核对影响的操作'),
+            message: localText(
+              commandContext,
+              'Inspect affected files or services first. Confirmation will not run anything.',
+              '请先检查受影响的文件或服务；确认不会执行任何操作。'
+            ),
+            choices: operations.map(({ toolCallId, tool }) => ({
+              value: toolCallId,
+              label: `${tool}: ${toolCallId}`
+            }))
+          },
+          signal
+        );
+        if (!id) return 'continue';
+        value = `resolve ${id}`;
+      }
       if (value === 'clear') {
         if (
           commandContext.engine.getStatus().delivery?.unresolvedOperations?.length &&
@@ -1388,7 +1492,7 @@ export function createCommandRegistry(): CommandRegistry<InteractiveCommandConte
         return 'continue';
       }
       const snapshot = value.startsWith('start ')
-        ? await commandContext.engine.startTaskDelivery(value.slice(6).trim())
+        ? await commandContext.engine.startTaskDelivery(value.slice(6).trim(), signal)
         : value === 'status'
           ? await commandContext.engine.inspectTaskDelivery()
           : undefined;
@@ -1399,8 +1503,8 @@ export function createCommandRegistry(): CommandRegistry<InteractiveCommandConte
           ? formatTaskDelivery(snapshot, language)
           : localText(
               commandContext,
-              'No active delivery record. Use /task start <contract.json> | status | resolve <operation-id> | clear. Session saves include this bounded record.',
-              '暂无交付记录。用法：/task start <contract.json> | status | resolve <operation-id> | clear。会话保存包含有界交付记录。'
+              'No active delivery record. Use /task new to create one interactively, or /task start <contract.json> | status | inspect | resolve <operation-id> | clear. Session saves include this bounded record.',
+              '暂无交付记录。用 /task new 交互式创建，或 /task start <contract.json> | status | inspect | resolve <operation-id> | clear。会话保存包含有界交付记录。'
             )
       });
       return 'continue';

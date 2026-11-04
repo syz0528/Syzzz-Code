@@ -27,6 +27,7 @@ import {
 } from '../interaction/conversation.js';
 import type { SuggestionItem } from '../terminal-input.js';
 import type { ToolApprovalChoice, UserInputAnswers } from '../types.js';
+import { formatTaskDeliveryProgress } from '../task-delivery.js';
 import { localizeTuiActivity, localizeTuiPanelText } from '../ui-language.js';
 import {
   ComposerBuffer,
@@ -209,18 +210,25 @@ function InteractionPanel({
       height={height}
       overflow="hidden"
     >
-      <Text bold color={toneColor('warning')}>
+      <Text bold color={toneColor('warning')} wrap="truncate-end">
         {title}
       </Text>
       {pending.type === 'confirm' ? (
         <>
-          <Text>{localizeTuiPanelText(pending.request.message, language)}</Text>
-          {pending.request.preview ? <Text dimColor>{pending.request.preview}</Text> : null}
-          <Text>
-            [{pending.request.confirmToken}] {zh ? '确认' : 'confirm'} / [N]{' '}
-            {zh ? '取消' : 'cancel'}
-          </Text>
-          <Text>
+          {height > 5 ? (
+            <Box maxHeight={height - 5} flexDirection="column" overflow="hidden">
+              <Text>{localizeTuiPanelText(pending.request.message, language)}</Text>
+              {pending.request.preview ? <Text dimColor>{pending.request.preview}</Text> : null}
+            </Box>
+          ) : null}
+          {height > 4 ? (
+            <Text wrap="truncate-end">
+              [{pending.request.confirmToken}] {zh ? '确认' : 'confirm'} / [N]{' '}
+              {zh ? '取消' : 'cancel'}
+            </Text>
+          ) : null}
+          <Text wrap="truncate-end">
+            {height <= 4 ? `[${pending.request.confirmToken}/N] ` : ''}
             &gt; {pending.value ?? ''}
             <Text inverse> </Text>
           </Text>
@@ -253,10 +261,12 @@ function InteractionPanel({
       ) : null}
       {pending.type === 'text' ? (
         <>
-          {pending.request.message ? (
-            <Text>{localizeTuiPanelText(pending.request.message, language)}</Text>
+          {pending.request.message && height > 4 ? (
+            <Box maxHeight={height - 4} overflow="hidden">
+              <Text>{localizeTuiPanelText(pending.request.message, language)}</Text>
+            </Box>
           ) : null}
-          <Text>
+          <Text wrap="truncate-start">
             &gt; {pending.request.hidden ? '*'.repeat(pending.value.length) : pending.value}
             <Text inverse> </Text>
           </Text>
@@ -685,6 +695,7 @@ export function TuiApp({ controller, copyToClipboard, keyboard, profile }: TuiAp
   const interactionHeight = state.pending
     ? Math.min(compact ? 7 : 12, Math.max(4, frameRows - 8))
     : 0;
+  const taskProgressHeight = state.status.delivery && !state.pending && !tooSmall ? 1 : 0;
   const availableTranscriptHeight = Math.max(
     1,
     frameRows -
@@ -693,7 +704,8 @@ export function TuiApp({ controller, copyToClipboard, keyboard, profile }: TuiAp
       FOOTER_HEIGHT -
       composerHeight -
       suggestionHeight -
-      interactionHeight
+      interactionHeight -
+      taskProgressHeight
   );
   const desiredTranscriptWidth = Math.max(10, columns - 3);
   const [settledTranscriptWidth, setSettledTranscriptWidth] = useState(desiredTranscriptWidth);
@@ -1243,6 +1255,16 @@ export function TuiApp({ controller, copyToClipboard, keyboard, profile }: TuiAp
         selection={transcriptSelection}
         language={state.language}
       />
+      {taskProgressHeight && status.delivery ? (
+        <Box height={taskProgressHeight} overflow="hidden" aria-label="Task checklist progress">
+          <Text
+            color={toneColor(status.delivery.satisfied ? 'success' : 'warning')}
+            wrap="truncate-end"
+          >
+            {formatTaskDeliveryProgress(status.delivery, state.language === 'zh-CN' ? 'zh' : 'en')}
+          </Text>
+        </Box>
+      ) : null}
       <Box height={ACTIVITY_HEIGHT} overflow="hidden">
         <ActivityBar
           activity={

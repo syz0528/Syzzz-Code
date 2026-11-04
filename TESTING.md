@@ -8,6 +8,7 @@ npm run format:check
 npm run lint
 npm test
 npm run test:tui
+npm run test:delivery
 npm run test:coverage
 npm run test:providers
 npm run eval:offline
@@ -41,6 +42,8 @@ Windows PowerShell 5.1 手工创建包含中文的 `AGENTS.md` 或 `SKILL.md` �
 `npm run test:memory` 验证 M4 显式项目记忆的确认、来源失效、并发保存、损坏与链接边界、取消、真实交互历史隔离、模式安全和无额外 Provider 调用。测试使用临时目录和固定响应，不声明真实模型记忆收益；完整 `check` 自动包含这些回归。用法见 [可审阅项目记忆](docs/project-memory.md)。
 
 `npm run test:delivery` 使用固定 Provider 响应序列驱动真实 QueryEngine、Read/Write/Shell、临时工作区与独立 Node 断言脚本。它验证回执链路，不代表自然语言模型在真实任务中的交付成功率。覆盖文件版本过期、保护文件、审批与模式拒绝、取消、输出上限、截断、成功标记、TUI/inline/NDJSON 一致性和审计隐私。
+
+`tests/task-interaction.test.mjs` 同时覆盖交互草稿的三类要求、编辑与删除、确认前不启用、否认后继续编辑、Esc/AbortSignal 取消、字段与字节上限、路径与保护文件校验，以及表单答案不进入模型或输入历史。TUI 专项使用 headless VT 屏幕回放验证进度行不挤占 Composer 光标、不触发全屏清除，并在 40×12 与交互面板共存时隐藏辅助进度行。此验证不代替真人宿主 IME 和闪烁体验验收。
 
 `node --test` 的测试进程会向子进程继承测试环境；其中再次运行 `node --test` 可能被跳过而返回 0。专项使用 `node importer.test.mjs` 实际执行断言，并核对仅在断言通过后输出的成功标记，不能把跳过测试算作通过。手工验证示例见 [显式任务交付记录](docs/task-delivery.md)。
 

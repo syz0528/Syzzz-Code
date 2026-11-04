@@ -464,6 +464,136 @@ test('alternate screen, raw mode, cursor and resize state restore after unmount'
   assert.match(output, /\u001b\[\?1049l/u);
 });
 
+test('task progress row preserves composer cursor, incremental frames and compact layout', async () => {
+  const controller = new FakeController();
+  controller.snapshot.language = 'zh-CN';
+  controller.snapshot.status.delivery = {
+    schemaVersion: 1,
+    title: 'Task',
+    outcome: 'active',
+    satisfied: false,
+    protection: 'unchanged',
+    items: [{ id: 'read', label: 'Read', kind: 'read', state: 'planned' }]
+  };
+  const stdin = new TtyInput();
+  const stdout = ttyOutput(100, 24);
+  let output = '';
+  stdout.on('data', (chunk) => {
+    output += chunk.toString('utf8');
+  });
+  const instance = renderInk(React.createElement(TuiApp, { controller }), {
+    alternateScreen: true,
+    exitOnCtrlC: false,
+    interactive: true,
+    patchConsole: false,
+    stdin,
+    stdout,
+    stderr: ttyOutput(100, 24),
+    incrementalRendering: true
+  });
+  try {
+    await instance.waitUntilRenderFlush();
+    const fullClears = (output.match(/\u001b\[2J/gu) ?? []).length;
+    stdin.write('测试');
+    await wait(80);
+    await instance.waitUntilRenderFlush();
+    controller.snapshot.status.delivery = {
+      ...controller.snapshot.status.delivery,
+      items: [{ id: 'read', label: 'Read', kind: 'read', state: 'read' }]
+    };
+    controller.emit();
+    await wait(80);
+    await instance.waitUntilRenderFlush();
+    assert.equal((output.match(/\u001b\[2J/gu) ?? []).length, fullClears);
+    const replay = new xtermHeadless.Terminal({ cols: 100, rows: 24, allowProposedApi: true });
+    await writeTerminal(replay, output.replace(/(?<!\r)\n/gu, '\r\n'));
+    assert.match(terminalScreen(replay), /有效回执 1\/1/);
+    const cursorLine =
+      replay.buffer.active.getLine(replay.buffer.active.cursorY)?.translateToString(true) ?? '';
+    assert.match(cursorLine, /> 测试/);
+    assert.equal(
+      replay.buffer.active.cursorX,
+      stringWidth(cursorLine.slice(0, cursorLine.indexOf('试') + 1))
+    );
+    assert.equal(replay.buffer.active.getLine(23)?.translateToString(true), '');
+    replay.dispose();
+    stdout.columns = 40;
+    stdout.rows = 12;
+    stdout.emit('resize');
+    await wait(100);
+    await instance.waitUntilRenderFlush();
+    output = '';
+    controller.setPending({
+      id: 'task-form',
+      type: 'text',
+      request: { title: '任务名称' },
+      value: '草稿'
+    });
+    await wait(80);
+    await instance.waitUntilRenderFlush();
+    assert.match(output, /任务名称/);
+    assert.match(output, /草稿/);
+    assert.doesNotMatch(output, /有效回执/);
+  } finally {
+    instance.unmount();
+    await instance.waitUntilExit();
+  }
+  assert.equal(stdin.isRaw, false);
+});
+
+test('long local form messages cannot hide text input or confirmation at minimum terminal size', async () => {
+  for (const [columns, rows] of [
+    [40, 12],
+    [80, 24]
+  ]) {
+    for (const type of ['text', 'confirm']) {
+      const controller = new FakeController();
+      controller.setPending({
+        id: 'bounded-form',
+        type,
+        request: {
+          title: 'FORM_TITLE',
+          message: '很长的说明内容'.repeat(80),
+          preview: 'Preview'.repeat(60),
+          confirmToken: 'y'
+        },
+        value: type === 'text' ? `${'长命令'.repeat(80)}END_MARKER` : 'y'
+      });
+      const stdin = new TtyInput();
+      const stdout = ttyOutput(columns, rows);
+      let output = '';
+      stdout.on('data', (chunk) => {
+        output += chunk.toString('utf8');
+      });
+      const instance = renderInk(React.createElement(TuiApp, { controller }), {
+        alternateScreen: true,
+        exitOnCtrlC: false,
+        interactive: true,
+        patchConsole: false,
+        stdin,
+        stdout,
+        stderr: ttyOutput(columns, rows),
+        incrementalRendering: true
+      });
+      try {
+        await instance.waitUntilRenderFlush();
+        const replay = new xtermHeadless.Terminal({ cols: columns, rows, allowProposedApi: true });
+        await writeTerminal(replay, output.replace(/(?<!\r)\n/gu, '\r\n'));
+        const screen = terminalScreen(replay);
+        assert.match(screen, /FORM_TITLE/);
+        assert.match(screen, type === 'text' ? /END_MARKER/ : /> y/);
+        if (type === 'confirm') assert.match(screen, /\[y/);
+        assert.equal(replay.buffer.active.getLine(rows - 1)?.translateToString(true), '');
+        replay.dispose();
+      } finally {
+        instance.unmount();
+        await instance.waitUntilExit();
+      }
+      assert.equal(stdin.isRaw, false);
+    }
+  }
+});
+
 test('conservative renderer does not rewrite historical answers while typing or approving', async () => {
   const controller = new FakeController();
   controller.snapshot = {

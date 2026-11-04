@@ -190,6 +190,25 @@ export type TaskDeliveryStateV1 = z.infer<typeof taskDeliveryStateSchema>;
 type PendingOperation = z.infer<typeof pendingOperationSchema>;
 
 export type TaskDeliveryContract = z.infer<typeof contractSchema>;
+
+export function parseTaskPath(input: string): string {
+  return relativePath.parse(input);
+}
+
+export function parseTaskRequirement(input: unknown): TaskDeliveryContract['requirements'][number] {
+  return requirementSchema.parse(input);
+}
+
+export function parseTaskDeliveryContract(input: unknown): TaskDeliveryContract {
+  const parsed = contractSchema.safeParse(input);
+  if (!parsed.success)
+    throw new Error(
+      `Invalid task delivery contract schema: ${parsed.error.issues[0]?.message ?? 'invalid input'}`
+    );
+  if (Buffer.byteLength(JSON.stringify(parsed.data)) > MAX_CONTRACT_BYTES)
+    throw new Error('Task contract exceeds 32 KiB');
+  return parsed.data;
+}
 export type DeliveryState =
   'planned' | 'read' | 'artifact' | 'checked' | 'blocked' | 'unknown' | 'stale';
 export interface DeliveryReceipt {
@@ -357,12 +376,7 @@ export class TaskDelivery {
   }
 
   static async create(root: string, input: unknown): Promise<TaskDelivery> {
-    const parsed = contractSchema.safeParse(input);
-    if (!parsed.success)
-      throw new Error(
-        `Invalid task delivery contract schema: ${parsed.error.issues[0]?.message ?? 'invalid input'}`
-      );
-    const contract = parsed.data;
+    const contract = parseTaskDeliveryContract(input);
     if (new Set(contract.requirements.map(({ id }) => id)).size !== contract.requirements.length)
       throw new Error('Task requirement IDs must be unique');
     const delivery = new TaskDelivery(root, contract);
@@ -422,6 +436,10 @@ export class TaskDelivery {
       protection: this.protection,
       operations: [...this.operations.values()].map((operation) => ({ ...operation }))
     });
+  }
+
+  getContract(): TaskDeliveryContract {
+    return structuredClone(this.contract);
   }
 
   private async fingerprint(tool: string, value: unknown): Promise<string> {
@@ -786,10 +804,12 @@ export function formatTaskDelivery(
     'check-scope-unverified': '检查范围或成功标记无法核对',
     'partial-or-changed-read': '仅部分读取或版本变化',
     'artifact-shape-unverified': '产物结构无法核对',
-    'file-version-changed': '对应文件版本已变化'
+    'file-version-changed': '对应文件版本已变化',
+    'operation-unconfirmed': '操作影响尚未确认，不能认定成功或直接重试'
   };
   return [
     `${zh ? '交付记录' : 'Delivery'}: ${snapshot.title} (${zh ? outcomes[snapshot.outcome] : snapshot.outcome})`,
+    formatTaskDeliveryProgress(snapshot, language),
     ...(snapshot.needsReconciliation
       ? [
           zh
@@ -820,4 +840,27 @@ export function formatTaskDelivery(
         ? 'Contract checks satisfied; not proof of overall correctness.'
         : 'Delivery receipts are incomplete or invalid.'
   ].join('\n');
+}
+
+export function formatTaskDeliveryProgress(
+  snapshot: TaskDeliverySnapshot,
+  language: 'zh' | 'en' = 'en'
+): string {
+  const zh = language === 'zh';
+  const verified = snapshot.items.filter(({ state }) =>
+    ['read', 'artifact', 'checked'].includes(state)
+  ).length;
+  const missing = snapshot.items.filter(({ state }) =>
+    ['planned', 'blocked'].includes(state)
+  ).length;
+  const review = snapshot.items.length - verified - missing;
+  const warning =
+    snapshot.unresolvedOperations?.length || snapshot.protection !== 'unchanged'
+      ? zh
+        ? ' | 存在恢复或保护警告'
+        : ' | recovery/protection warning'
+      : '';
+  return zh
+    ? `任务: 有效回执 ${verified}/${snapshot.items.length} | 缺失 ${missing} | 待复核 ${review}${warning} | /task inspect`
+    : `Task: valid receipts ${verified}/${snapshot.items.length} | missing ${missing} | review ${review}${warning} | /task inspect`;
 }
