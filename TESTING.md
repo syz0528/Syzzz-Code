@@ -19,6 +19,8 @@ npm audit --omit=dev --audit-level=high
 npm run check
 ```
 
+`npm test` 与覆盖率检查都将测试文件并发限制为 4，避免 CI 中多个 CLI 子进程争抢资源而触及既有超时；各用例的行为断言和超时保持不变。`npm run check` 不查询在线漏洞库，交付前还需单独执行上述 `npm audit`，远程 CI 也独立执行该审计。锁文件保证可重复安装，不会因为出现安全补丁就自动升级依赖。
+
 `npm run check` 是本地综合门槛；`smoke:package` 额外安装真实 tarball，耗时更长。Windows 进程、会话锁与 MCP 生命周期可用 `npm run test:stability` 连续执行三轮，任一轮失败都会立即终止。
 
 `1.0.0` 在 2026-08-10 的冻结基线为：完整回归 398/398、TUI/Interaction 专项 51/51、离线 Agent Eval 12/12、离线 RAG Eval 通过，覆盖率 Lines 82.57% / Branches 75.60% / Functions 86.11%。生产依赖审计为 0 vulnerability，102 文件发布包和全新 prefix 安装 smoke 通过。发布源码提交 `5a7db60` 的 [CI 31389385032](https://github.com/syz0528/Syzzz-Code/actions/runs/31389385032) 与 [CodeQL 31389386201](https://github.com/syz0528/Syzzz-Code/actions/runs/31389386201) 全绿，[正式发布工作流 31398653903](https://github.com/syz0528/Syzzz-Code/actions/runs/31398653903) 成功完成 npm provenance、Tag、GitHub Release 和发布凭证撤销。
